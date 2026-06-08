@@ -314,3 +314,29 @@ Stage Summary:
 - Deployed to: al-reef-al-junoobi.vercel.app (READY)
 - Files changed: src/components/tenants.tsx, src/app/api/backup/route.ts
 - All acceptance criteria verified
+---
+Task ID: financial-fix-001
+Agent: Main Agent
+Task: Fix Tenant Card UI and Correct Financial Balance Logic
+
+Work Log:
+- Analyzed uploaded screenshot via VLM to identify UI issues (badge overlap, spacing, name compression)
+- Explored full codebase: schema, tenant card, invoice logic, balance calculations across 10+ files
+- Identified root cause: Opening Balance and Credit Balance were NOT included in remaining balance calculations across ALL components
+- Created centralized financial utility (src/lib/financial-utils.ts)
+- Fixed tenant card UI: restructured badge layout with proper flex-wrap, gap spacing, and responsive design
+- Fixed rent-collection.tsx: Added openingBalance + currentCharges - creditBalance - paid = remaining
+- Fixed bill-invoice.tsx: Complete financial summary always shown (Opening Balance, Current Charges, Credit Balance, Total Due, Payments Received, Remaining Balance)
+- Fixed invoices/pdf/route.ts: PDF now includes Opening Balance and Credit Balance in totals section
+- Fixed invoices/search/route.ts: Remaining now includes openingBalance and creditBalance
+- Fixed dashboard/route.ts: Overdue amount calculation now includes openingBalance and creditBalance
+- Added i18n key: currentCharges (EN, AR, BN, UR)
+- Build verified successfully
+- Pushed to GitHub (commit 686512d)
+- Deployed to Vercel production (al-reef-al-junoobi.vercel.app)
+
+Stage Summary:
+- ROOT CAUSE: No centralized financial calculation existed; each component independently computed balances with different formulas, none including Opening Balance
+- 8 files modified, 238 insertions, 124 deletions
+- All calculations now use consistent formula: Total Due = Opening Balance + Current Charges - Credit Balance; Remaining = Total Due - Payments Received
+- Tenant card UI badges now properly aligned in flex-wrap row with consistent spacing
