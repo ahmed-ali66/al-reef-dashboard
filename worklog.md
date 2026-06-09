@@ -399,3 +399,29 @@ Stage Summary:
 - Backup v2.0 exports 14 entity types (was 7 before)
 - Restore v2.0 handles all entities with proper relationship preservation
 - Deleted recurring bills and reservations are now included in backup
+---
+Task ID: payment-management-recurring-bills
+Agent: main
+Task: Add payment management (view all, edit, delete) to recurring bills tab and delete demo data
+
+Work Log:
+- Investigated production Neon PostgreSQL database - found 2 active bills, 6 soft-deleted bills, 3 payments totaling 5,500 AED
+- Discovered ALL 3 payments were linked to soft-deleted bills (invisible in UI) - including the 5,000 AED "Taqa" payment
+- Created GET /api/recurring-bills/payments - list ALL payments across all bills with filtering
+- Created PUT /api/recurring-bills/payments/[paymentId] - edit payment with automatic balance recalculation
+- Created DELETE /api/recurring-bills/payments/[paymentId] - delete payment with balance reversal (adds payment amount back to outstanding)
+- Added "All Payments" tab to recurring-bills.tsx with full payment table showing provider, service type, amount, dates, method, reference
+- Added edit/delete actions in both All Payments view and per-bill Payment History dialog
+- Added edit payment dialog with bill info summary and payment form
+- Added i18n translations for all 4 languages (en/ar/bn/ur) for new payment management strings
+- Extended BillPaymentData type with recurringBill relation
+- Deleted all demo/E2E data from production database: 3 payments, 8 recurring bills, 26 audit logs
+- Verified 0 bills and 0 payments in production database
+- Pushed to GitHub and deployed to Vercel (deployment READY)
+
+Stage Summary:
+- Production DB: 0 recurring bills, 0 payments (clean state)
+- New APIs: GET/PUT/DELETE /api/recurring-bills/payments[/paymentId]
+- New UI: "All Payments" tab, edit/delete payment functionality
+- Balance reversal: deleting a payment automatically adds the amount back to the bill's outstanding balance
+- Key finding: The 5,000 AED "paid amount against utility that is nowhere to be found" was a payment against a soft-deleted "Taqa" bill - it was invisible because the bill was soft-deleted but the payment record remained
