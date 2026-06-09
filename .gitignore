@@ -48,3 +48,4 @@ dev.log
 .zscripts/
 node_modules/
 db/custom.db.pre-phase1-backup-*
+.env.production
