@@ -372,3 +372,30 @@ Stage Summary:
 - Staff sees masked amounts and cannot export
 - PDF and XLSX exports generate correctly (PDF: 2 pages, XLSX: multi-sheet)
 - Production credentials: owner@alreef.ae / admin@alreef.ae / accountant@alreef.ae / staff@alreef.ae all use Alreef@2025
+---
+Task ID: 2
+Agent: Main Agent
+Task: Report Synchronization & Data Integrity + Comprehensive Backup v2.0
+
+Work Log:
+- Audited all reporting endpoints: Dashboard, Reports, Daily Report, Recurring Bills Summary
+- Found Dashboard API was missing recurring bills data entirely
+- Found Reports API was missing recurring bills data and adjustment totals
+- Found Daily Report API was missing utility payment items
+- Found Backup API was missing RecurringBill, BillPayment, Reservation, RentAdjustment, Receipt, Notification, ScoreAuditLog, ResetRequest
+- Updated Dashboard API: Added recurringBills section with totalBills, totalOutstanding, totalDueThisMonth, totalPaidThisMonth, overdueBills
+- Updated Reports API: Added recurringBills section with service type breakdown, utility costs, plus adjustments totals (totalAdjustments, netCashCollected, netRevenue)
+- Updated Daily Report API: Added utilityPayments section with totalAmount and items (provider, service type, property, amount, method, reference)
+- Rebuilt Backup API v2.0: Now includes ALL entities (RecurringBill, BillPayment, Reservation, RentAdjustment, Receipt, Notification, ScoreAuditLog, ResetRequest) plus soft-deleted RecurringBills and Reservations
+- Rebuilt Restore API v2.0: Full upsert restore for all new entities including Phase 1 tenant fields (openingBalance, creditBalance, legalCase)
+- Built project: zero errors
+- Pushed to GitHub: commit 0e23295
+- Deployed to Vercel: deployment dpl_6Hq51U28yuofNTpd8FHCkwrXdkBW - READY
+- E2E tested on production: 100% data consistency across Dashboard/Reports/Summary
+- Backup v2.0 tested: 870KB with all 14 entity types included
+
+Stage Summary:
+- Single source of truth verified: Dashboard=Reports=Summary for all financial figures
+- Backup v2.0 exports 14 entity types (was 7 before)
+- Restore v2.0 handles all entities with proper relationship preservation
+- Deleted recurring bills and reservations are now included in backup
