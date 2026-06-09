@@ -358,6 +358,7 @@ export async function GET() {
         where: {
           companyId,
           paymentDate: { gte: startOfMonth, lte: endOfMonth },
+          recurringBill: { deletedAt: null },
         },
         _sum: { amount: true },
       }),

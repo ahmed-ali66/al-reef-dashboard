@@ -108,6 +108,7 @@ export async function GET(request: Request) {
         where: {
           companyId,
           paymentDate: { gte: startOfMonth, lte: endOfMonth },
+          recurringBill: { deletedAt: null },
         },
         _sum: { amount: true },
       }),
@@ -133,7 +134,7 @@ export async function GET(request: Request) {
 
     // ─── 2b-2. Cycle aggregation for recurring bills ───
     const utilityCycleAgg = await prisma.billCycle.aggregate({
-      where: { companyId, status: { in: ['pending', 'partially_paid', 'overdue'] } },
+      where: { companyId, status: { in: ['pending', 'partially_paid', 'overdue'] }, recurringBill: { deletedAt: null } },
       _sum: { outstandingAmount: true, amount: true, paidAmount: true },
       _count: true,
     })
