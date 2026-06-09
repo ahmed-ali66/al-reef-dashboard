@@ -79,6 +79,70 @@ export async function GET(request: Request) {
 
     const totalExpenses = safeNumber(totalExpensesResult._sum.amount)
 
+    // ─── 2b. Recurring Bills & Utilities (single source of truth) ───
+    const [
+      utilityBillsCount,
+      utilityOutstandingAggregate,
+      utilityDueThisMonthAggregate,
+      utilityPaidThisMonthAggregate,
+      utilityServiceBreakdown,
+      utilityOverdueCount,
+    ] = await Promise.all([
+      prisma.recurringBill.count({
+        where: { companyId, deletedAt: null, status: 'active' },
+      }),
+      prisma.recurringBill.aggregate({
+        where: { companyId, deletedAt: null, status: 'active' },
+        _sum: { currentOutstanding: true },
+      }),
+      prisma.recurringBill.aggregate({
+        where: {
+          companyId,
+          deletedAt: null,
+          status: 'active',
+          nextDueDate: { gte: startOfMonth, lte: endOfMonth },
+        },
+        _sum: { totalAmountDue: true },
+      }),
+      prisma.billPayment.aggregate({
+        where: {
+          companyId,
+          paymentDate: { gte: startOfMonth, lte: endOfMonth },
+        },
+        _sum: { amount: true },
+      }),
+      prisma.recurringBill.groupBy({
+        by: ['serviceType'],
+        where: { companyId, deletedAt: null, status: 'active' },
+        _sum: { totalAmountDue: true, currentOutstanding: true },
+        _count: true,
+      }),
+      prisma.recurringBill.count({
+        where: {
+          companyId,
+          deletedAt: null,
+          status: 'active',
+          nextDueDate: { lt: new Date() },
+        },
+      }),
+    ])
+
+    const utilityOutstanding = safeNumber(utilityOutstandingAggregate._sum.currentOutstanding)
+    const utilityDueThisMonth = safeNumber(utilityDueThisMonthAggregate._sum.totalAmountDue)
+    const utilityPaidThisMonth = safeNumber(utilityPaidThisMonthAggregate._sum.amount)
+
+    // ─── 2c. Adjustments ───
+    const currentMonthAdjustmentsAggregate = await prisma.rentAdjustment.aggregate({
+      where: {
+        companyId,
+        status: 'approved',
+        effectiveMonth: targetMonth,
+        effectiveYear: targetYear,
+      },
+      _sum: { amount: true },
+    })
+    const totalAdjustments = safeNumber(currentMonthAdjustmentsAggregate._sum.amount)
+
     // Build expense breakdown from groupBy
     const expenseBreakdown: Record<string, number> = {}
     for (const row of expenseBreakdownResult) {
@@ -214,6 +278,25 @@ export async function GET(request: Request) {
       grossProfit,
       costOfOperations,
       netIncome,
+      // Recurring Bills & Utilities (single source of truth)
+      recurringBills: {
+        totalBills: utilityBillsCount,
+        totalOutstanding: utilityOutstanding,
+        totalDueThisMonth: utilityDueThisMonth,
+        totalPaidThisMonth: utilityPaidThisMonth,
+        overdueBills: utilityOverdueCount,
+        serviceTypeBreakdown: utilityServiceBreakdown.map((item) => ({
+          serviceType: item.serviceType,
+          count: item._count,
+          totalAmountDue: safeNumber(item._sum.totalAmountDue),
+          totalOutstanding: safeNumber(item._sum.currentOutstanding),
+        })),
+      },
+      // Adjustments
+      totalAdjustments,
+      netCashCollected: totalRevenue,
+      netRevenue: totalRevenue - totalAdjustments,
+      adjustmentTotal: totalAdjustments,
     }
 
     return successResponse(data)

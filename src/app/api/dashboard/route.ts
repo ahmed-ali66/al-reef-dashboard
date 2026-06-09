@@ -330,7 +330,52 @@ export async function GET() {
       take: 50,
     })
 
-    // ─── 12. Reservation stats ───
+    // ─── 12. Recurring Bills & Utilities stats (single source of truth) ───
+    const [
+      activeBillsCount,
+      billsOutstandingAggregate,
+      billsDueThisMonthAggregate,
+      billsPaidThisMonthAggregate,
+      overdueBillsCount,
+    ] = await Promise.all([
+      prisma.recurringBill.count({
+        where: { companyId, deletedAt: null, status: 'active' },
+      }),
+      prisma.recurringBill.aggregate({
+        where: { companyId, deletedAt: null, status: 'active' },
+        _sum: { currentOutstanding: true },
+      }),
+      prisma.recurringBill.aggregate({
+        where: {
+          companyId,
+          deletedAt: null,
+          status: 'active',
+          nextDueDate: { gte: startOfMonth, lte: endOfMonth },
+        },
+        _sum: { totalAmountDue: true },
+      }),
+      prisma.billPayment.aggregate({
+        where: {
+          companyId,
+          paymentDate: { gte: startOfMonth, lte: endOfMonth },
+        },
+        _sum: { amount: true },
+      }),
+      prisma.recurringBill.count({
+        where: {
+          companyId,
+          deletedAt: null,
+          status: 'active',
+          nextDueDate: { lt: now },
+        },
+      }),
+    ])
+
+    const utilityBillsOutstanding = safeNumber(billsOutstandingAggregate._sum.currentOutstanding)
+    const utilityBillsDueThisMonth = safeNumber(billsDueThisMonthAggregate._sum.totalAmountDue)
+    const utilityBillsPaidThisMonth = safeNumber(billsPaidThisMonthAggregate._sum.amount)
+
+    // ─── 13. Reservation stats ───
     const [
       pendingReservationsCount,
       confirmedReservationsCount,
@@ -431,6 +476,13 @@ export async function GET() {
         cancelledCount: cancelledReservationsCount,
         totalDepositsCollected: financialAccess ? safeNumber(totalDepositsCollectedAggregate._sum.depositAmount) : 0,
         upcomingMoveIns: upcomingMoveInsCount,
+      },
+      recurringBills: {
+        totalBills: activeBillsCount,
+        totalOutstanding: financialAccess ? utilityBillsOutstanding : 0,
+        totalDueThisMonth: financialAccess ? utilityBillsDueThisMonth : 0,
+        totalPaidThisMonth: financialAccess ? utilityBillsPaidThisMonth : 0,
+        overdueBills: overdueBillsCount,
       },
     }
 

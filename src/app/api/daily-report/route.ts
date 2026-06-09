@@ -115,6 +115,48 @@ export async function GET(request: NextRequest) {
       time: new Date(e.date).toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit' }),
     }))
 
+    // ─── Recurring Bills payments for this day (single source of truth) ───
+    const billPaymentsResult = await prisma.billPayment.aggregate({
+      where: {
+        companyId,
+        paymentDate: { gte: startOfDay, lte: endOfDay },
+      },
+      _sum: { amount: true },
+    })
+    const billPaymentsTotal = safeNumber(billPaymentsResult._sum.amount)
+
+    const billPaymentItems = await prisma.billPayment.findMany({
+      where: {
+        companyId,
+        paymentDate: { gte: startOfDay, lte: endOfDay },
+      },
+      include: {
+        recurringBill: {
+          select: {
+            id: true,
+            providerName: true,
+            serviceType: true,
+            property: {
+              select: { id: true, name: true },
+            },
+          },
+        },
+      },
+      orderBy: { paymentDate: 'desc' },
+      take: 200,
+    })
+
+    const utilityPaymentItems = billPaymentItems.map(bp => ({
+      id: bp.id,
+      providerName: bp.recurringBill?.providerName || '',
+      serviceType: bp.recurringBill?.serviceType || '',
+      propertyName: bp.recurringBill?.property?.name || '',
+      amount: bp.amount,
+      paymentMethod: bp.paymentMethod,
+      reference: bp.reference,
+      time: new Date(bp.paymentDate).toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit' }),
+    }))
+
     return NextResponse.json({
       date,
       totalIncome,
@@ -123,6 +165,12 @@ export async function GET(request: NextRequest) {
       expenseBreakdown,
       incomeItems,
       expenseItems,
+      // Recurring Bills & Utilities (single source of truth)
+      utilityPayments: {
+        totalAmount: billPaymentsTotal,
+        items: utilityPaymentItems,
+      },
+      totalUtilityPayments: billPaymentsTotal,
     })
   } catch (error) {
     console.error('Daily report API error:', error)
