@@ -37,6 +37,8 @@ model Company {
   notifications Notification[]
   reservations  Reservation[]
   adjustments   RentAdjustment[]
+  recurringBills RecurringBill[]
+  billPayments   BillPayment[]
 
   @@map("companies")
 }
@@ -89,6 +91,7 @@ model Property {
   maintenance  Maintenance[]
   reservations Reservation[]
   adjustments  RentAdjustment[]
+  recurringBills RecurringBill[]
 
   @@index([companyId])
   @@index([archived])
@@ -438,4 +441,80 @@ model ScoreAuditLog {
   @@index([createdAt])
   @@index([companyId])
   @@map("score_audit_logs")
+}
+
+model RecurringBill {
+  id                     String    @id @default(cuid())
+  companyId              String
+  company                Company   @relation(fields: [companyId], references: [id])
+  propertyId             String
+  property               Property  @relation(fields: [propertyId], references: [id])
+
+  // Provider Information
+  providerName           String    // e.g. "DEWA", "Etisalat"
+  serviceType            String    // electricity, water, etisalat, du, internet, municipality, service_charge, waste, maintenance_contract, security_contract, cleaning_contract, custom
+  accountNumber          String?
+  customerNumber         String?
+  contractNumber         String?
+
+  // Financial Information
+  monthlyExpectedAmount  Decimal   @db.Decimal(10,2)
+  currentOutstanding     Decimal   @default(0) @db.Decimal(10,2)
+  previousOutstanding    Decimal   @default(0) @db.Decimal(10,2)
+  totalAmountDue         Decimal   @default(0) @db.Decimal(10,2)
+  lastPaymentAmount      Decimal?  @db.Decimal(10,2)
+  lastPaymentDate        DateTime?
+  nextDueDate            DateTime
+
+  // Billing Configuration
+  billingFrequency       String    @default("monthly") // monthly, quarterly, semi_annual, annual
+  autoRenew              Boolean   @default(true)
+  gracePeriodDays        Int       @default(0)
+  status                 String    @default("active") // active, paused, cancelled
+
+  // Notes & Attachments
+  notes                  String?
+  attachmentUrls         String?   // JSON array of URLs
+
+  // Building-level metadata
+  buildingName           String?
+  ownerName              String?
+  propertyManager        String?
+
+  // OCC
+  updatedAt              DateTime  @updatedAt
+  createdAt              DateTime  @default(now())
+  deletedAt              DateTime? // soft delete
+
+  payments               BillPayment[]
+
+  @@index([companyId])
+  @@index([propertyId])
+  @@index([serviceType])
+  @@index([status])
+  @@index([nextDueDate])
+  @@index([deletedAt])
+  @@map("recurring_bills")
+}
+
+model BillPayment {
+  id                String        @id @default(cuid())
+  companyId         String
+  company           Company       @relation(fields: [companyId], references: [id])
+  recurringBillId   String
+  recurringBill     RecurringBill @relation(fields: [recurringBillId], references: [id], onDelete: Cascade)
+  amount            Decimal       @db.Decimal(10,2)
+  paymentDate       DateTime
+  paymentMethod     String?       // cash, bank_transfer, cheque, online
+  reference         String?
+  notes             String?
+  outstandingBefore Decimal       @db.Decimal(10,2) // balance before this payment
+  outstandingAfter  Decimal       @db.Decimal(10,2) // balance after this payment
+  createdBy         String        // user ID
+  createdAt         DateTime      @default(now())
+
+  @@index([companyId])
+  @@index([recurringBillId])
+  @@index([paymentDate])
+  @@map("bill_payments")
 }

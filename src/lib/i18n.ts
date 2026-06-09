@@ -559,6 +559,46 @@ export const translations = {
   backupCreated: { en: 'Backup created and downloaded successfully', ar: 'تم إنشاء النسخة الاحتياطية وتحميلها بنجاح', bn: 'ব্যাকআপ তৈরি এবং ডাউনলোড সফল', ur: 'بیک اپ بن گیا اور کامیابی سے ڈاؤن لوڈ ہو گیا' },
   backupFailed: { en: 'Failed to create backup', ar: 'فشل في إنشاء النسخة الاحتياطية', bn: 'ব্যাকআপ তৈরি ব্যর্থ', ur: 'بیک اپ بنانے میں ناکام' },
   softDeletedRecords: { en: 'Soft-deleted Records', ar: 'السجلات المحذوفة مؤقتاً', bn: 'সফট-ডিলিটেড রেকর্ড', ur: 'نرم حذف شدہ ریکارڈز' },
+
+  // Recurring Bills & Utilities
+  recurringBills: { en: 'Recurring Bills', ar: 'الفواتير المتكررة', bn: 'পুনরাবৃত্তি বিল', ur: 'بار بار آنے والے بل' },
+  recurringBillsAndUtilities: { en: 'Recurring Bills & Utilities', ar: 'الفواتير المتكررة والمرافق', bn: 'পুনরাবৃত্তি বিল ও ইউটিলিটি', ur: 'بار بار آنے والے بل اور سہولیات' },
+  addRecurringBill: { en: 'Add Recurring Bill', ar: 'إضافة فاتورة متكررة', bn: 'পুনরাবৃত্তি বিল যোগ করুন', ur: 'بار بار آنے والا بل شامل کریں' },
+  editRecurringBill: { en: 'Edit Recurring Bill', ar: 'تعديل فاتورة متكررة', bn: 'পুনরাবৃত্তি বিল সম্পাদনা', ur: 'بار بار آنے والا بل ترمیم کریں' },
+  providerName: { en: 'Provider Name', ar: 'اسم المزود', bn: 'সরবরাহকারীর নাম', ur: 'فراہم کنندہ کا نام' },
+  serviceType: { en: 'Service Type', ar: 'نوع الخدمة', bn: 'সেবার ধরন', ur: 'سروس کی قسم' },
+  accountNumber: { en: 'Account Number', ar: 'رقم الحساب', bn: 'অ্যাকাউন্ট নম্বর', ur: 'اکاؤنٹ نمبر' },
+  customerNumber: { en: 'Customer Number', ar: 'رقم العميل', bn: 'গ্রাহক সংখ্যা', ur: 'کسٹمر نمبر' },
+  contractNumber: { en: 'Contract Number', ar: 'رقم العقد', bn: 'চুক্তি সংখ্যা', ur: 'معاہدہ نمبر' },
+  monthlyExpectedAmount: { en: 'Monthly Expected Amount', ar: 'المبلغ الشهري المتوقع', bn: 'মাসিক প্রত্যাশিত পরিমাণ', ur: 'ماہانہ متوقع رقم' },
+  currentOutstanding: { en: 'Current Outstanding', ar: 'المعلق الحالي', bn: 'বর্তমান বকেয়া', ur: 'موجودہ بقایا' },
+  previousOutstanding: { en: 'Previous Outstanding', ar: 'المعلق السابق', bn: 'পূর্ববর্তী বকেয়া', ur: 'پچھلا بقایا' },
+  totalAmountDue: { en: 'Total Amount Due', ar: 'إجمالي المبلغ المستحق', bn: 'মোট বকেয়া পরিমাণ', ur: 'کل واجب الادا رقم' },
+  lastPaymentAmount: { en: 'Last Payment Amount', ar: 'مبلغ آخر دفعة', bn: 'সর্বশেষ পেমেন্ট পরিমাণ', ur: 'آخری ادائیگی کی رقم' },
+  lastPaymentDate: { en: 'Last Payment Date', ar: 'تاريخ آخر دفعة', bn: 'সর্বশেষ পেমেন্ট তারিখ', ur: 'آخری ادائیگی کی تاریخ' },
+  nextDueDate: { en: 'Next Due Date', ar: 'تاريخ الاستحقاق التالي', bn: 'পরবর্তী বকেয়া তারিখ', ur: 'اگلی واجب الادا تاریخ' },
+  billingFrequency: { en: 'Billing Frequency', ar: 'تكرار الفوترة', bn: 'বিলিং ফ্রিকোয়েন্সি', ur: 'بلنگ کی فریکوئنسی' },
+  autoRenew: { en: 'Auto Renew', ar: 'تجديد تلقائي', bn: 'স্বয়ংক্রিয় নবায়ন', ur: 'خود بخود تجدید' },
+  gracePeriod: { en: 'Grace Period (Days)', ar: 'فترة السماح (أيام)', bn: 'অনুগ্রহ সময়কাল (দিন)', ur: 'مہلت کی مدت (دن)' },
+  buildingName: { en: 'Building Name', ar: 'اسم المبنى', bn: 'বিল্ডিংয়ের নাম', ur: 'عمارت کا نام' },
+  ownerName: { en: 'Owner Name', ar: 'اسم المالك', bn: 'মালিকের নাম', ur: 'مالک کا نام' },
+  propertyManager: { en: 'Property Manager', ar: 'مدير الممتلكات', bn: 'সম্পত্তি ব্যবস্থাপক', ur: 'پراپرٹی مینیجر' },
+  recordPayment: { en: 'Record Payment', ar: 'تسجيل دفعة', bn: 'পেমেন্ট রেকর্ড করুন', ur: 'ادائیگی درج کریں' },
+  paymentAmount: { en: 'Payment Amount', ar: 'مبلغ الدفعة', bn: 'পেমেন্ট পরিমাণ', ur: 'ادائیگی کی رقم' },
+  paymentDate: { en: 'Payment Date', ar: 'تاريخ الدفعة', bn: 'পেমেন্ট তারিখ', ur: 'ادائیگی کی تاریخ' },
+  paymentMethod: { en: 'Payment Method', ar: 'طريقة الدفع', bn: 'পেমেন্ট পদ্ধতি', ur: 'ادائیگی کا طریقہ' },
+  reference: { en: 'Reference', ar: 'المرجع', bn: 'রেফারেন্স', ur: 'حوالہ' },
+  upcomingBills: { en: 'Upcoming Bills', ar: 'الفواتير القادمة', bn: 'আসন্ন বিল', ur: 'آنے والے بل' },
+  overdueBills: { en: 'Overdue Bills', ar: 'الفواتير المتأخرة', bn: 'বকেয়া বিল', ur: 'تاخیر سے آنے والے بل' },
+  monthlyUtilitySummary: { en: 'Monthly Utility Summary', ar: 'ملخص المرافق الشهري', bn: 'মাসিক ইউটিলিটি সারাংশ', ur: 'ماہانہ یوٹیلیٹی خلاصہ' },
+  totalDue: { en: 'Total Due', ar: 'إجمالي المستحق', bn: 'মোট বকেয়া', ur: 'کل واجب الادا' },
+  totalPaid: { en: 'Total Paid', ar: 'إجمالي المدفوع', bn: 'মোট পরিশোধিত', ur: 'کل ادا شدہ' },
+  totalOutstanding: { en: 'Total Outstanding', ar: 'إجمالي المعلق', bn: 'মোট বকেয়া', ur: 'کل بقایا' },
+  daysOverdue: { en: 'Days Overdue', ar: 'أيام التأخير', bn: 'বিলম্বিত দিন', ur: 'تاخیر کے دن' },
+  advanceCycle: { en: 'Advance Billing Cycle', ar: 'تقديم دورة الفوترة', bn: 'বিলিং সাইকেল এগিয়ে নিন', ur: 'بلنگ سائیکل آگے بڑھائیں' },
+  outstandingBefore: { en: 'Outstanding Before', ar: 'المعلق قبل الدفعة', bn: 'পূর্বের বকেয়া', ur: 'ادائیگی سے پہلے بقایا' },
+  outstandingAfter: { en: 'Outstanding After', ar: 'المعلق بعد الدفعة', bn: 'পরবর্তী বকেয়া', ur: 'ادائیگی کے بعد بقایا' },
+  carryForward: { en: 'Carry Forward', ar: 'نقل إلى الأمام', bn: 'সামনে নিয়ে যান', ur: 'آگے لے جائیں' },
 } as const
 
 export type TranslationKey = keyof typeof translations
@@ -680,4 +720,32 @@ export function getExpenseCategoryLabel(category: string, lang: Language): strin
     case 'other': return t('other', lang)
     default: return category
   }
+}
+
+export function getServiceTypeLabel(type: string, lang: Language): string {
+  const labels: Record<string, Record<Language, string>> = {
+    electricity: { en: 'Electricity', ar: 'كهرباء', bn: 'বিদ্যুৎ', ur: 'بجلی' },
+    water: { en: 'Water', ar: 'مياه', bn: 'পানি', ur: 'پانی' },
+    etisalat: { en: 'Etisalat', ar: 'اتصالات', bn: 'এটিসালাত', ur: 'عتیسالات' },
+    du: { en: 'Du', ar: 'دو', bn: 'ডু', ur: 'ڈو' },
+    internet: { en: 'Internet', ar: 'إنترنت', bn: 'ইন্টারনেট', ur: 'انٹرنیٹ' },
+    municipality: { en: 'Municipality Fee', ar: 'رسوم البلدية', bn: 'পৌরসভা ফি', ur: 'بلدیہ فیس' },
+    service_charge: { en: 'Service Charge', ar: 'رسوم الخدمة', bn: 'সার্ভিস চার্জ', ur: 'سروس چارج' },
+    waste: { en: 'Waste Management', ar: 'إدارة النفايات', bn: 'বর্জ্য ব্যবস্থাপনা', ur: 'فضلات کا انتظام' },
+    maintenance_contract: { en: 'Maintenance Contract', ar: 'عقد الصيانة', bn: 'রক্ষণাবেক্ষণ চুক্তি', ur: 'دیكھ بھال کا معاہدہ' },
+    security_contract: { en: 'Security Contract', ar: 'عقد الأمن', bn: 'নিরাপত্তা চুক্তি', ur: 'سیکیورٹی معاہدہ' },
+    cleaning_contract: { en: 'Cleaning Contract', ar: 'عقد التنظيف', bn: 'পরিষ্কার চুক্তি', ur: 'صفائی کا معاہدہ' },
+    custom: { en: 'Custom', ar: 'مخصص', bn: 'কাস্টম', ur: 'حسب ضرورت' },
+  }
+  return labels[type]?.[lang] || type
+}
+
+export function getFrequencyLabel(freq: string, lang: Language): string {
+  const labels: Record<string, Record<Language, string>> = {
+    monthly: { en: 'Monthly', ar: 'شهري', bn: 'মাসিক', ur: 'ماہانہ' },
+    quarterly: { en: 'Quarterly', ar: 'ربع سنوي', bn: 'ত্রৈমাসিক', ur: 'سہ ماہی' },
+    semi_annual: { en: 'Semi-Annual', ar: 'نصف سنوي', bn: 'অর্ধ-বার্ষিক', ur: 'چھ ماہی' },
+    annual: { en: 'Annual', ar: 'سنوي', bn: 'বার্ষিক', ur: 'سالانہ' },
+  }
+  return labels[freq]?.[lang] || freq
 }

@@ -23,6 +23,7 @@ import {
   Loader2,
   Lock,
   CalendarCheck,
+  Zap,
 } from 'lucide-react'
 import {
   BarChart,
@@ -41,6 +42,7 @@ export default function Dashboard() {
   const canSeeFinancials = isOwnerOrAdmin(authUser?.role ?? '')
 
   const [data, setData] = useState<DashboardData | null>(null)
+  const [utilityBillsSummary, setUtilityBillsSummary] = useState<any>(null)
   const [loading, setLoading] = useState(true)
 
   // WhatsApp language selection dialog
@@ -58,6 +60,20 @@ export default function Dashboard() {
       console.error('Dashboard fetch error:', e)
     } finally {
       setLoading(false)
+    }
+
+    // Fetch utility bills summary separately
+    try {
+      const res = await fetch('/api/recurring-bills/summary')
+      if (res.ok) {
+        const billsData = await res.json()
+        if (billsData && billsData.totalBills > 0) {
+          setUtilityBillsSummary(billsData)
+        }
+      }
+    } catch (e) {
+      // Non-critical — dashboard works without utility bills data
+      console.error('Utility bills summary fetch error:', e)
     }
   }, [])
 
@@ -137,7 +153,7 @@ export default function Dashboard() {
       )}
 
       {/* Stats Row */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 stagger-children">
+      <div className={cn2('grid gap-4 stagger-children', utilityBillsSummary ? 'grid-cols-2 lg:grid-cols-6' : 'grid-cols-2 lg:grid-cols-5')}>
         <Card className="property-card-hover border-l-4 border-l-emerald">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-2">
@@ -258,6 +274,36 @@ export default function Dashboard() {
             </div>
           </CardContent>
         </Card>
+
+        {utilityBillsSummary && (
+          <Card className={cn2('property-card-hover', utilityBillsSummary.overdueBills?.length > 0 ? 'border-l-4 border-l-orange-500' : 'border-l-4 border-l-orange-400')}>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-2">
+                <Zap className={cn2('w-5 h-5', utilityBillsSummary.overdueBills?.length > 0 ? 'text-orange-500' : 'text-orange-400')} />
+                {utilityBillsSummary.overdueBills?.length > 0 && (
+                  <span className="w-2 h-2 rounded-full bg-orange-500 overdue-pulse" />
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {t('recurringBills', lang)}
+              </p>
+              {canSeeFinancials ? (
+                <p className="text-xl font-bold text-foreground mt-1">
+                  {formatAED(utilityBillsSummary.totalOutstanding)}
+                </p>
+              ) : (
+                <p className="text-xl font-bold text-foreground mt-1">
+                  {utilityBillsSummary.totalBills}
+                </p>
+              )}
+              {utilityBillsSummary.overdueBills?.length > 0 && (
+                <p className="text-xs text-orange-500 mt-1">
+                  {utilityBillsSummary.overdueBills.length} {t('overdueBills', lang)}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Reservation Summary */}
