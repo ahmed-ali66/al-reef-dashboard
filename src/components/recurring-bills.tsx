@@ -15,7 +15,8 @@ import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from '@/components/ui/textarea'
-import { Zap, Plus, Pencil, Trash2, CreditCard, FastForward, Loader2, ShieldAlert, Search, AlertTriangle } from 'lucide-react'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Zap, Plus, Pencil, Trash2, CreditCard, FastForward, Loader2, ShieldAlert, Search, AlertTriangle, FileDown, FileSpreadsheet, Calendar, X } from 'lucide-react'
 
 const SERVICE_TYPES = [
   'electricity', 'water', 'etisalat', 'du', 'internet',
@@ -26,7 +27,8 @@ const SERVICE_TYPES = [
 const BILLING_FREQUENCIES = ['monthly', 'quarterly', 'semi_annual', 'annual'] as const
 const PAYMENT_METHODS = ['cash', 'bank_transfer', 'cheque', 'online'] as const
 
-type TabType = 'all' | 'upcoming' | 'overdue'
+type TabType = 'all' | 'upcoming' | 'overdue' | 'paid' | 'partially_paid' | 'outstanding' | 'due_soon' | 'custom_range'
+type DatePreset = '7d' | '30d' | 'quarter' | 'year' | 'custom'
 
 const emptyBillForm = {
   propertyId: '',
@@ -65,6 +67,12 @@ export default function RecurringBills() {
   const [searchQuery, setSearchQuery] = useState('')
   const [serviceFilter, setServiceFilter] = useState('all')
 
+  // Date range filter
+  const [datePreset, setDatePreset] = useState<DatePreset>('30d')
+  const [customDateFrom, setCustomDateFrom] = useState('')
+  const [customDateTo, setCustomDateTo] = useState('')
+  const [dateRangeOpen, setDateRangeOpen] = useState(false)
+
   // Dialogs
   const [billDialogOpen, setBillDialogOpen] = useState(false)
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false)
@@ -78,6 +86,7 @@ export default function RecurringBills() {
   const [billForm, setBillForm] = useState({ ...emptyBillForm })
   const [paymentForm, setPaymentForm] = useState({ ...emptyPaymentForm })
   const [saving, setSaving] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   // Access control
   const canAccess = !!authUser
@@ -91,13 +100,24 @@ export default function RecurringBills() {
       const params = new URLSearchParams()
       params.set('limit', '1000')
 
+      // Server-side filters for basic tabs
       if (activeTab === 'upcoming') {
         params.set('upcoming', 'true')
       } else if (activeTab === 'overdue') {
         params.set('overdue', 'true')
       }
+
+      // Service type filter
       if (serviceFilter !== 'all') {
         params.set('serviceType', serviceFilter)
+      }
+
+      // Date range filter
+      if (activeTab === 'custom_range' && customDateFrom) {
+        params.set('dateFrom', customDateFrom)
+      }
+      if (activeTab === 'custom_range' && customDateTo) {
+        params.set('dateTo', customDateTo)
       }
 
       const [billsRes, summaryRes, propsRes] = await Promise.all([
@@ -125,12 +145,72 @@ export default function RecurringBills() {
     } finally {
       setLoading(false)
     }
-  }, [activeTab, serviceFilter])
+  }, [activeTab, serviceFilter, customDateFrom, customDateTo])
 
   useEffect(() => { fetchBills() }, [fetchBills])
 
-  // Filtered bills (client-side search)
-  const filtered = bills.filter(bill => {
+  // ─── Client-side category filters ───
+  const now = new Date()
+
+  const isOverdue = (bill: RecurringBillData) => {
+    return bill.status === 'active' && new Date(bill.nextDueDate) < now
+  }
+
+  const isUpcoming = (bill: RecurringBillData) => {
+    if (bill.status !== 'active') return false
+    const due = new Date(bill.nextDueDate)
+    const thirtyDays = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+    return due >= now && due <= thirtyDays
+  }
+
+  const isDueSoon = (bill: RecurringBillData) => {
+    if (bill.status !== 'active') return false
+    const due = new Date(bill.nextDueDate)
+    const sevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+    return due >= now && due <= sevenDays
+  }
+
+  const isPaid = (bill: RecurringBillData) => {
+    return bill.status === 'active' && bill.currentOutstanding === 0
+  }
+
+  const isPartiallyPaid = (bill: RecurringBillData) => {
+    if (bill.status !== 'active') return false
+    const outstanding = bill.currentOutstanding || 0
+    const totalDue = bill.totalAmountDue || 0
+    return outstanding > 0 && outstanding < totalDue && !isOverdue(bill)
+  }
+
+  const isOutstanding = (bill: RecurringBillData) => {
+    return bill.status === 'active' && (bill.currentOutstanding || 0) > 0
+  }
+
+  const isInDateRange = (bill: RecurringBillData) => {
+    if (activeTab !== 'custom_range') return true
+    const due = new Date(bill.nextDueDate)
+    const from = customDateFrom ? new Date(customDateFrom) : null
+    const to = customDateTo ? new Date(customDateTo + 'T23:59:59.999') : null
+    if (from && due < from) return false
+    if (to && due > to) return false
+    return true
+  }
+
+  // Filtered bills based on active tab
+  const tabFiltered = bills.filter(bill => {
+    switch (activeTab) {
+      case 'upcoming': return isUpcoming(bill)
+      case 'overdue': return isOverdue(bill)
+      case 'paid': return isPaid(bill)
+      case 'partially_paid': return isPartiallyPaid(bill)
+      case 'outstanding': return isOutstanding(bill)
+      case 'due_soon': return isDueSoon(bill)
+      case 'custom_range': return isInDateRange(bill)
+      default: return true
+    }
+  })
+
+  // Search filter (applied on top of tab filter)
+  const filtered = tabFiltered.filter(bill => {
     if (!searchQuery) return true
     const q = searchQuery.toLowerCase()
     return (
@@ -139,12 +219,21 @@ export default function RecurringBills() {
       bill.ownerName?.toLowerCase().includes(q) ||
       bill.propertyManager?.toLowerCase().includes(q) ||
       bill.accountNumber?.toLowerCase().includes(q) ||
+      bill.contractNumber?.toLowerCase().includes(q) ||
       bill.serviceType?.toLowerCase().includes(q) ||
       (bill.property && getNameByLang(bill.property, lang).toLowerCase().includes(q))
     )
   })
 
-  // Handlers
+  // ─── Count helpers ───
+  const paidCount = bills.filter(b => isPaid(b)).length
+  const partiallyPaidCount = bills.filter(b => isPartiallyPaid(b)).length
+  const outstandingCount = bills.filter(b => isOutstanding(b)).length
+  const dueSoonCount = bills.filter(b => isDueSoon(b)).length
+  const overdueCount = summary?.overdueBills?.length ?? bills.filter(b => isOverdue(b)).length
+  const upcomingCount = bills.filter(b => isUpcoming(b)).length
+
+  // ─── Handlers ───
   const openNew = () => {
     setEditing(null)
     setBillForm({ ...emptyBillForm })
@@ -308,7 +397,64 @@ export default function RecurringBills() {
     }
   }
 
-  // Helpers
+  // ─── Export handlers ───
+  const handleExportPDF = async () => {
+    setExporting(true)
+    try {
+      const params = new URLSearchParams()
+      if (serviceFilter !== 'all') params.set('serviceType', serviceFilter)
+      if (activeTab === 'custom_range' && customDateFrom) params.set('dateFrom', customDateFrom)
+      if (activeTab === 'custom_range' && customDateTo) params.set('dateTo', customDateTo)
+
+      const res = await fetch(`/api/recurring-bills/export/pdf?${params.toString()}`)
+      if (!res.ok) {
+        alert('Failed to export PDF')
+        return
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `recurring-bills-report-${new Date().toISOString().split('T')[0]}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Failed to export PDF:', error)
+      alert('Failed to export PDF. Please try again.')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const handleExportXLSX = async () => {
+    setExporting(true)
+    try {
+      const params = new URLSearchParams()
+      if (serviceFilter !== 'all') params.set('serviceType', serviceFilter)
+      if (activeTab === 'custom_range' && customDateFrom) params.set('dateFrom', customDateFrom)
+      if (activeTab === 'custom_range' && customDateTo) params.set('dateTo', customDateTo)
+
+      const res = await fetch(`/api/recurring-bills/export/xlsx?${params.toString()}`)
+      if (!res.ok) {
+        alert('Failed to export Excel')
+        return
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `recurring-bills-report-${new Date().toISOString().split('T')[0]}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Failed to export XLSX:', error)
+      alert('Failed to export Excel. Please try again.')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  // ─── Helpers ───
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'active': return <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-xs">{t('active', lang)}</Badge>
@@ -319,22 +465,15 @@ export default function RecurringBills() {
   }
 
   const getOverdueDays = (dueDate: string): number => {
-    const now = new Date()
     const due = new Date(dueDate)
     const diff = now.getTime() - due.getTime()
     return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)))
   }
 
-  const isOverdue = (bill: RecurringBillData) => {
-    return bill.status === 'active' && new Date(bill.nextDueDate) < new Date()
-  }
-
-  const isUpcoming = (bill: RecurringBillData) => {
-    if (bill.status !== 'active') return false
-    const now = new Date()
-    const due = new Date(bill.nextDueDate)
-    const thirtyDays = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
-    return due >= now && due <= thirtyDays
+  const getDaysRemaining = (dueDate: string): number => {
+    const due = new Date(dueDate)
+    const diff = due.getTime() - now.getTime()
+    return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)))
   }
 
   const displayAmount = (amount: number) => {
@@ -347,7 +486,30 @@ export default function RecurringBills() {
   const totalOutstanding = summary?.totalOutstanding ?? bills.reduce((s, b) => s + b.currentOutstanding, 0)
   const totalDueThisMonth = summary?.totalDueThisMonth ?? bills.reduce((s, b) => s + (isUpcoming(b) ? b.totalAmountDue : 0), 0)
   const totalPaidThisMonth = summary?.totalPaidThisMonth ?? 0
-  const overdueCount = summary?.overdueBills?.length ?? bills.filter(b => isOverdue(b)).length
+
+  // Date preset handler
+  const applyDatePreset = (preset: DatePreset) => {
+    setDatePreset(preset)
+    const today = new Date()
+    if (preset === '7d') {
+      setCustomDateFrom(today.toISOString().split('T')[0])
+      const end = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000)
+      setCustomDateTo(end.toISOString().split('T')[0])
+    } else if (preset === '30d') {
+      setCustomDateFrom(today.toISOString().split('T')[0])
+      const end = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000)
+      setCustomDateTo(end.toISOString().split('T')[0])
+    } else if (preset === 'quarter') {
+      const qStart = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3, 1)
+      const qEnd = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3 + 3, 0)
+      setCustomDateFrom(qStart.toISOString().split('T')[0])
+      setCustomDateTo(qEnd.toISOString().split('T')[0])
+    } else if (preset === 'year') {
+      setCustomDateFrom(`${today.getFullYear()}-01-01`)
+      setCustomDateTo(`${today.getFullYear()}-12-31`)
+    }
+    // 'custom' just opens the date inputs, no auto-fill
+  }
 
   if (loading && bills.length === 0) {
     return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-emerald" /></div>
@@ -376,10 +538,36 @@ export default function RecurringBills() {
             {totalBills} {t('recurringBills', lang).toLowerCase()}
           </p>
         </div>
-        <Button onClick={openNew} className="bg-emerald hover:bg-emerald/90 text-white">
-          <Plus className="w-4 h-4 mr-2" />
-          {t('addRecurringBill', lang)}
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {isFinancial && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExportPDF}
+                disabled={exporting || bills.length === 0}
+                className="text-red-600 border-red-200 hover:bg-red-50"
+              >
+                {exporting ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <FileDown className="w-4 h-4 mr-1" />}
+                {t('exportPDF', lang)}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExportXLSX}
+                disabled={exporting || bills.length === 0}
+                className="text-emerald-600 border-emerald-200 hover:bg-emerald-50"
+              >
+                {exporting ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <FileSpreadsheet className="w-4 h-4 mr-1" />}
+                {t('exportXLSX', lang)}
+              </Button>
+            </>
+          )}
+          <Button onClick={openNew} className="bg-emerald hover:bg-emerald/90 text-white">
+            <Plus className="w-4 h-4 mr-2" />
+            {t('addRecurringBill', lang)}
+          </Button>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -438,7 +626,7 @@ export default function RecurringBills() {
         </div>
       )}
 
-      {/* Tabs */}
+      {/* Filter Tabs */}
       <div className="flex gap-2 flex-wrap">
         <Button
           variant={activeTab === 'all' ? 'default' : 'outline'}
@@ -452,9 +640,10 @@ export default function RecurringBills() {
           variant={activeTab === 'upcoming' ? 'default' : 'outline'}
           size="sm"
           onClick={() => setActiveTab('upcoming')}
-          className={activeTab === 'upcoming' ? 'bg-emerald hover:bg-emerald/90 text-white' : ''}
+          className={activeTab === 'upcoming' ? 'bg-amber-500 hover:bg-amber-600 text-white' : ''}
         >
           {t('upcomingBills', lang)}
+          {upcomingCount > 0 && <Badge className="ml-2 bg-white/20 text-xs">{upcomingCount}</Badge>}
         </Button>
         <Button
           variant={activeTab === 'overdue' ? 'default' : 'outline'}
@@ -465,6 +654,128 @@ export default function RecurringBills() {
           {t('overdueBills', lang)}
           {overdueCount > 0 && <Badge className="ml-2 bg-white text-red-600 text-xs">{overdueCount}</Badge>}
         </Button>
+        <Button
+          variant={activeTab === 'paid' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setActiveTab('paid')}
+          className={activeTab === 'paid' ? 'bg-emerald hover:bg-emerald/90 text-white' : ''}
+        >
+          {t('paidBills', lang)}
+          {paidCount > 0 && <Badge className="ml-2 bg-white/20 text-xs">{paidCount}</Badge>}
+        </Button>
+        <Button
+          variant={activeTab === 'partially_paid' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setActiveTab('partially_paid')}
+          className={activeTab === 'partially_paid' ? 'bg-purple-500 hover:bg-purple-600 text-white' : ''}
+        >
+          {t('partiallyPaidBills', lang)}
+          {partiallyPaidCount > 0 && <Badge className="ml-2 bg-white/20 text-xs">{partiallyPaidCount}</Badge>}
+        </Button>
+        <Button
+          variant={activeTab === 'outstanding' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setActiveTab('outstanding')}
+          className={activeTab === 'outstanding' ? 'bg-terracotta hover:bg-terracotta/90 text-white' : ''}
+        >
+          {t('outstandingBills', lang)}
+          {outstandingCount > 0 && <Badge className="ml-2 bg-white/20 text-xs">{outstandingCount}</Badge>}
+        </Button>
+        <Button
+          variant={activeTab === 'due_soon' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setActiveTab('due_soon')}
+          className={activeTab === 'due_soon' ? 'bg-amber-500 hover:bg-amber-600 text-white' : ''}
+        >
+          {t('dueSoonBills', lang)}
+          {dueSoonCount > 0 && <Badge className="ml-2 bg-white/20 text-xs">{dueSoonCount}</Badge>}
+        </Button>
+
+        {/* Custom Date Range Tab with Popover */}
+        <Popover open={dateRangeOpen} onOpenChange={setDateRangeOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant={activeTab === 'custom_range' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => {
+                setActiveTab('custom_range')
+                setDateRangeOpen(true)
+              }}
+              className={activeTab === 'custom_range' ? 'bg-deep-teal hover:bg-deep-teal/90 text-white' : ''}
+            >
+              <Calendar className="w-3.5 h-3.5 mr-1" />
+              {t('customDateRange', lang)}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-80" align="start">
+            <div className="space-y-3">
+              <div className="text-sm font-medium">{t('customDateRange', lang)}</div>
+
+              {/* Date Presets */}
+              <div className="flex gap-1 flex-wrap">
+                {([
+                  { key: '7d', label: t('last7Days', lang) },
+                  { key: '30d', label: t('last30Days', lang) },
+                  { key: 'quarter', label: t('thisQuarter', lang) },
+                  { key: 'year', label: t('thisYear', lang) },
+                ] as const).map(preset => (
+                  <Button
+                    key={preset.key}
+                    variant={datePreset === preset.key ? 'default' : 'outline'}
+                    size="sm"
+                    className="text-xs h-7"
+                    onClick={() => applyDatePreset(preset.key)}
+                  >
+                    {preset.label}
+                  </Button>
+                ))}
+              </div>
+
+              {/* Custom Date Inputs */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-xs">{t('dateFrom', lang)}</Label>
+                  <Input
+                    type="date"
+                    value={customDateFrom}
+                    onChange={e => { setCustomDateFrom(e.target.value); setDatePreset('custom') }}
+                    className="h-8 text-sm"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">{t('dateTo', lang)}</Label>
+                  <Input
+                    type="date"
+                    value={customDateTo}
+                    onChange={e => { setCustomDateTo(e.target.value); setDatePreset('custom') }}
+                    className="h-8 text-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  className="flex-1 bg-emerald hover:bg-emerald/90 text-white"
+                  onClick={() => { fetchBills(); setDateRangeOpen(false) }}
+                >
+                  {t('applyFilter', lang)}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setCustomDateFrom('')
+                    setCustomDateTo('')
+                    setDatePreset('30d')
+                  }}
+                >
+                  {t('clearFilter', lang)}
+                </Button>
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
       </div>
 
       {/* Search & Filter Bar */}
@@ -474,9 +785,17 @@ export default function RecurringBills() {
           <Input
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            placeholder={t('searchTenants', lang)}
+            placeholder={t('searchBills', lang)}
             className="pl-9"
           />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
         <Select value={serviceFilter} onValueChange={v => setServiceFilter(v)}>
           <SelectTrigger className="w-[180px]">
@@ -500,17 +819,35 @@ export default function RecurringBills() {
                 <TableRow>
                   <TableHead>{t('providerName', lang)}</TableHead>
                   <TableHead>{t('building', lang)}</TableHead>
-                  <TableHead>{t('totalDue', lang)}</TableHead>
-                  <TableHead>{t('currentOutstanding', lang)}</TableHead>
+                  {activeTab === 'paid' && <TableHead>{t('amountPaid', lang)}</TableHead>}
+                  {activeTab === 'paid' && <TableHead>{t('paymentDate', lang)}</TableHead>}
+                  {activeTab === 'paid' && <TableHead>{t('paymentReference', lang)}</TableHead>}
+                  {activeTab === 'partially_paid' && <TableHead>{t('originalAmount', lang)}</TableHead>}
+                  {activeTab === 'partially_paid' && <TableHead>{t('amountPaid', lang)}</TableHead>}
+                  {activeTab === 'partially_paid' && <TableHead>{t('remainingBalance', lang)}</TableHead>}
+                  {activeTab === 'overdue' && <TableHead>{t('daysOverdue', lang)}</TableHead>}
+                  {activeTab === 'overdue' && <TableHead>{t('currentOutstanding', lang)}</TableHead>}
+                  {activeTab === 'upcoming' && <TableHead>{t('daysRemaining', lang)}</TableHead>}
+                  {activeTab === 'upcoming' && <TableHead>{t('totalDue', lang)}</TableHead>}
+                  {activeTab === 'due_soon' && <TableHead>{t('daysRemaining', lang)}</TableHead>}
+                  {activeTab === 'outstanding' && <TableHead>{t('previousBalance', lang)}</TableHead>}
+                  {activeTab === 'outstanding' && <TableHead>{t('currentBalance', lang)}</TableHead>}
+                  {!['paid', 'partially_paid', 'overdue', 'upcoming', 'due_soon', 'outstanding'].includes(activeTab) && (
+                    <>
+                      <TableHead>{t('totalDue', lang)}</TableHead>
+                      <TableHead>{t('currentOutstanding', lang)}</TableHead>
+                    </>
+                  )}
                   <TableHead>{t('nextDueDate', lang)}</TableHead>
                   <TableHead>{t('status', lang)}</TableHead>
-                  <TableHead className="text-right">{t('title', lang) === t('title', lang) ? t('category', lang) : ''}</TableHead>
+                  <TableHead className="text-right">{t('category', lang)}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filtered.map(bill => {
                   const overdue = isOverdue(bill)
                   const overdueDays = overdue ? getOverdueDays(bill.nextDueDate) : 0
+                  const daysRemaining = getDaysRemaining(bill.nextDueDate)
                   return (
                     <TableRow key={bill.id} className={overdue ? 'bg-red-50/50' : ''}>
                       <TableCell>
@@ -524,14 +861,88 @@ export default function RecurringBills() {
                       <TableCell className="text-sm">
                         {bill.property ? getNameByLang(bill.property, lang) : bill.buildingName || '—'}
                       </TableCell>
-                      <TableCell className="font-semibold text-sm text-terracotta">
-                        {displayAmount(bill.totalAmountDue)}
-                      </TableCell>
-                      <TableCell className="font-semibold text-sm">
-                        <span className={bill.currentOutstanding > 0 ? 'text-red-600' : 'text-emerald'}>
-                          {displayAmount(bill.currentOutstanding)}
-                        </span>
-                      </TableCell>
+
+                      {/* Context-specific columns */}
+                      {activeTab === 'paid' && (
+                        <>
+                          <TableCell className="font-semibold text-sm text-emerald">
+                            {displayAmount(bill.totalAmountDue)}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {bill.lastPaymentDate ? formatDate(bill.lastPaymentDate) : '—'}
+                          </TableCell>
+                          <TableCell className="text-sm">{bill.payments?.[0]?.reference || '—'}</TableCell>
+                        </>
+                      )}
+
+                      {activeTab === 'partially_paid' && (
+                        <>
+                          <TableCell className="text-sm">{displayAmount(bill.totalAmountDue)}</TableCell>
+                          <TableCell className="font-semibold text-sm text-emerald">
+                            {displayAmount(bill.totalAmountDue - bill.currentOutstanding)}
+                          </TableCell>
+                          <TableCell className="font-semibold text-sm text-red-600">
+                            {displayAmount(bill.currentOutstanding)}
+                          </TableCell>
+                        </>
+                      )}
+
+                      {activeTab === 'overdue' && (
+                        <>
+                          <TableCell>
+                            <Badge className="bg-red-100 text-red-800 border-red-200 text-xs">
+                              {overdueDays} {t('daysOverdue', lang)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="font-semibold text-sm text-red-600">
+                            {displayAmount(bill.currentOutstanding)}
+                          </TableCell>
+                        </>
+                      )}
+
+                      {activeTab === 'upcoming' && (
+                        <>
+                          <TableCell className="text-sm">
+                            <Badge className="bg-amber-100 text-amber-800 border-amber-200 text-xs">
+                              {daysRemaining} {t('daysRemaining', lang)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="font-semibold text-sm text-amber-600">
+                            {displayAmount(bill.totalAmountDue)}
+                          </TableCell>
+                        </>
+                      )}
+
+                      {activeTab === 'due_soon' && (
+                        <TableCell className="text-sm">
+                          <Badge className="bg-amber-100 text-amber-800 border-amber-200 text-xs">
+                            {daysRemaining} {t('daysRemaining', lang)}
+                          </Badge>
+                        </TableCell>
+                      )}
+
+                      {activeTab === 'outstanding' && (
+                        <>
+                          <TableCell className="text-sm">{displayAmount(bill.previousOutstanding)}</TableCell>
+                          <TableCell className="font-semibold text-sm text-red-600">
+                            {displayAmount(bill.currentOutstanding)}
+                          </TableCell>
+                        </>
+                      )}
+
+                      {!['paid', 'partially_paid', 'overdue', 'upcoming', 'due_soon', 'outstanding'].includes(activeTab) && (
+                        <>
+                          <TableCell className="font-semibold text-sm text-terracotta">
+                            {displayAmount(bill.totalAmountDue)}
+                          </TableCell>
+                          <TableCell className="font-semibold text-sm">
+                            <span className={bill.currentOutstanding > 0 ? 'text-red-600' : 'text-emerald'}>
+                              {displayAmount(bill.currentOutstanding)}
+                            </span>
+                          </TableCell>
+                        </>
+                      )}
+
                       <TableCell>
                         <div>
                           <p className="text-sm">{formatDate(bill.nextDueDate)}</p>

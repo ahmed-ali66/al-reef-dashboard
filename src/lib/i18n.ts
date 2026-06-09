@@ -597,6 +597,41 @@ export const translations = {
   outstandingBefore: { en: 'Outstanding Before', ar: 'المعلق قبل الدفعة', bn: 'পূর্বের বকেয়া', ur: 'ادائیگی سے پہلے بقایا' },
   outstandingAfter: { en: 'Outstanding After', ar: 'المعلق بعد الدفعة', bn: 'পরবর্তী বকেয়া', ur: 'ادائیگی کے بعد بقایا' },
   carryForward: { en: 'Carry Forward', ar: 'نقل إلى الأمام', bn: 'সামনে নিয়ে যান', ur: 'آگے لے جائیں' },
+
+  // Recurring Bills - Search & Filters
+  searchBills: { en: 'Search Bills, Providers, Properties...', ar: 'بحث الفواتير، المزودين، العقارات...', bn: 'বিল, সরবরাহকারী, সম্পত্তি খুঁজুন...', ur: 'بل، فراہم کنندہ، املاک تلاش کریں...' },
+  paidBills: { en: 'Paid Bills', ar: 'الفواتير المدفوعة', bn: 'পরিশোধিত বিল', ur: 'ادا شدہ بل' },
+  partiallyPaidBills: { en: 'Partially Paid', ar: 'مدفوعة جزئياً', bn: 'আংশিক পরিশোধিত', ur: 'جزوی ادائیگی' },
+  outstandingBills: { en: 'Outstanding', ar: 'معلق', bn: 'বকেয়', ur: 'بقایا' },
+  dueSoonBills: { en: 'Due Soon', ar: 'مستحق قريباً', bn: 'শীঘ্রই দেয়', ur: 'جلد ادائیگی' },
+  customDateRange: { en: 'Custom Range', ar: 'نطاق مخصص', bn: 'কাস্টম পরিসর', ur: 'حسب ضرورت تاریخ' },
+  dateFrom: { en: 'From', ar: 'من', bn: 'থেকে', ur: 'سے' },
+  dateTo: { en: 'To', ar: 'إلى', bn: 'পর্যন্ত', ur: 'تک' },
+  applyFilter: { en: 'Apply', ar: 'تطبيق', bn: 'প্রয়োগ', ur: 'لاگو کریں' },
+  clearFilter: { en: 'Clear', ar: 'مسح', bn: 'মুছুন', ur: 'صاف کریں' },
+  last7Days: { en: 'Last 7 Days', ar: 'آخر 7 أيام', bn: 'শেষ ৭ দিন', ur: 'پچھلے 7 دن' },
+  last30Days: { en: 'Last 30 Days', ar: 'آخر 30 يوماً', bn: 'শেষ ৩০ দিন', ur: 'پچھلے 30 دن' },
+  thisQuarter: { en: 'This Quarter', ar: 'هذا الربع', bn: 'এই ত্রৈমাসিক', ur: 'یہ سہ ماہی' },
+  thisYear: { en: 'This Year', ar: 'هذا العام', bn: 'এই বছর', ur: 'یہ سال' },
+  daysRemaining: { en: 'Days Remaining', ar: 'الأيام المتبقية', bn: 'অবশিষ্ট দিন', ur: 'باقی دن' },
+  originalAmount: { en: 'Original Amount', ar: 'المبلغ الأصلي', bn: 'মূল পরিমাণ', ur: 'اصل رقم' },
+  amountPaid: { en: 'Amount Paid', ar: 'المبلغ المدفوع', bn: 'পরিশোধিত পরিমাণ', ur: 'ادا شدہ رقم' },
+  remainingBalance: { en: 'Remaining Balance', ar: 'الرصيد المتبقي', bn: 'অবশিষ্ট ব্যালেন্স', ur: 'بقیہ بیلنس' },
+  previousBalance: { en: 'Previous Balance', ar: 'الرصيد السابق', bn: 'পূর্ববর্তী ব্যালেন্স', ur: 'پچھلا بیلنس' },
+  currentBalance: { en: 'Current Balance', ar: 'الرصيد الحالي', bn: 'বর্তমান ব্যালেন্স', ur: 'موجودہ بیلنس' },
+  totalLiability: { en: 'Total Liability', ar: 'إجمالي الالتزام', bn: 'মোট দায়বদ্ধতা', ur: 'کل ذمہ داری' },
+  paymentReference: { en: 'Payment Ref', ar: 'مرجع الدفع', bn: 'পেমেন্ট রেফারেন্স', ur: 'ادائیگی کا حوالہ' },
+
+  // Recurring Bills - Export
+  exportPDF: { en: 'Export PDF', ar: 'تصدير PDF', bn: 'PDF রপ্তানি', ur: 'PDF ایکسپورٹ' },
+  exportXLSX: { en: 'Export Excel', ar: 'تصدير Excel', bn: 'Excel রপ্তানি', ur: 'Excel ایکسپورٹ' },
+  exportReport: { en: 'Export Report', ar: 'تصدير التقرير', bn: 'রপ্তানি রিপোর্ট', ur: 'رپورٹ ایکسپورٹ' },
+  reportGenerated: { en: 'Report Generated', ar: 'تم إنشاء التقرير', bn: 'রিপোর্ট তৈরি হয়েছে', ur: 'رپورٹ بن گئی' },
+  reportTitle: { en: 'Recurring Bills Report', ar: 'تقرير الفواتير المتكررة', bn: 'পুনরাবৃত্তি বিল রিপোর্ট', ur: 'بار بار آنے والے بل کی رپورٹ' },
+  dateGenerated: { en: 'Date Generated', ar: 'تاريخ الإنشاء', bn: 'তৈরির তারিখ', ur: 'تخلیق کی تاریخ' },
+  summaryStatistics: { en: 'Summary Statistics', ar: 'إحصائيات ملخصة', bn: 'সারাংশ পরিসংখ্যান', ur: 'خلاصہ اعداد و شمار' },
+  noBillsToExport: { en: 'No bills to export', ar: 'لا توجد فواتير للتصدير', bn: 'রপ্তানি করার মতো বিল নেই', ur: 'ایکسپورٹ کے لیے کوئی بل نہیں' },
+  exporting: { en: 'Exporting...', ar: 'جاري التصدير...', bn: 'রপ্তানি হচ্ছে...', ur: 'ایکسپورٹ ہو رہا ہے...' },
 } as const
 
 export type TranslationKey = keyof typeof translations
