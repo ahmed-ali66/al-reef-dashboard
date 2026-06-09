@@ -261,9 +261,7 @@ export interface RecurringBillData {
   providerName: string
   serviceType: string
   accountNumber: string | null
-  customerNumber: string | null
   contractNumber: string | null
-  monthlyExpectedAmount: number
   currentOutstanding: number
   previousOutstanding: number
   totalAmountDue: number

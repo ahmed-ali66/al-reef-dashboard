@@ -99,7 +99,6 @@ export async function GET(request: Request) {
     // Mask amounts for non-financial users (staff)
     const financialAccess = isFinancialUser(user.role)
     const amountFields = [
-      'monthlyExpectedAmount',
       'currentOutstanding',
       'previousOutstanding',
       'totalAmountDue',
@@ -135,9 +134,8 @@ export async function POST(request: Request) {
       providerName,
       serviceType,
       accountNumber,
-      customerNumber,
       contractNumber,
-      monthlyExpectedAmount,
+      currentOutstanding,
       nextDueDate,
       billingFrequency,
       autoRenew,
@@ -152,8 +150,6 @@ export async function POST(request: Request) {
     if (!propertyId) return errorResponse('propertyId is required')
     if (!providerName) return errorResponse('providerName is required')
     if (!serviceType) return errorResponse('serviceType is required')
-    if (monthlyExpectedAmount === undefined || monthlyExpectedAmount === null)
-      return errorResponse('monthlyExpectedAmount is required')
     if (!nextDueDate) return errorResponse('nextDueDate is required')
     if (!billingFrequency) return errorResponse('billingFrequency is required')
 
@@ -173,13 +169,12 @@ export async function POST(request: Request) {
     }
 
     // PHASE 3: Use safeDecimal for monetary precision
-    const parsedMonthlyExpectedAmount = safeDecimal(monthlyExpectedAmount)
-    if (parsedMonthlyExpectedAmount <= 0)
-      return errorResponse('monthlyExpectedAmount must be greater than zero')
+    const parsedCurrentOutstanding = safeDecimal(currentOutstanding || 0)
+    if (parsedCurrentOutstanding < 0)
+      return errorResponse('currentOutstanding cannot be negative')
 
-    // On creation, currentOutstanding is 0, so totalAmountDue = monthlyExpectedAmount
-    const currentOutstanding = 0
-    const totalAmountDue = parsedMonthlyExpectedAmount
+    // totalAmountDue = currentOutstanding (what is owed right now)
+    const totalAmountDue = parsedCurrentOutstanding
 
     const bill = await prisma.recurringBill.create({
       data: {
@@ -188,10 +183,8 @@ export async function POST(request: Request) {
         providerName,
         serviceType,
         accountNumber: accountNumber || null,
-        customerNumber: customerNumber || null,
         contractNumber: contractNumber || null,
-        monthlyExpectedAmount: parsedMonthlyExpectedAmount,
-        currentOutstanding,
+        currentOutstanding: parsedCurrentOutstanding,
         previousOutstanding: 0,
         totalAmountDue,
         nextDueDate: new Date(nextDueDate),
@@ -228,7 +221,7 @@ export async function POST(request: Request) {
         propertyId,
         providerName,
         serviceType,
-        monthlyExpectedAmount: parsedMonthlyExpectedAmount,
+        currentOutstanding: parsedCurrentOutstanding,
         totalAmountDue,
         nextDueDate,
         billingFrequency,

@@ -46,9 +46,7 @@ export async function PUT(
       providerName,
       serviceType,
       accountNumber,
-      customerNumber,
       contractNumber,
-      monthlyExpectedAmount,
       currentOutstanding,
       nextDueDate,
       billingFrequency,
@@ -62,14 +60,9 @@ export async function PUT(
     } = body
 
     // PHASE 3: Use safeDecimal for monetary precision
-    const parsedMonthlyExpectedAmount =
-      monthlyExpectedAmount !== undefined ? safeDecimal(monthlyExpectedAmount) : undefined
     const parsedCurrentOutstanding =
       currentOutstanding !== undefined ? safeDecimal(currentOutstanding) : undefined
 
-    if (parsedMonthlyExpectedAmount !== undefined && parsedMonthlyExpectedAmount <= 0) {
-      return errorResponse('monthlyExpectedAmount must be greater than zero')
-    }
     if (parsedCurrentOutstanding !== undefined && parsedCurrentOutstanding < 0) {
       return errorResponse('currentOutstanding cannot be negative')
     }
@@ -79,9 +72,7 @@ export async function PUT(
     if (providerName !== undefined) data.providerName = providerName
     if (serviceType !== undefined) data.serviceType = serviceType
     if (accountNumber !== undefined) data.accountNumber = accountNumber || null
-    if (customerNumber !== undefined) data.customerNumber = customerNumber || null
     if (contractNumber !== undefined) data.contractNumber = contractNumber || null
-    if (parsedMonthlyExpectedAmount !== undefined) data.monthlyExpectedAmount = parsedMonthlyExpectedAmount
     if (parsedCurrentOutstanding !== undefined) data.currentOutstanding = parsedCurrentOutstanding
     if (nextDueDate !== undefined) data.nextDueDate = new Date(nextDueDate)
     if (billingFrequency !== undefined) data.billingFrequency = billingFrequency
@@ -93,11 +84,9 @@ export async function PUT(
     if (ownerName !== undefined) data.ownerName = ownerName || null
     if (propertyManager !== undefined) data.propertyManager = propertyManager || null
 
-    // Recalculate totalAmountDue when monthlyExpectedAmount or currentOutstanding changes
-    if (parsedMonthlyExpectedAmount !== undefined || parsedCurrentOutstanding !== undefined) {
-      const expectedAmount = parsedMonthlyExpectedAmount ?? safeDecimal(existing.monthlyExpectedAmount)
-      const outstanding = parsedCurrentOutstanding ?? safeDecimal(existing.currentOutstanding)
-      data.totalAmountDue = safeDecimal(expectedAmount + outstanding)
+    // Recalculate totalAmountDue when currentOutstanding changes
+    if (parsedCurrentOutstanding !== undefined) {
+      data.totalAmountDue = parsedCurrentOutstanding
     }
 
     // PHASE 2: Use OCC-protected update
@@ -143,7 +132,6 @@ export async function PUT(
         after: {
           providerName: fullBill.providerName,
           serviceType: fullBill.serviceType,
-          monthlyExpectedAmount: fullBill.monthlyExpectedAmount,
           currentOutstanding: fullBill.currentOutstanding,
           totalAmountDue: fullBill.totalAmountDue,
           nextDueDate: fullBill.nextDueDate,
@@ -202,7 +190,7 @@ export async function DELETE(
         softDelete: true,
         providerName: existing.providerName,
         serviceType: existing.serviceType,
-        monthlyExpectedAmount: existing.monthlyExpectedAmount,
+        currentOutstanding: existing.currentOutstanding,
       },
     })
 

@@ -33,9 +33,7 @@ const emptyBillForm = {
   providerName: '',
   serviceType: 'electricity',
   accountNumber: '',
-  customerNumber: '',
   contractNumber: '',
-  monthlyExpectedAmount: 0,
   currentOutstanding: 0,
   nextDueDate: new Date().toISOString().split('T')[0],
   billingFrequency: 'monthly',
@@ -160,9 +158,7 @@ export default function RecurringBills() {
       providerName: bill.providerName,
       serviceType: bill.serviceType,
       accountNumber: bill.accountNumber || '',
-      customerNumber: bill.customerNumber || '',
       contractNumber: bill.contractNumber || '',
-      monthlyExpectedAmount: bill.monthlyExpectedAmount,
       currentOutstanding: bill.currentOutstanding,
       nextDueDate: new Date(bill.nextDueDate).toISOString().split('T')[0],
       billingFrequency: bill.billingFrequency,
@@ -178,7 +174,7 @@ export default function RecurringBills() {
 
   const openPayment = (bill: RecurringBillData) => {
     setPayingBill(bill)
-    setPaymentForm({ ...emptyPaymentForm, amount: bill.totalAmountDue || bill.monthlyExpectedAmount })
+    setPaymentForm({ ...emptyPaymentForm, amount: bill.totalAmountDue || bill.currentOutstanding })
     setPaymentDialogOpen(true)
   }
 
@@ -201,11 +197,9 @@ export default function RecurringBills() {
     try {
       const body = {
         ...billForm,
-        monthlyExpectedAmount: Number(billForm.monthlyExpectedAmount),
         currentOutstanding: Number(billForm.currentOutstanding),
         gracePeriodDays: Number(billForm.gracePeriodDays),
         accountNumber: billForm.accountNumber || null,
-        customerNumber: billForm.customerNumber || null,
         contractNumber: billForm.contractNumber || null,
         buildingName: billForm.buildingName || null,
         ownerName: billForm.ownerName || null,
@@ -506,7 +500,6 @@ export default function RecurringBills() {
                 <TableRow>
                   <TableHead>{t('providerName', lang)}</TableHead>
                   <TableHead>{t('building', lang)}</TableHead>
-                  <TableHead>{t('monthlyExpectedAmount', lang)}</TableHead>
                   <TableHead>{t('totalDue', lang)}</TableHead>
                   <TableHead>{t('currentOutstanding', lang)}</TableHead>
                   <TableHead>{t('nextDueDate', lang)}</TableHead>
@@ -530,9 +523,6 @@ export default function RecurringBills() {
                       </TableCell>
                       <TableCell className="text-sm">
                         {bill.property ? getNameByLang(bill.property, lang) : bill.buildingName || '—'}
-                      </TableCell>
-                      <TableCell className="font-semibold text-sm">
-                        {displayAmount(bill.monthlyExpectedAmount)}
                       </TableCell>
                       <TableCell className="font-semibold text-sm text-terracotta">
                         {displayAmount(bill.totalAmountDue)}
@@ -677,14 +667,10 @@ export default function RecurringBills() {
             </div>
 
             {/* Account Numbers */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <Label>{t('accountNumber', lang)}</Label>
                 <Input value={billForm.accountNumber} onChange={e => setBillForm({ ...billForm, accountNumber: e.target.value })} />
-              </div>
-              <div>
-                <Label>{t('customerNumber', lang)}</Label>
-                <Input value={billForm.customerNumber} onChange={e => setBillForm({ ...billForm, customerNumber: e.target.value })} />
               </div>
               <div>
                 <Label>{t('contractNumber', lang)}</Label>
@@ -692,12 +678,8 @@ export default function RecurringBills() {
               </div>
             </div>
 
-            {/* Amounts & Due Date */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
-                <Label>{t('monthlyExpectedAmount', lang)} (AED) *</Label>
-                <Input type="number" value={billForm.monthlyExpectedAmount} onChange={e => setBillForm({ ...billForm, monthlyExpectedAmount: Number(e.target.value) })} />
-              </div>
+            {/* Amount & Due Date */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <Label>{t('currentOutstanding', lang)} (AED)</Label>
                 <Input type="number" value={billForm.currentOutstanding} onChange={e => setBillForm({ ...billForm, currentOutstanding: Number(e.target.value) })} />
@@ -751,7 +733,7 @@ export default function RecurringBills() {
             <Button
               onClick={handleSaveBill}
               className="bg-emerald hover:bg-emerald/90 text-white"
-              disabled={!billForm.propertyId || !billForm.providerName || billForm.monthlyExpectedAmount <= 0 || saving}
+              disabled={!billForm.propertyId || !billForm.providerName || saving}
             >
               {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
               {t('save', lang)}
@@ -860,10 +842,6 @@ export default function RecurringBills() {
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">{t('serviceType', lang)}</span>
                     <Badge variant="secondary" className="text-xs">{getServiceTypeLabel(historyBill.serviceType, lang)}</Badge>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">{t('monthlyExpectedAmount', lang)}</span>
-                    <span className="font-medium">{displayAmount(historyBill.monthlyExpectedAmount)}</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">{t('currentOutstanding', lang)}</span>

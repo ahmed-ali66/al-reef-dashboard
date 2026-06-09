@@ -454,11 +454,9 @@ model RecurringBill {
   providerName           String    // e.g. "DEWA", "Etisalat"
   serviceType            String    // electricity, water, etisalat, du, internet, municipality, service_charge, waste, maintenance_contract, security_contract, cleaning_contract, custom
   accountNumber          String?
-  customerNumber         String?
   contractNumber         String?
 
   // Financial Information
-  monthlyExpectedAmount  Decimal   @db.Decimal(10,2)
   currentOutstanding     Decimal   @default(0) @db.Decimal(10,2)
   previousOutstanding    Decimal   @default(0) @db.Decimal(10,2)
   totalAmountDue         Decimal   @default(0) @db.Decimal(10,2)

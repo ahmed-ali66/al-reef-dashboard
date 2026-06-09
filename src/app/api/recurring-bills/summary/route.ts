@@ -119,7 +119,6 @@ export async function GET(request: Request) {
         _sum: {
           totalAmountDue: true,
           currentOutstanding: true,
-          monthlyExpectedAmount: true,
         },
         _count: true,
       }),
@@ -136,7 +135,6 @@ export async function GET(request: Request) {
     }
 
     const amountFields = [
-      'monthlyExpectedAmount',
       'currentOutstanding',
       'previousOutstanding',
       'totalAmountDue',
@@ -165,9 +163,6 @@ export async function GET(request: Request) {
           : 0,
         totalOutstanding: financialAccess
           ? safeNumber(item._sum.currentOutstanding)
-          : 0,
-        totalMonthlyExpected: financialAccess
-          ? safeNumber(item._sum.monthlyExpectedAmount)
           : 0,
       })),
     }

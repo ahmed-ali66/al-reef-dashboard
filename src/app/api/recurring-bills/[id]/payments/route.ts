@@ -122,8 +122,8 @@ export async function POST(
         },
       })
 
-      // Update the bill
-      const newTotalAmountDue = safeDecimal(bill.monthlyExpectedAmount) + safeDecimal(outstandingAfter)
+      // Update the bill — totalAmountDue equals currentOutstanding after payment
+      const newTotalAmountDue = safeDecimal(outstandingAfter)
       await tx.recurringBill.update({
         where: { id },
         data: {

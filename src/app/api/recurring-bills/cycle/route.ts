@@ -15,7 +15,7 @@ import {
 // When a bill's due date has passed and a new cycle begins:
 //   - Set previousOutstanding = currentOutstanding
 //   - Keep currentOutstanding as-is (carry forward)
-//   - Recalculate totalAmountDue = monthlyExpectedAmount + currentOutstanding
+//   - totalAmountDue = currentOutstanding
 //   - Set nextDueDate based on billingFrequency
 export async function POST(request: Request) {
   try {
@@ -75,8 +75,7 @@ export async function POST(request: Request) {
 
     // Carry forward outstanding
     const currentOutstanding = safeDecimal(bill.currentOutstanding)
-    const monthlyExpected = safeDecimal(bill.monthlyExpectedAmount)
-    const newTotalAmountDue = safeDecimal(monthlyExpected + currentOutstanding)
+    const newTotalAmountDue = currentOutstanding
 
     // Update the bill
     const updatedBill = await prisma.recurringBill.update({
