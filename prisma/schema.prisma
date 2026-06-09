@@ -39,6 +39,7 @@ model Company {
   adjustments   RentAdjustment[]
   recurringBills RecurringBill[]
   billPayments   BillPayment[]
+  billCycles     BillCycle[]
 
   @@map("companies")
 }
@@ -485,6 +486,7 @@ model RecurringBill {
   deletedAt              DateTime? // soft delete
 
   payments               BillPayment[]
+  cycles                 BillCycle[]
 
   @@index([companyId])
   @@index([propertyId])
@@ -511,8 +513,46 @@ model BillPayment {
   createdBy         String        // user ID
   createdAt         DateTime      @default(now())
 
+  billCycleId          String?
+  billCycle            BillCycle? @relation(fields: [billCycleId], references: [id])
+
   @@index([companyId])
   @@index([recurringBillId])
   @@index([paymentDate])
+  @@index([billCycleId])
   @@map("bill_payments")
+}
+
+model BillCycle {
+  id                  String    @id @default(cuid())
+  companyId           String
+  company             Company   @relation(fields: [companyId], references: [id])
+  recurringBillId     String
+  recurringBill       RecurringBill @relation(fields: [recurringBillId], references: [id], onDelete: Cascade)
+
+  // Period info
+  periodStart         DateTime  // start of billing period (e.g. 2026-06-01)
+  periodEnd           DateTime  // end of billing period (e.g. 2026-06-30)
+  dueDate             DateTime  // when payment is due for this cycle
+
+  // Financial
+  amount              Decimal   @default(0) @db.Decimal(10,2)  // the bill amount for THIS period
+  paidAmount          Decimal   @default(0) @db.Decimal(10,2)  // total paid against this cycle
+  outstandingAmount   Decimal   @default(0) @db.Decimal(10,2)  // remaining to pay for this cycle
+
+  // Status
+  status              String    @default("pending") // pending, paid, partially_paid, overdue, cancelled
+
+  notes               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  payments            BillPayment[]
+
+  @@index([companyId])
+  @@index([recurringBillId])
+  @@index([status])
+  @@index([dueDate])
+  @@index([periodStart, periodEnd])
+  @@map("bill_cycles")
 }

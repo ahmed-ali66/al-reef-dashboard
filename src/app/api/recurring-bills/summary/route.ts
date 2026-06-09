@@ -38,6 +38,7 @@ export async function GET(request: Request) {
       upcomingBills,
       overdueBills,
       serviceTypeBreakdown,
+      cycleAgg,
     ] = await Promise.all([
       // totalBills: count of active bills
       prisma.recurringBill.count({
@@ -122,6 +123,13 @@ export async function GET(request: Request) {
         },
         _count: true,
       }),
+
+      // Cycle-level aggregation
+      prisma.billCycle.aggregate({
+        where: { companyId: user.companyId, status: { in: ['pending', 'partially_paid', 'overdue'] } },
+        _sum: { outstandingAmount: true, amount: true, paidAmount: true },
+        _count: true,
+      }),
     ])
 
     // Build financial mask helper for staff
@@ -165,6 +173,12 @@ export async function GET(request: Request) {
           ? safeNumber(item._sum.currentOutstanding)
           : 0,
       })),
+      cycleSummary: {
+        totalCycles: cycleAgg._count,
+        totalCycleOutstanding: financialAccess ? safeNumber(cycleAgg._sum.outstandingAmount) : 0,
+        totalCycleAmount: financialAccess ? safeNumber(cycleAgg._sum.amount) : 0,
+        totalCyclePaid: financialAccess ? safeNumber(cycleAgg._sum.paidAmount) : 0,
+      },
     }
 
     return successResponse(data)

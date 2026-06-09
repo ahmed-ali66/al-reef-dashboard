@@ -88,6 +88,14 @@ export async function GET(request: Request) {
           _count: {
             select: { payments: true },
           },
+          cycles: {
+            where: { status: { in: ['pending', 'partially_paid', 'overdue'] } },
+            orderBy: { dueDate: 'desc' },
+            take: 1,
+            include: {
+              _count: { select: { payments: true } },
+            },
+          },
         },
         orderBy: { nextDueDate: 'asc' },
         skip: pagination.skip,
@@ -207,6 +215,21 @@ export async function POST(request: Request) {
             nameUr: true,
           },
         },
+      },
+    })
+
+    // Create the first billing cycle
+    await prisma.billCycle.create({
+      data: {
+        companyId: user.companyId,
+        recurringBillId: bill.id,
+        periodStart: new Date(new Date(nextDueDate).getTime() - 30 * 24 * 60 * 60 * 1000), // approximate
+        periodEnd: new Date(new Date(nextDueDate).getTime() - 24 * 60 * 60 * 1000),
+        dueDate: new Date(nextDueDate),
+        amount: totalAmountDue,
+        paidAmount: 0,
+        outstandingAmount: totalAmountDue,
+        status: 'pending',
       },
     })
 

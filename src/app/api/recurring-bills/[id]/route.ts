@@ -113,6 +113,10 @@ export async function PUT(
             nameUr: true,
           },
         },
+        cycles: {
+          orderBy: { dueDate: 'desc' },
+          take: 5,
+        },
       },
     })
 

@@ -131,6 +131,13 @@ export async function GET(request: Request) {
     const utilityDueThisMonth = safeNumber(utilityDueThisMonthAggregate._sum.totalAmountDue)
     const utilityPaidThisMonth = safeNumber(utilityPaidThisMonthAggregate._sum.amount)
 
+    // ─── 2b-2. Cycle aggregation for recurring bills ───
+    const utilityCycleAgg = await prisma.billCycle.aggregate({
+      where: { companyId, status: { in: ['pending', 'partially_paid', 'overdue'] } },
+      _sum: { outstandingAmount: true, amount: true, paidAmount: true },
+      _count: true,
+    })
+
     // ─── 2c. Adjustments ───
     const currentMonthAdjustmentsAggregate = await prisma.rentAdjustment.aggregate({
       where: {
@@ -291,6 +298,12 @@ export async function GET(request: Request) {
           totalAmountDue: safeNumber(item._sum.totalAmountDue),
           totalOutstanding: safeNumber(item._sum.currentOutstanding),
         })),
+        cycleSummary: {
+          totalCycles: utilityCycleAgg._count,
+          totalCycleOutstanding: safeNumber(utilityCycleAgg._sum.outstandingAmount),
+          totalCycleAmount: safeNumber(utilityCycleAgg._sum.amount),
+          totalCyclePaid: safeNumber(utilityCycleAgg._sum.paidAmount),
+        },
       },
       // Adjustments
       totalAdjustments,

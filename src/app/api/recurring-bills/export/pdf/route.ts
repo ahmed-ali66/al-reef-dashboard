@@ -54,6 +54,13 @@ export async function GET(request: Request) {
             orderBy: { paymentDate: 'desc' },
             take: 1,
           },
+          cycles: {
+            orderBy: { dueDate: 'desc' as const },
+            take: 3,
+            include: {
+              _count: { select: { payments: true } },
+            },
+          },
         },
         orderBy: { nextDueDate: 'asc' },
       }),

@@ -9,14 +9,12 @@ import {
   forbiddenResponse,
   isFinancialUser,
   safeDecimal,
+  parsePaginationParams,
+  paginatedResponse,
 } from '@/lib/api-utils'
 
 // POST /api/recurring-bills/cycle — advance billing cycle for a bill
-// When a bill's due date has passed and a new cycle begins:
-//   - Set previousOutstanding = currentOutstanding
-//   - Keep currentOutstanding as-is (carry forward)
-//   - totalAmountDue = currentOutstanding
-//   - Set nextDueDate based on billingFrequency
+// Creates a NEW BillCycle with the new amount instead of just overwriting
 export async function POST(request: Request) {
   try {
     const user = await getAuthUser()
@@ -28,78 +26,84 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { billId } = body
+    const { billId, newAmount } = body
 
     if (!billId) return errorResponse('billId is required')
+    if (newAmount === undefined || newAmount === null) return errorResponse('newAmount is required — the bill amount for the new cycle')
 
-    // Verify bill exists and belongs to user's company
+    const parsedNewAmount = safeDecimal(newAmount)
+    if (parsedNewAmount < 0) return errorResponse('newAmount cannot be negative')
+
     const bill = await prisma.recurringBill.findFirst({
       where: { id: billId, companyId: user.companyId, deletedAt: null },
     })
-    if (!bill) {
-      return errorResponse('Recurring bill not found', 404)
-    }
+    if (!bill) return errorResponse('Recurring bill not found', 404)
 
-    // Verify the bill's due date has passed (or is today)
-    const now = new Date()
-    if (bill.nextDueDate > now) {
-      return errorResponse('Cannot advance cycle: bill due date has not yet passed')
-    }
-
-    // Calculate new nextDueDate based on billingFrequency
+    // Calculate new due date
     const currentDueDate = new Date(bill.nextDueDate)
     let newDueDate: Date
-
     switch (bill.billingFrequency) {
-      case 'monthly':
-        newDueDate = new Date(currentDueDate)
-        newDueDate.setMonth(newDueDate.getMonth() + 1)
-        break
-      case 'quarterly':
-        newDueDate = new Date(currentDueDate)
-        newDueDate.setMonth(newDueDate.getMonth() + 3)
-        break
-      case 'semi_annual':
-        newDueDate = new Date(currentDueDate)
-        newDueDate.setMonth(newDueDate.getMonth() + 6)
-        break
-      case 'annual':
-        newDueDate = new Date(currentDueDate)
-        newDueDate.setFullYear(newDueDate.getFullYear() + 1)
-        break
-      default:
-        return errorResponse(
-          `Invalid billingFrequency: ${bill.billingFrequency}. Must be monthly, quarterly, semi_annual, or annual`
-        )
+      case 'monthly': newDueDate = new Date(currentDueDate); newDueDate.setMonth(newDueDate.getMonth() + 1); break
+      case 'quarterly': newDueDate = new Date(currentDueDate); newDueDate.setMonth(newDueDate.getMonth() + 3); break
+      case 'semi_annual': newDueDate = new Date(currentDueDate); newDueDate.setMonth(newDueDate.getMonth() + 6); break
+      case 'annual': newDueDate = new Date(currentDueDate); newDueDate.setFullYear(newDueDate.getFullYear() + 1); break
+      default: return errorResponse('Invalid billingFrequency')
     }
 
-    // Carry forward outstanding
-    const currentOutstanding = safeDecimal(bill.currentOutstanding)
-    const newTotalAmountDue = currentOutstanding
-
-    // Update the bill
-    const updatedBill = await prisma.recurringBill.update({
-      where: { id: billId },
-      data: {
-        previousOutstanding: currentOutstanding,
-        // currentOutstanding stays as-is (carry forward)
-        totalAmountDue: newTotalAmountDue,
-        nextDueDate: newDueDate,
-      },
-      include: {
-        property: {
-          select: {
-            id: true,
-            name: true,
-            nameAr: true,
-            nameBn: true,
-            nameUr: true,
-          },
+    const result = await prisma.$transaction(async (tx) => {
+      // Mark current open cycles as their final status
+      const openCycles = await tx.billCycle.findMany({
+        where: {
+          recurringBillId: billId,
+          companyId: user.companyId,
+          status: { in: ['pending', 'partially_paid'] },
         },
-      },
+      })
+      for (const cycle of openCycles) {
+        const outstanding = safeDecimal(cycle.outstandingAmount)
+        await tx.billCycle.update({
+          where: { id: cycle.id },
+          data: { status: outstanding > 0 ? 'overdue' : 'paid' },
+        })
+      }
+
+      // Create the new billing cycle
+      const periodStart = new Date(currentDueDate)
+      const periodEnd = new Date(newDueDate.getTime() - 24 * 60 * 60 * 1000)
+
+      const newCycle = await tx.billCycle.create({
+        data: {
+          companyId: user.companyId,
+          recurringBillId: billId,
+          periodStart,
+          periodEnd,
+          dueDate: newDueDate,
+          amount: parsedNewAmount,
+          paidAmount: 0,
+          outstandingAmount: parsedNewAmount,
+          status: 'pending',
+        },
+      })
+
+      // Update the bill
+      const updatedBill = await tx.recurringBill.update({
+        where: { id: billId },
+        data: {
+          previousOutstanding: safeDecimal(bill.currentOutstanding),
+          currentOutstanding: parsedNewAmount,
+          totalAmountDue: parsedNewAmount,
+          nextDueDate: newDueDate,
+        },
+        include: {
+          property: { select: { id: true, name: true, nameAr: true, nameBn: true, nameUr: true } },
+          cycles: { orderBy: { dueDate: 'desc' }, take: 5 },
+        },
+      })
+
+      return { bill: updatedBill, cycle: newCycle }
     })
 
-    // Audit log
+    // Audit
     await createAuditLog({
       action: 'CYCLE_ADVANCE',
       entity: 'RecurringBill',
@@ -107,16 +111,15 @@ export async function POST(request: Request) {
       userId: user.id,
       companyId: user.companyId,
       details: {
-        previousOutstanding: currentOutstanding,
-        currentOutstanding,
-        newTotalAmountDue,
         previousDueDate: bill.nextDueDate,
         newDueDate: newDueDate.toISOString(),
+        newCycleAmount: parsedNewAmount,
         billingFrequency: bill.billingFrequency,
+        newCycleId: result.cycle.id,
       },
     })
 
-    return successResponse(serialize(updatedBill))
+    return successResponse(serialize(result))
   } catch (error) {
     console.error('Error advancing billing cycle:', error)
     return errorResponse('Failed to advance billing cycle', 500)

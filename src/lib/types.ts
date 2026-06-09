@@ -282,6 +282,31 @@ export interface RecurringBillData {
   property?: PropertyData
   _count?: { payments: number }
   payments?: BillPaymentData[]
+  cycles?: BillCycleData[]
+}
+
+export interface BillCycleData {
+  id: string
+  companyId: string
+  recurringBillId: string
+  periodStart: string
+  periodEnd: string
+  dueDate: string
+  amount: number
+  paidAmount: number
+  outstandingAmount: number
+  status: string
+  notes: string | null
+  createdAt: string
+  updatedAt: string
+  payments?: BillPaymentData[]
+  _count?: { payments: number }
+  recurringBill?: {
+    id: string
+    providerName: string
+    serviceType: string
+    buildingName: string | null
+  }
 }
 
 export interface BillPaymentData {
@@ -297,6 +322,8 @@ export interface BillPaymentData {
   outstandingAfter: number
   createdBy: string
   createdAt: string
+  billCycleId?: string | null
+  billCycle?: { id: string; amount: number; periodStart: string; periodEnd: string; status: string }
   recurringBill?: {
     id: string
     providerName: string

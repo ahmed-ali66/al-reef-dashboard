@@ -45,6 +45,17 @@ export async function GET(
         orderBy: { paymentDate: 'desc' },
         skip: pagination.skip,
         take: pagination.limit,
+        include: {
+          billCycle: {
+            select: {
+              id: true,
+              amount: true,
+              periodStart: true,
+              periodEnd: true,
+              status: true,
+            },
+          },
+        },
       }),
       prisma.billPayment.count({ where }),
     ])
@@ -90,7 +101,7 @@ export async function POST(
 
     const body = await request.json()
 
-    const { amount, paymentDate, paymentMethod, reference, notes } = body
+    const { amount, paymentDate, paymentMethod, reference, notes, billCycleId } = body
 
     // Validate required fields
     if (amount === undefined || amount === null) return errorResponse('amount is required')
@@ -99,6 +110,20 @@ export async function POST(
     // PHASE 3: Use safeDecimal for monetary precision
     const parsedAmount = safeDecimal(amount)
     if (parsedAmount <= 0) return errorResponse('amount must be greater than zero')
+
+    // If no cycle specified, find the latest open cycle for this bill
+    let targetCycleId = billCycleId || null
+    if (!targetCycleId) {
+      const openCycle = await prisma.billCycle.findFirst({
+        where: {
+          recurringBillId: id,
+          companyId: user.companyId,
+          status: { in: ['pending', 'partially_paid', 'overdue'] },
+        },
+        orderBy: { dueDate: 'asc' },
+      })
+      targetCycleId = openCycle?.id || null
+    }
 
     // Calculate outstanding before and after
     const outstandingBefore = safeDecimal(bill.currentOutstanding)
@@ -119,6 +144,7 @@ export async function POST(
           outstandingBefore,
           outstandingAfter: safeDecimal(outstandingAfter),
           createdBy: user.id,
+          billCycleId: targetCycleId,
         },
       })
 
@@ -133,6 +159,23 @@ export async function POST(
           totalAmountDue: newTotalAmountDue,
         },
       })
+
+      // If linked to a cycle, update the cycle's amounts
+      if (targetCycleId) {
+        const cycle = await tx.billCycle.findUnique({ where: { id: targetCycleId } })
+        if (cycle) {
+          const newPaidAmount = safeDecimal(cycle.paidAmount) + parsedAmount
+          const newOutstanding = Math.max(0, safeDecimal(cycle.amount) - newPaidAmount)
+          await tx.billCycle.update({
+            where: { id: targetCycleId },
+            data: {
+              paidAmount: newPaidAmount,
+              outstandingAmount: safeDecimal(newOutstanding),
+              status: newOutstanding === 0 ? 'paid' : (newPaidAmount > 0 ? 'partially_paid' : cycle.status),
+            },
+          })
+        }
+      }
 
       return payment
     })
@@ -152,6 +195,7 @@ export async function POST(
         outstandingAfter: safeDecimal(outstandingAfter),
         paymentMethod: paymentMethod || null,
         reference: reference || null,
+        billCycleId: targetCycleId,
       },
     })
 

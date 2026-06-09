@@ -11,6 +11,26 @@ import {
   safeDecimal,
 } from '@/lib/api-utils'
 
+// Helper to recalculate cycle amounts from all payments
+async function recalculateCycle(tx: any, cycleId: string, companyId: string) {
+  const cycle = await tx.billCycle.findUnique({ where: { id: cycleId } })
+  if (!cycle) return
+
+  const cyclePayments = await tx.billPayment.findMany({
+    where: { billCycleId: cycleId, companyId },
+  })
+  const totalPaid = cyclePayments.reduce((sum: number, p: any) => sum + safeDecimal(p.amount), 0)
+  const newOutstanding = Math.max(0, safeDecimal(cycle.amount) - totalPaid)
+  await tx.billCycle.update({
+    where: { id: cycleId },
+    data: {
+      paidAmount: safeDecimal(totalPaid),
+      outstandingAmount: safeDecimal(newOutstanding),
+      status: newOutstanding === 0 ? 'paid' : (totalPaid > 0 ? 'partially_paid' : 'pending'),
+    },
+  })
+}
+
 // PUT /api/recurring-bills/payments/[paymentId] — edit a payment
 export async function PUT(
   request: Request,
@@ -82,6 +102,11 @@ export async function PUT(
             totalAmountDue: safeDecimal(newOutstanding),
           },
         })
+
+        // If the payment is linked to a cycle, update cycle amounts
+        if (payment.billCycleId) {
+          await recalculateCycle(tx, payment.billCycleId, user.companyId)
+        }
       })
     } else {
       // Just update non-amount fields
@@ -108,6 +133,15 @@ export async function PUT(
             buildingName: true,
             currentOutstanding: true,
             totalAmountDue: true,
+          },
+        },
+        billCycle: {
+          select: {
+            id: true,
+            amount: true,
+            periodStart: true,
+            periodEnd: true,
+            status: true,
           },
         },
       },
@@ -169,6 +203,7 @@ export async function DELETE(
     const deletedAmount = safeDecimal(payment.amount)
     const currentOutstanding = safeDecimal(payment.recurringBill.currentOutstanding)
     const newOutstanding = currentOutstanding + deletedAmount
+    const cycleId = payment.billCycleId
 
     // Delete the payment and update the bill in a transaction
     await prisma.$transaction(async (tx) => {
@@ -215,6 +250,11 @@ export async function DELETE(
             },
           })
         }
+      }
+
+      // If the payment was linked to a cycle, recalculate cycle amounts
+      if (cycleId) {
+        await recalculateCycle(tx, cycleId, user.companyId)
       }
     })
 

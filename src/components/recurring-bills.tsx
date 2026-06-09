@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import type { RecurringBillData, BillPaymentData, PropertyData } from '@/lib/types'
+import type { RecurringBillData, BillPaymentData, BillCycleData, PropertyData } from '@/lib/types'
 import { useAppStore, isOwnerOrAdmin } from '@/lib/store'
 import { formatAED, formatDate } from '@/lib/utils'
 import { t, getServiceTypeLabel, getFrequencyLabel, getNameByLang, type Language } from '@/lib/i18n'
@@ -16,7 +16,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from '@/components/ui/textarea'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Zap, Plus, Pencil, Trash2, CreditCard, FastForward, Loader2, ShieldAlert, Search, AlertTriangle, FileDown, FileSpreadsheet, Calendar, X } from 'lucide-react'
+import { Zap, Plus, Pencil, Trash2, CreditCard, FastForward, Loader2, ShieldAlert, Search, AlertTriangle, FileDown, FileSpreadsheet, Calendar, X, History, ChevronRight } from 'lucide-react'
 
 const SERVICE_TYPES = [
   'electricity', 'water', 'etisalat', 'du', 'internet',
@@ -85,6 +85,15 @@ export default function RecurringBills() {
   const [allPayments, setAllPayments] = useState<BillPaymentData[]>([])
   const [allPaymentsTotal, setAllPaymentsTotal] = useState(0)
   const [editingPayment, setEditingPayment] = useState<BillPaymentData | null>(null)
+
+  // Cycle-related state
+  const [billCycles, setBillCycles] = useState<BillCycleData[]>([])
+  const [cyclesDialogOpen, setCyclesDialogOpen] = useState(false)
+  const [cyclesBill, setCyclesBill] = useState<RecurringBillData | null>(null)
+  const [newCycleDialogOpen, setNewCycleDialogOpen] = useState(false)
+  const [newCycleAmount, setNewCycleAmount] = useState(0)
+  const [newCycleBill, setNewCycleBill] = useState<RecurringBillData | null>(null)
+  const [selectedCycleId, setSelectedCycleId] = useState<string | null>(null)
 
   // Forms
   const [billForm, setBillForm] = useState({ ...emptyBillForm })
@@ -292,8 +301,34 @@ export default function RecurringBills() {
 
   const openPayment = (bill: RecurringBillData) => {
     setPayingBill(bill)
+    setSelectedCycleId(null)
     setPaymentForm({ ...emptyPaymentForm, amount: bill.totalAmountDue || bill.currentOutstanding })
     setPaymentDialogOpen(true)
+  }
+
+  const fetchCycles = async (billId: string) => {
+    try {
+      const res = await fetch(`/api/recurring-bills/${billId}/cycles?limit=50`)
+      if (res.ok) {
+        const data = await res.json()
+        const cycleList = data.data?.data || data.data || data || []
+        setBillCycles(Array.isArray(cycleList) ? cycleList : [])
+      }
+    } catch (e) {
+      console.error('Failed to fetch cycles:', e)
+    }
+  }
+
+  const openCyclesDialog = (bill: RecurringBillData) => {
+    setCyclesBill(bill)
+    setCyclesDialogOpen(true)
+    fetchCycles(bill.id)
+  }
+
+  const openNewCycleDialog = (bill: RecurringBillData) => {
+    setNewCycleBill(bill)
+    setNewCycleAmount(bill.totalAmountDue || bill.currentOutstanding || 0)
+    setNewCycleDialogOpen(true)
   }
 
   const openHistory = async (bill: RecurringBillData) => {
@@ -373,6 +408,7 @@ export default function RecurringBills() {
           paymentMethod: paymentForm.paymentMethod,
           reference: paymentForm.reference || null,
           notes: paymentForm.notes || null,
+          billCycleId: selectedCycleId || null,
         }),
       })
       if (!res.ok) {
@@ -391,23 +427,29 @@ export default function RecurringBills() {
     }
   }
 
-  const handleAdvanceCycle = async (bill: RecurringBillData) => {
-    if (!confirm(t('advanceCycle', lang) + '?')) return
+  const handleAdvanceCycle = async () => {
+    if (!newCycleBill) return
+    setSaving(true)
     try {
       const res = await fetch('/api/recurring-bills/cycle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ billId: bill.id }),
+        body: JSON.stringify({ billId: newCycleBill.id, newAmount: newCycleAmount }),
       })
       if (!res.ok) {
         const err = await res.json()
         alert(err.error || 'Failed to advance cycle')
+        setSaving(false)
         return
       }
+      setNewCycleDialogOpen(false)
+      setNewCycleBill(null)
       fetchBills()
     } catch (error) {
       console.error('Failed to advance cycle:', error)
       alert('Failed to advance cycle. Please try again.')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -1157,6 +1199,13 @@ export default function RecurringBills() {
                             <CreditCard className="w-3.5 h-3.5" />
                           </button>
                           <button
+                            onClick={() => openCyclesDialog(bill)}
+                            className="p-1.5 rounded hover:bg-muted text-muted-foreground"
+                            title={t('viewCycles', lang)}
+                          >
+                            <History className="w-3.5 h-3.5" />
+                          </button>
+                          <button
                             onClick={() => openPayment(bill)}
                             className="p-1.5 rounded hover:bg-emerald-50 text-emerald-600"
                             title={t('recordPayment', lang)}
@@ -1173,7 +1222,7 @@ export default function RecurringBills() {
                               </button>
                               {overdue && (
                                 <button
-                                  onClick={() => handleAdvanceCycle(bill)}
+                                  onClick={() => openNewCycleDialog(bill)}
                                   className="p-1.5 rounded hover:bg-amber-50 text-amber-600"
                                   title={t('advanceCycle', lang)}
                                 >
@@ -1365,6 +1414,24 @@ export default function RecurringBills() {
                 </CardContent>
               </Card>
 
+              {/* Cycle selector */}
+              {payingBill.cycles && payingBill.cycles.length > 0 && (
+                <div>
+                  <Label>{t('payAgainstCycle', lang)}</Label>
+                  <Select value={selectedCycleId || '__auto__'} onValueChange={v => setSelectedCycleId(v === '__auto__' ? null : v)}>
+                    <SelectTrigger><SelectValue placeholder={t('selectCycle', lang)} /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__auto__">{t('currentCycle', lang)} ({t('cycleOutstanding', lang)}: {displayAmount(payingBill.cycles?.[0]?.outstandingAmount ?? payingBill.currentOutstanding)})</SelectItem>
+                      {payingBill.cycles.map(c => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {formatDate(c.periodStart)} — {formatDate(c.periodEnd)} | {formatAED(c.outstandingAmount)} | {c.status}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
               <div>
                 <Label>{t('paymentAmount', lang)} (AED) *</Label>
                 <Input
@@ -1543,6 +1610,14 @@ export default function RecurringBills() {
                       {getServiceTypeLabel(editingPayment.recurringBill?.serviceType || '', lang)}
                     </Badge>
                   </div>
+                  {editingPayment.billCycle && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">{t('billingCycle', lang)}</span>
+                      <span className="font-medium text-xs">
+                        {formatDate(editingPayment.billCycle.periodStart)} — {formatDate(editingPayment.billCycle.periodEnd)}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">{t('originalAmount', lang)}</span>
                     <span className="font-medium">{formatAED(editingPayment.amount)}</span>
@@ -1600,6 +1675,134 @@ export default function RecurringBills() {
             >
               {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
               {t('save', lang)}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* ─── Billing Cycles Dialog ─── */}
+      <Dialog open={cyclesDialogOpen} onOpenChange={setCyclesDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {t('billingCycles', lang)} — {cyclesBill?.providerName}
+            </DialogTitle>
+          </DialogHeader>
+          {cyclesBill && (
+            <div className="space-y-4">
+              <Card>
+                <CardContent className="p-3 space-y-1">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">{t('serviceType', lang)}</span>
+                    <Badge variant="secondary" className="text-xs">{getServiceTypeLabel(cyclesBill.serviceType, lang)}</Badge>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">{t('totalCycles', lang)}</span>
+                    <span className="font-medium">{billCycles.length}</span>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {billCycles.length === 0 ? (
+                <p className="text-center py-6 text-muted-foreground text-sm">{t('noCycles', lang)}</p>
+              ) : (
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {billCycles.map((cycle, idx) => (
+                    <Card key={cycle.id} className={idx === 0 && (cycle.status === 'pending' || cycle.status === 'partially_paid' || cycle.status === 'overdue') ? 'border-emerald-300 bg-emerald-50/50' : ''}>
+                      <CardContent className="p-3">
+                        <div className="flex items-start justify-between">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              {idx === 0 && (cycle.status === 'pending' || cycle.status === 'partially_paid' || cycle.status === 'overdue') && (
+                                <Badge className="bg-emerald-100 text-emerald-800 text-xs">{t('currentCycle', lang)}</Badge>
+                              )}
+                              {idx > 0 && (
+                                <Badge variant="secondary" className="text-xs">{t('previousCycles', lang)}</Badge>
+                              )}
+                            </div>
+                            <p className="text-sm font-medium">
+                              {formatDate(cycle.periodStart)} — {formatDate(cycle.periodEnd)}
+                            </p>
+                            <div className="flex gap-4 text-xs text-muted-foreground">
+                              <span>{t('cycleAmount', lang)}: <span className="font-semibold text-foreground">{displayAmount(cycle.amount)}</span></span>
+                              <span>{t('cyclePaid', lang)}: <span className="font-semibold text-emerald">{displayAmount(cycle.paidAmount)}</span></span>
+                              <span>{t('cycleOutstanding', lang)}: <span className={cycle.outstandingAmount > 0 ? 'font-semibold text-red-600' : 'font-semibold text-emerald'}>{displayAmount(cycle.outstandingAmount)}</span></span>
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end gap-1">
+                            <Badge className={
+                              cycle.status === 'paid' ? 'bg-emerald-100 text-emerald-800 text-xs' :
+                              cycle.status === 'overdue' ? 'bg-red-100 text-red-800 text-xs' :
+                              cycle.status === 'partially_paid' ? 'bg-amber-100 text-amber-800 text-xs' :
+                              'bg-gray-100 text-gray-800 text-xs'
+                            }>
+                              {cycle.status.replace('_', ' ')}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">{t('dueDate', lang) || 'Due'}: {formatDate(cycle.dueDate)}</span>
+                            {cycle._count && (
+                              <span className="text-xs text-muted-foreground">{cycle._count.payments} payment{cycle._count.payments !== 1 ? 's' : ''}</span>
+                            )}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Advance Cycle Dialog ─── */}
+      <Dialog open={newCycleDialogOpen} onOpenChange={setNewCycleDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('advanceCycle', lang)}</DialogTitle>
+          </DialogHeader>
+          {newCycleBill && (
+            <div className="space-y-4">
+              <Card>
+                <CardContent className="p-3 space-y-1">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">{t('providerName', lang)}</span>
+                    <span className="font-medium">{newCycleBill.providerName}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">{t('currentOutstanding', lang)}</span>
+                    <span className="font-medium text-red-600">{displayAmount(newCycleBill.currentOutstanding)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">{t('billingFrequency', lang)}</span>
+                    <span className="font-medium">{getFrequencyLabel(newCycleBill.billingFrequency, lang)}</span>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <div>
+                <Label>{t('newCycleAmount', lang)} *</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={newCycleAmount}
+                  onChange={e => setNewCycleAmount(Number(e.target.value))}
+                  placeholder="0.00"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  This will close the current cycle and create a new billing period with this amount.
+                </p>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNewCycleDialogOpen(false)}>{t('cancel', lang)}</Button>
+            <Button
+              onClick={handleAdvanceCycle}
+              className="bg-amber-500 hover:bg-amber-600 text-white"
+              disabled={newCycleAmount < 0 || saving}
+            >
+              {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              <FastForward className="w-4 h-4 mr-2" />
+              {t('createCycle', lang)}
             </Button>
           </DialogFooter>
         </DialogContent>

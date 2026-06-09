@@ -79,6 +79,15 @@ export async function GET(request: Request) {
               totalAmountDue: true,
             },
           },
+          billCycle: {
+            select: {
+              id: true,
+              amount: true,
+              periodStart: true,
+              periodEnd: true,
+              status: true,
+            },
+          },
         },
       }),
       prisma.billPayment.count({ where }),

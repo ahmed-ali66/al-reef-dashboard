@@ -48,6 +48,13 @@ export async function GET(request: Request) {
             orderBy: { paymentDate: 'desc' },
             take: 5,
           },
+          cycles: {
+            orderBy: { dueDate: 'desc' as const },
+            take: 5,
+            include: {
+              _count: { select: { payments: true } },
+            },
+          },
         },
         orderBy: { nextDueDate: 'asc' },
       }),
@@ -216,6 +223,33 @@ export async function GET(request: Request) {
       const outstandingWs = XLSX.utils.aoa_to_sheet([outstandingHeader, ...outstandingRows])
       outstandingWs['!cols'] = outstandingHeader.map(() => ({ wch: 20 }))
       XLSX.utils.book_append_sheet(wb, outstandingWs, 'Outstanding')
+    }
+
+    // ─── Billing Cycles Sheet ───
+    const allCycles: any[] = []
+    for (const bill of bills) {
+      if (bill.cycles && bill.cycles.length > 0) {
+        for (const cycle of bill.cycles) {
+          allCycles.push([
+            bill.providerName,
+            bill.serviceType,
+            cycle.periodStart.toISOString().split('T')[0],
+            cycle.periodEnd.toISOString().split('T')[0],
+            safeNumber(cycle.amount).toFixed(2),
+            safeNumber(cycle.paidAmount).toFixed(2),
+            safeNumber(cycle.outstandingAmount).toFixed(2),
+            cycle.status,
+            cycle.dueDate.toISOString().split('T')[0],
+            cycle._count?.payments || 0,
+          ])
+        }
+      }
+    }
+    if (allCycles.length > 0) {
+      const cycleHeader = ['Provider', 'Service Type', 'Period Start', 'Period End', 'Amount (AED)', 'Paid (AED)', 'Outstanding (AED)', 'Status', 'Due Date', 'Payments']
+      const cycleWs = XLSX.utils.aoa_to_sheet([cycleHeader, ...allCycles])
+      cycleWs['!cols'] = cycleHeader.map(() => ({ wch: 18 }))
+      XLSX.utils.book_append_sheet(wb, cycleWs, 'Billing Cycles')
     }
 
     // Generate buffer
