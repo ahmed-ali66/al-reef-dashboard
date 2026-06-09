@@ -113,6 +113,20 @@ export async function GET(request: Request) {
       'lastPaymentAmount',
     ]
     const serializedBills = bills.map(serialize).map((bill: any) => {
+      // Fix totalAmountDue: derive from the latest open cycle's amount
+      // This ensures consistency even for bills where totalAmountDue was
+      // incorrectly overwritten to equal currentOutstanding after payments
+      if (bill.cycles && bill.cycles.length > 0) {
+        const latestCycle = bill.cycles[0] // cycles are ordered by dueDate desc
+        const cycleAmount = parseFloat(String(latestCycle.amount))
+        const storedTotalDue = parseFloat(String(bill.totalAmountDue))
+        // If totalAmountDue equals currentOutstanding (the bug pattern),
+        // or is zero, use the cycle amount instead
+        if (storedTotalDue <= parseFloat(String(bill.currentOutstanding)) || storedTotalDue === 0) {
+          bill.totalAmountDue = cycleAmount
+        }
+      }
+
       if (!financialAccess) {
         for (const f of amountFields) {
           if (f in bill) bill[f] = 0

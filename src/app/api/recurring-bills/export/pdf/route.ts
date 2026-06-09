@@ -77,17 +77,34 @@ export async function GET(request: Request) {
     const now = new Date()
     const today = now.toISOString().split('T')[0]
 
-    // Categorize bills
-    const activeBills = bills.filter(b => b.status === 'active')
-    const overdueBills = activeBills.filter(b => b.nextDueDate < now)
-    const upcomingBills = activeBills.filter(b => b.nextDueDate >= now && b.nextDueDate <= new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000))
-    const paidBills = activeBills.filter(b => safeNumber(b.currentOutstanding) === 0)
+    // Categorize bills — with cycle-based totalAmountDue correction
+    // Fix totalAmountDue: derive from the latest cycle's amount when corrupted
+    const correctedBills = bills.map(b => {
+      const bill = serialize(b) as any
+      if (bill.cycles && bill.cycles.length > 0) {
+        const latestCycle = bill.cycles[0]
+        const cycleAmount = parseFloat(String(latestCycle.amount))
+        const storedTotalDue = parseFloat(String(bill.totalAmountDue))
+        if (storedTotalDue <= parseFloat(String(bill.currentOutstanding)) || storedTotalDue === 0) {
+          bill.totalAmountDue = cycleAmount
+        }
+      }
+      return bill
+    })
+
+    const activeBills = correctedBills.filter(b => b.status === 'active')
+    const overdueBills = activeBills.filter(b => new Date(b.nextDueDate) < now)
+    const upcomingBills = activeBills.filter(b => {
+      const due = new Date(b.nextDueDate)
+      return due >= now && due <= new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+    })
+    const paidBills = activeBills.filter(b => parseFloat(String(b.currentOutstanding)) <= 0)
     const partiallyPaidBills = activeBills.filter(b => {
-      const outstanding = safeNumber(b.currentOutstanding)
-      const totalDue = safeNumber(b.totalAmountDue)
+      const outstanding = parseFloat(String(b.currentOutstanding))
+      const totalDue = parseFloat(String(b.totalAmountDue))
       return outstanding > 0 && outstanding < totalDue
     })
-    const outstandingBills = activeBills.filter(b => safeNumber(b.currentOutstanding) > 0)
+    const outstandingBills = activeBills.filter(b => parseFloat(String(b.currentOutstanding)) > 0)
 
     // Summary metrics
     const totalBills = activeBills.length
@@ -226,7 +243,7 @@ export async function GET(request: Request) {
     if (overdueBills.length > 0) {
       y = addSectionTitle(`Overdue Bills (${overdueBills.length})`, y, '#c0392b')
       const overdueRows = overdueBills.map(b => {
-        const daysOverdue = Math.max(0, Math.ceil((now.getTime() - b.nextDueDate.getTime()) / (1000 * 60 * 60 * 24)))
+        const daysOverdue = Math.max(0, Math.ceil((now.getTime() - new Date(b.nextDueDate).getTime()) / (1000 * 60 * 60 * 24)))
         return [
           b.providerName,
           b.property?.name || b.buildingName || '-',
@@ -242,12 +259,13 @@ export async function GET(request: Request) {
     if (upcomingBills.length > 0) {
       y = addSectionTitle(`Upcoming Bills (${upcomingBills.length})`, y, '#e67e22')
       const upcomingRows = upcomingBills.map(b => {
-        const daysRemaining = Math.max(0, Math.ceil((b.nextDueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+        const dueDate = new Date(b.nextDueDate)
+        const daysRemaining = Math.max(0, Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
         return [
           b.providerName,
           b.property?.name || b.buildingName || '-',
           `AED ${safeNumber(b.totalAmountDue).toFixed(2)}`,
-          b.nextDueDate.toISOString().split('T')[0],
+          dueDate.toISOString().split('T')[0],
           `${daysRemaining} days`,
         ]
       })
@@ -279,7 +297,7 @@ export async function GET(request: Request) {
           `AED ${totalDue.toFixed(2)}`,
           `AED ${paid.toFixed(2)}`,
           `AED ${outstanding.toFixed(2)}`,
-          b.nextDueDate.toISOString().split('T')[0],
+          new Date(b.nextDueDate).toISOString().split('T')[0],
         ]
       })
       y = drawTable(['Provider', 'Original Amt', 'Amount Paid', 'Remaining', 'Due Date'], partialRows, y)

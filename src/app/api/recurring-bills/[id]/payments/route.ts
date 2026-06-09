@@ -148,15 +148,14 @@ export async function POST(
         },
       })
 
-      // Update the bill — totalAmountDue equals currentOutstanding after payment
-      const newTotalAmountDue = safeDecimal(outstandingAfter)
+      // Update the bill — only update currentOutstanding, NOT totalAmountDue
+      // totalAmountDue represents the original bill cycle amount and must NOT change after payments
       await tx.recurringBill.update({
         where: { id },
         data: {
           currentOutstanding: safeDecimal(outstandingAfter),
           lastPaymentAmount: parsedAmount,
           lastPaymentDate: new Date(paymentDate),
-          totalAmountDue: newTotalAmountDue,
         },
       })
 

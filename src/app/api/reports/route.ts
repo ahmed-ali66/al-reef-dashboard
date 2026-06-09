@@ -95,14 +95,14 @@ export async function GET(request: Request) {
         where: { companyId, deletedAt: null, status: 'active' },
         _sum: { currentOutstanding: true },
       }),
-      prisma.recurringBill.aggregate({
+      prisma.billCycle.aggregate({
         where: {
           companyId,
-          deletedAt: null,
-          status: 'active',
-          nextDueDate: { gte: startOfMonth, lte: endOfMonth },
+          status: { in: ['pending', 'partially_paid', 'overdue'] },
+          dueDate: { gte: startOfMonth, lte: endOfMonth },
+          recurringBill: { deletedAt: null, status: 'active' },
         },
-        _sum: { totalAmountDue: true },
+        _sum: { amount: true },
       }),
       prisma.billPayment.aggregate({
         where: {
@@ -114,7 +114,7 @@ export async function GET(request: Request) {
       prisma.recurringBill.groupBy({
         by: ['serviceType'],
         where: { companyId, deletedAt: null, status: 'active' },
-        _sum: { totalAmountDue: true, currentOutstanding: true },
+        _sum: { currentOutstanding: true },
         _count: true,
       }),
       prisma.recurringBill.count({
@@ -128,7 +128,7 @@ export async function GET(request: Request) {
     ])
 
     const utilityOutstanding = safeNumber(utilityOutstandingAggregate._sum.currentOutstanding)
-    const utilityDueThisMonth = safeNumber(utilityDueThisMonthAggregate._sum.totalAmountDue)
+    const utilityDueThisMonth = safeNumber(utilityDueThisMonthAggregate._sum.amount)
     const utilityPaidThisMonth = safeNumber(utilityPaidThisMonthAggregate._sum.amount)
 
     // ─── 2b-2. Cycle aggregation for recurring bills ───
@@ -295,7 +295,7 @@ export async function GET(request: Request) {
         serviceTypeBreakdown: utilityServiceBreakdown.map((item) => ({
           serviceType: item.serviceType,
           count: item._count,
-          totalAmountDue: safeNumber(item._sum.totalAmountDue),
+          totalAmountDue: safeNumber(item._sum.currentOutstanding),
           totalOutstanding: safeNumber(item._sum.currentOutstanding),
         })),
         cycleSummary: {

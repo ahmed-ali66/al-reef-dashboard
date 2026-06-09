@@ -345,14 +345,14 @@ export async function GET() {
         where: { companyId, deletedAt: null, status: 'active' },
         _sum: { currentOutstanding: true },
       }),
-      prisma.recurringBill.aggregate({
+      prisma.billCycle.aggregate({
         where: {
           companyId,
-          deletedAt: null,
-          status: 'active',
-          nextDueDate: { gte: startOfMonth, lte: endOfMonth },
+          status: { in: ['pending', 'partially_paid', 'overdue'] },
+          dueDate: { gte: startOfMonth, lte: endOfMonth },
+          recurringBill: { deletedAt: null, status: 'active' },
         },
-        _sum: { totalAmountDue: true },
+        _sum: { amount: true },
       }),
       prisma.billPayment.aggregate({
         where: {
@@ -372,7 +372,7 @@ export async function GET() {
     ])
 
     const utilityBillsOutstanding = safeNumber(billsOutstandingAggregate._sum.currentOutstanding)
-    const utilityBillsDueThisMonth = safeNumber(billsDueThisMonthAggregate._sum.totalAmountDue)
+    const utilityBillsDueThisMonth = safeNumber(billsDueThisMonthAggregate._sum.amount)
     const utilityBillsPaidThisMonth = safeNumber(billsPaidThisMonthAggregate._sum.amount)
 
     // ─── 13. Reservation stats ───

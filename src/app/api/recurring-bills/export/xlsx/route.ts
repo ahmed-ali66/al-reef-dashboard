@@ -71,14 +71,28 @@ export async function GET(request: Request) {
     const now = new Date()
     const today = now.toISOString().split('T')[0]
 
-    // Categorize bills
-    const activeBills = bills.filter(b => b.status === 'active')
+    // Categorize bills — with cycle-based totalAmountDue correction
+    // Fix totalAmountDue: derive from the latest cycle's amount when corrupted
+    const correctedBills = bills.map(b => {
+      const bill: any = { ...b }
+      if (bill.cycles && bill.cycles.length > 0) {
+        const latestCycle = bill.cycles[0]
+        const cycleAmount = parseFloat(String(latestCycle.amount))
+        const storedTotalDue = parseFloat(String(bill.totalAmountDue))
+        if (storedTotalDue <= parseFloat(String(bill.currentOutstanding)) || storedTotalDue === 0) {
+          bill.totalAmountDue = cycleAmount
+        }
+      }
+      return bill
+    })
+
+    const activeBills = correctedBills.filter(b => b.status === 'active')
     const overdueBills = activeBills.filter(b => b.nextDueDate < now)
     const upcomingBills = activeBills.filter(b => b.nextDueDate >= now && b.nextDueDate <= new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000))
-    const paidBills = activeBills.filter(b => safeNumber(b.currentOutstanding) === 0)
+    const paidBills = activeBills.filter(b => parseFloat(String(b.currentOutstanding)) <= 0)
     const partiallyPaidBills = activeBills.filter(b => {
-      const outstanding = safeNumber(b.currentOutstanding)
-      const totalDue = safeNumber(b.totalAmountDue)
+      const outstanding = parseFloat(String(b.currentOutstanding))
+      const totalDue = parseFloat(String(b.totalAmountDue))
       return outstanding > 0 && outstanding < totalDue
     })
 

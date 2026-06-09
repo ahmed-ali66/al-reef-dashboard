@@ -84,9 +84,14 @@ export async function PUT(
     if (ownerName !== undefined) data.ownerName = ownerName || null
     if (propertyManager !== undefined) data.propertyManager = propertyManager || null
 
-    // Recalculate totalAmountDue when currentOutstanding changes
+    // When currentOutstanding is manually changed, update totalAmountDue to match
+    // only if the new outstanding is GREATER than current totalAmountDue (user is raising the bill)
+    // Otherwise, leave totalAmountDue unchanged (user is adjusting balance, not bill amount)
     if (parsedCurrentOutstanding !== undefined) {
-      data.totalAmountDue = parsedCurrentOutstanding
+      const currentTotalAmountDue = safeDecimal(existing.totalAmountDue)
+      if (parsedCurrentOutstanding > currentTotalAmountDue) {
+        data.totalAmountDue = parsedCurrentOutstanding
+      }
     }
 
     // PHASE 2: Use OCC-protected update

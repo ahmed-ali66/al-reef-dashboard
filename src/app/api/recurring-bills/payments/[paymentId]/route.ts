@@ -94,12 +94,12 @@ export async function PUT(
           },
         })
 
-        // Update the bill's outstanding balance
+        // Update the bill's outstanding balance — do NOT change totalAmountDue
+        // totalAmountDue represents the original bill cycle amount
         await tx.recurringBill.update({
           where: { id: payment.recurringBillId },
           data: {
             currentOutstanding: safeDecimal(newOutstanding),
-            totalAmountDue: safeDecimal(newOutstanding),
           },
         })
 
@@ -214,11 +214,11 @@ export async function DELETE(
 
       // Recalculate the bill's outstanding balance
       // When deleting a payment, the outstanding increases by the deleted amount
+      // Do NOT change totalAmountDue — it represents the original bill cycle amount
       await tx.recurringBill.update({
         where: { id: payment.recurringBillId },
         data: {
           currentOutstanding: safeDecimal(newOutstanding),
-          totalAmountDue: safeDecimal(newOutstanding),
         },
       })
 

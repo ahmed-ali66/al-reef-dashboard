@@ -209,18 +209,20 @@ export default function RecurringBills() {
   }
 
   const isPaid = (bill: RecurringBillData) => {
-    return bill.status === 'active' && bill.currentOutstanding === 0
+    // Use parseFloat to handle Prisma Decimal serialization ("0.00" string)
+    return bill.status === 'active' && parseFloat(String(bill.currentOutstanding)) <= 0
   }
 
   const isPartiallyPaid = (bill: RecurringBillData) => {
     if (bill.status !== 'active') return false
-    const outstanding = bill.currentOutstanding || 0
-    const totalDue = bill.totalAmountDue || 0
+    // Use parseFloat to handle Prisma Decimal serialization
+    const outstanding = parseFloat(String(bill.currentOutstanding)) || 0
+    const totalDue = parseFloat(String(bill.totalAmountDue)) || 0
     return outstanding > 0 && outstanding < totalDue && !isOverdue(bill)
   }
 
   const isOutstanding = (bill: RecurringBillData) => {
-    return bill.status === 'active' && (bill.currentOutstanding || 0) > 0
+    return bill.status === 'active' && parseFloat(String(bill.currentOutstanding)) > 0
   }
 
   const isInDateRange = (bill: RecurringBillData) => {

@@ -76,7 +76,7 @@ export async function GET(request: Request) {
             })
 
             if (!existingNotification) {
-              const amount = Number(bill.totalAmountDue)
+              const amount = Number(bill.currentOutstanding) || Number(bill.totalAmountDue)
               const propertyInfo = bill.property?.name || bill.buildingName || 'Unknown Property'
 
               let title = ''

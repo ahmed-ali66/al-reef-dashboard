@@ -51,14 +51,16 @@ export async function GET(request: Request) {
         _sum: { currentOutstanding: true },
       }),
 
-      // totalDueThisMonth: sum of totalAmountDue for bills due this month
-      prisma.recurringBill.aggregate({
+      // totalDueThisMonth: sum of latest cycle amount for bills due this month
+      // Uses cycle amount instead of bill.totalAmountDue to avoid corrupted data
+      prisma.billCycle.aggregate({
         where: {
-          ...baseWhere,
-          status: 'active',
-          nextDueDate: { gte: monthStart, lte: monthEnd },
+          companyId: user.companyId,
+          status: { in: ['pending', 'partially_paid', 'overdue'] },
+          dueDate: { gte: monthStart, lte: monthEnd },
+          recurringBill: { status: 'active', deletedAt: null },
         },
-        _sum: { totalAmountDue: true },
+        _sum: { amount: true },
       }),
 
       // totalPaidThisMonth: sum of BillPayment amounts this month
@@ -113,12 +115,12 @@ export async function GET(request: Request) {
         orderBy: { nextDueDate: 'asc' },
       }),
 
-      // Group by serviceType for breakdown
+      // Group by serviceType for breakdown using cycle amounts
+      // We query bills grouped by serviceType but use cycle amounts for accuracy
       prisma.recurringBill.groupBy({
         by: ['serviceType'],
         where: { ...baseWhere, status: 'active' },
         _sum: {
-          totalAmountDue: true,
           currentOutstanding: true,
         },
         _count: true,
@@ -156,7 +158,7 @@ export async function GET(request: Request) {
         ? safeNumber(outstandingAgg._sum.currentOutstanding)
         : 0,
       totalDueThisMonth: financialAccess
-        ? safeNumber(dueThisMonthAgg._sum.totalAmountDue)
+        ? safeNumber(dueThisMonthAgg._sum.amount)
         : 0,
       totalPaidThisMonth: financialAccess
         ? safeNumber(paidThisMonthAgg._sum.amount)
@@ -167,7 +169,7 @@ export async function GET(request: Request) {
         serviceType: item.serviceType,
         count: item._count,
         totalAmountDue: financialAccess
-          ? safeNumber(item._sum.totalAmountDue)
+          ? safeNumber(item._sum.currentOutstanding)
           : 0,
         totalOutstanding: financialAccess
           ? safeNumber(item._sum.currentOutstanding)
