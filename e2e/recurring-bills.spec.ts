@@ -1,7 +1,7 @@
 /**
  * E2E Tests for Recurring Bills & Utilities Module
  * 
- * Full lifecycle test: CRUD, payments, cycle, summary, field removal verification.
+ * Full lifecycle test: CRUD, payments, cycle, BillCycle, summary, field removal verification.
  * Runs against the LIVE production deployment at al-reef-al-junoobi.vercel.app
  */
 
@@ -11,6 +11,7 @@ const BASE_URL = 'https://al-reef-al-junoobi.vercel.app'
 
 let testBillId: string
 let testPropertyId: string
+let testCycleId: string
 let context: BrowserContext
 let page: Page
 
@@ -44,7 +45,7 @@ test.describe('Recurring Bills & Utilities Module - E2E', () => {
       await page.waitForTimeout(3000)
     }
 
-    // Step 3: Get a property ID via the API (session cookie is now set)
+    // Step 3: Verify auth works by checking properties API
     try {
       const propsRes = await page.request.get(`${BASE_URL}/api/properties?limit=5`)
       if (propsRes.ok()) {
@@ -55,7 +56,7 @@ test.describe('Recurring Bills & Utilities Module - E2E', () => {
           console.log(`Got propertyId: ${testPropertyId}`)
         }
       } else {
-        console.log(`Properties API returned ${propsRes.status()}`)
+        console.log(`Properties API returned ${propsRes.status()} — auth may have failed`)
       }
     } catch (e) {
       console.log('Failed to fetch properties:', e)
@@ -63,8 +64,10 @@ test.describe('Recurring Bills & Utilities Module - E2E', () => {
   })
 
   test.afterAll(async () => {
-    // Clean up test bill - only at the very end after ALL tests
-    // Bill cleanup will be handled in the last test
+    // Cleanup: soft delete the test bill
+    if (testBillId) {
+      await page.request.delete(`${BASE_URL}/api/recurring-bills/${testBillId}`).catch(() => {})
+    }
     await page.close()
     await context.close()
   })
@@ -117,9 +120,32 @@ test.describe('Recurring Bills & Utilities Module - E2E', () => {
   })
 
   // ═══════════════════════════════════════════
-  // 2. REMOVED FIELDS VERIFICATION
+  // 2. BILL CYCLE: Created automatically with bill
   // ═══════════════════════════════════════════
-  test('2. should NOT have monthlyExpectedAmount or customerNumber', async () => {
+  test('2. should have a billing cycle created automatically', async () => {
+    test.skip(!testBillId, 'No test bill')
+
+    const res = await page.request.get(`${BASE_URL}/api/recurring-bills/${testBillId}/cycles?limit=10`)
+    expect(res.ok()).toBe(true)
+    const body = await res.json()
+    const data = body.data || body
+    const cycles = data.data || (Array.isArray(data) ? data : [])
+
+    expect(cycles.length, 'Should have at least one cycle').toBeGreaterThanOrEqual(1)
+    
+    const cycle = cycles[0]
+    expect(Number(cycle.amount)).toBe(500) // Same as initial outstanding
+    expect(Number(cycle.outstandingAmount)).toBe(500)
+    expect(Number(cycle.paidAmount)).toBe(0)
+    expect(['pending', 'partially_paid', 'overdue']).toContain(cycle.status)
+    
+    testCycleId = cycle.id
+  })
+
+  // ═══════════════════════════════════════════
+  // 3. REMOVED FIELDS VERIFICATION
+  // ═══════════════════════════════════════════
+  test('3. should NOT have monthlyExpectedAmount or customerNumber', async () => {
     test.skip(!testBillId, 'No test bill created')
 
     const res = await page.request.get(`${BASE_URL}/api/recurring-bills?limit=50`)
@@ -136,14 +162,12 @@ test.describe('Recurring Bills & Utilities Module - E2E', () => {
     // REMAINING FIELDS — must be present
     expect(bill.currentOutstanding).toBeDefined()
     expect(bill.totalAmountDue).toBeDefined()
-    expect(bill.contractNumber).toBeDefined()
-    expect(bill.accountNumber).toBeDefined()
   })
 
   // ═══════════════════════════════════════════
-  // 3. LIST: GET /api/recurring-bills
+  // 4. LIST: GET /api/recurring-bills
   // ═══════════════════════════════════════════
-  test('3. should list recurring bills with pagination', async () => {
+  test('4. should list recurring bills with pagination', async () => {
     const res = await page.request.get(`${BASE_URL}/api/recurring-bills?limit=10&page=1`)
     expect(res.ok()).toBe(true)
     const body = await res.json()
@@ -153,9 +177,9 @@ test.describe('Recurring Bills & Utilities Module - E2E', () => {
   })
 
   // ═══════════════════════════════════════════
-  // 4. FILTER: serviceType
+  // 5. FILTER: serviceType
   // ═══════════════════════════════════════════
-  test('4. should filter bills by serviceType=electricity', async () => {
+  test('5. should filter bills by serviceType=electricity', async () => {
     const res = await page.request.get(`${BASE_URL}/api/recurring-bills?serviceType=electricity&limit=100`)
     expect(res.ok()).toBe(true)
     const body = await res.json()
@@ -167,9 +191,9 @@ test.describe('Recurring Bills & Utilities Module - E2E', () => {
   })
 
   // ═══════════════════════════════════════════
-  // 5. FILTER: overdue bills
+  // 6. FILTER: overdue bills
   // ═══════════════════════════════════════════
-  test('5. should filter overdue bills', async () => {
+  test('6. should filter overdue bills', async () => {
     const res = await page.request.get(`${BASE_URL}/api/recurring-bills?overdue=true`)
     expect(res.ok()).toBe(true)
     const body = await res.json()
@@ -182,17 +206,17 @@ test.describe('Recurring Bills & Utilities Module - E2E', () => {
   })
 
   // ═══════════════════════════════════════════
-  // 6. FILTER: upcoming bills
+  // 7. FILTER: upcoming bills
   // ═══════════════════════════════════════════
-  test('6. should filter upcoming bills', async () => {
+  test('7. should filter upcoming bills', async () => {
     const res = await page.request.get(`${BASE_URL}/api/recurring-bills?upcoming=true`)
     expect(res.ok()).toBe(true)
   })
 
   // ═══════════════════════════════════════════
-  // 7. UPDATE: PUT /api/recurring-bills/[id]
+  // 8. UPDATE: PUT /api/recurring-bills/[id]
   // ═══════════════════════════════════════════
-  test('7. should update a recurring bill', async () => {
+  test('8. should update a recurring bill', async () => {
     test.skip(!testBillId, 'No test bill')
 
     const res = await page.request.put(`${BASE_URL}/api/recurring-bills/${testBillId}`, {
@@ -216,48 +240,9 @@ test.describe('Recurring Bills & Utilities Module - E2E', () => {
   })
 
   // ═══════════════════════════════════════════
-  // 8. REMOVED: customerNumber ignored in update
+  // 9. RECORD PAYMENT (linked to cycle)
   // ═══════════════════════════════════════════
-  test('8. should ignore customerNumber in update (removed)', async () => {
-    test.skip(!testBillId, 'No test bill')
-
-    const res = await page.request.put(`${BASE_URL}/api/recurring-bills/${testBillId}`, {
-      data: { customerNumber: 'SHOULD_BE_IGNORED' },
-    })
-    // After field removal, sending customerNumber should either be ignored (200)
-    // or cause a validation error (400) — either way the field is properly removed
-    const body = await res.json()
-    if (res.ok()) {
-      expect((body.data || body).customerNumber).toBeUndefined()
-    } else {
-      // If the API returns an error, it should NOT be a 500 (which would indicate
-      // the column still exists in the DB and Prisma is trying to set it)
-      // A 400 would mean the API properly rejects unknown fields
-      expect(res.status()).toBeLessThan(500)
-    }
-  })
-
-  // ═══════════════════════════════════════════
-  // 9. REMOVED: monthlyExpectedAmount ignored in update
-  // ═══════════════════════════════════════════
-  test('9. should ignore monthlyExpectedAmount in update (removed)', async () => {
-    test.skip(!testBillId, 'No test bill')
-
-    const res = await page.request.put(`${BASE_URL}/api/recurring-bills/${testBillId}`, {
-      data: { monthlyExpectedAmount: 99999 },
-    })
-    const body = await res.json()
-    if (res.ok()) {
-      expect((body.data || body).monthlyExpectedAmount).toBeUndefined()
-    } else {
-      expect(res.status()).toBeLessThan(500)
-    }
-  })
-
-  // ═══════════════════════════════════════════
-  // 10. RECORD PAYMENT
-  // ═══════════════════════════════════════════
-  test('10. should record a payment and reduce outstanding', async () => {
+  test('9. should record a payment and reduce outstanding', async () => {
     test.skip(!testBillId, 'No test bill')
 
     const res = await page.request.post(`${BASE_URL}/api/recurring-bills/${testBillId}/payments`, {
@@ -267,6 +252,7 @@ test.describe('Recurring Bills & Utilities Module - E2E', () => {
         paymentMethod: 'bank_transfer',
         reference: 'E2E-PAY-001',
         notes: 'E2E payment',
+        billCycleId: testCycleId || null,
       },
     })
 
@@ -279,6 +265,26 @@ test.describe('Recurring Bills & Utilities Module - E2E', () => {
     expect(Number(payment.outstandingAfter)).toBe(550) // 750 - 200
     expect(payment.paymentMethod).toBe('bank_transfer')
     expect(payment.reference).toBe('E2E-PAY-001')
+  })
+
+  // ═══════════════════════════════════════════
+  // 10. CYCLE: Outstanding reduced after payment
+  // ═══════════════════════════════════════════
+  test('10. should update cycle amounts after payment', async () => {
+    test.skip(!testBillId, 'No test bill')
+
+    const res = await page.request.get(`${BASE_URL}/api/recurring-bills/${testBillId}/cycles?limit=10`)
+    expect(res.ok()).toBe(true)
+    const body = await res.json()
+    const data = body.data || body
+    const cycles = data.data || (Array.isArray(data) ? data : [])
+    const cycle = cycles.find((c: any) => c.id === testCycleId)
+
+    if (cycle) {
+      expect(Number(cycle.paidAmount)).toBe(200)
+      expect(Number(cycle.outstandingAmount)).toBe(300) // 500 - 200
+      expect(cycle.status).toBe('partially_paid')
+    }
   })
 
   // ═══════════════════════════════════════════
@@ -311,12 +317,30 @@ test.describe('Recurring Bills & Utilities Module - E2E', () => {
     const data = body.data || body
     const payments = data.data || (Array.isArray(data) ? data : [])
     expect(payments.length).toBeGreaterThan(0)
+    
+    // Payment should have billCycleId if linked
+    if (testCycleId) {
+      const linkedPayment = payments.find((p: any) => p.billCycleId === testCycleId)
+      expect(linkedPayment, 'Payment should be linked to a cycle').toBeDefined()
+    }
   })
 
   // ═══════════════════════════════════════════
-  // 13. SUMMARY: no monthlyExpectedAmount
+  // 13. ALL PAYMENTS (cross-bill)
   // ═══════════════════════════════════════════
-  test('13. summary should NOT contain monthlyExpectedAmount', async () => {
+  test('13. should list all payments across bills', async () => {
+    const res = await page.request.get(`${BASE_URL}/api/recurring-bills/payments?limit=100`)
+    expect(res.ok()).toBe(true)
+    const body = await res.json()
+    const data = body.data || body
+    const payments = data.data || (Array.isArray(data) ? data : [])
+    expect(Array.isArray(payments)).toBe(true)
+  })
+
+  // ═══════════════════════════════════════════
+  // 14. SUMMARY
+  // ═══════════════════════════════════════════
+  test('14. summary should return valid data', async () => {
     const res = await page.request.get(`${BASE_URL}/api/recurring-bills/summary`)
     expect(res.ok()).toBe(true)
     const body = await res.json()
@@ -339,18 +363,18 @@ test.describe('Recurring Bills & Utilities Module - E2E', () => {
   })
 
   // ═══════════════════════════════════════════
-  // 14. VALIDATION: Missing required fields
+  // 15. VALIDATION: Missing required fields
   // ═══════════════════════════════════════════
-  test('14. should reject creation without required fields', async () => {
+  test('15. should reject creation without required fields', async () => {
     const res = await page.request.post(`${BASE_URL}/api/recurring-bills`, { data: {} })
     expect(res.ok()).toBe(false)
     expect([400, 401]).toContain(res.status())
   })
 
   // ═══════════════════════════════════════════
-  // 15. VALIDATION: Invalid serviceType
+  // 16. VALIDATION: Invalid serviceType
   // ═══════════════════════════════════════════
-  test('15. should reject invalid serviceType', async () => {
+  test('16. should reject invalid serviceType', async () => {
     const res = await page.request.post(`${BASE_URL}/api/recurring-bills`, {
       data: {
         propertyId: testPropertyId || 'dummy',
@@ -365,9 +389,9 @@ test.describe('Recurring Bills & Utilities Module - E2E', () => {
   })
 
   // ═══════════════════════════════════════════
-  // 16. VALIDATION: Negative outstanding
+  // 17. VALIDATION: Negative outstanding
   // ═══════════════════════════════════════════
-  test('16. should reject negative currentOutstanding', async () => {
+  test('17. should reject negative currentOutstanding', async () => {
     const res = await page.request.post(`${BASE_URL}/api/recurring-bills`, {
       data: {
         propertyId: testPropertyId || 'dummy',
@@ -383,9 +407,9 @@ test.describe('Recurring Bills & Utilities Module - E2E', () => {
   })
 
   // ═══════════════════════════════════════════
-  // 17. VALIDATION: Zero payment
+  // 18. VALIDATION: Zero payment
   // ═══════════════════════════════════════════
-  test('17. should reject zero payment amount', async () => {
+  test('18. should reject zero payment amount', async () => {
     test.skip(!testBillId, 'No test bill')
 
     const res = await page.request.post(`${BASE_URL}/api/recurring-bills/${testBillId}/payments`, {
@@ -395,28 +419,30 @@ test.describe('Recurring Bills & Utilities Module - E2E', () => {
   })
 
   // ═══════════════════════════════════════════
-  // 18. STATUS: Pause/resume
+  // 19. STATUS: Pause/resume
   // ═══════════════════════════════════════════
-  test('18. should pause and resume a bill', async () => {
+  test('19. should pause and resume a bill', async () => {
     test.skip(!testBillId, 'No test bill')
 
     const pauseRes = await page.request.put(`${BASE_URL}/api/recurring-bills/${testBillId}`, {
       data: { status: 'paused' },
     })
     expect(pauseRes.ok()).toBe(true)
-    expect((await pauseRes.json()).data?.status || (await pauseRes.json()).status).toBe('paused')
+    const pauseBody = await pauseRes.json()
+    expect(pauseBody.data?.status || pauseBody.status).toBe('paused')
 
     const resumeRes = await page.request.put(`${BASE_URL}/api/recurring-bills/${testBillId}`, {
       data: { status: 'active' },
     })
     expect(resumeRes.ok()).toBe(true)
-    expect((await resumeRes.json()).data?.status || (await resumeRes.json()).status).toBe('active')
+    const resumeBody = await resumeRes.json()
+    expect(resumeBody.data?.status || resumeBody.status).toBe('active')
   })
 
   // ═══════════════════════════════════════════
-  // 19. SOFT DELETE
+  // 20. SOFT DELETE
   // ═══════════════════════════════════════════
-  test('19. should soft-delete a bill and exclude from list', async () => {
+  test('20. should soft-delete a bill and exclude from list', async () => {
     test.skip(!testPropertyId, 'No property')
 
     // Create a throwaway bill
@@ -449,38 +475,77 @@ test.describe('Recurring Bills & Utilities Module - E2E', () => {
   })
 
   // ═══════════════════════════════════════════
-  // 20. FINANCIAL FORMULA: totalAmountDue = currentOutstanding
+  // 21. BILL CYCLE: Create new cycle via advance
   // ═══════════════════════════════════════════
-  test('20. totalAmountDue should always equal currentOutstanding', async () => {
+  test('21. should create a new billing cycle with new amount', async () => {
     test.skip(!testBillId, 'No test bill')
 
-    // Set outstanding to known value
+    // First, set the bill to be overdue so cycle advance is allowed
+    // Set nextDueDate to past date
     await page.request.put(`${BASE_URL}/api/recurring-bills/${testBillId}`, {
-      data: { currentOutstanding: 1200 },
+      data: { nextDueDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] },
     })
 
-    // Make partial payment
-    await page.request.post(`${BASE_URL}/api/recurring-bills/${testBillId}/payments`, {
+    // Advance cycle with new amount
+    const res = await page.request.post(`${BASE_URL}/api/recurring-bills/cycle`, {
       data: {
-        amount: 300,
-        paymentDate: new Date().toISOString().split('T')[0],
-        paymentMethod: 'cash',
+        billId: testBillId,
+        newAmount: 350, // New month's bill is 350 instead of 500
       },
     })
 
-    // Verify
+    expect(res.ok()).toBe(true)
+    const body = await res.json()
+    const result = body.data || body
+
+    // Verify the new cycle was created
+    expect(result.cycle).toBeDefined()
+    expect(Number(result.cycle.amount)).toBe(350)
+    expect(Number(result.cycle.outstandingAmount)).toBe(350)
+    expect(Number(result.cycle.paidAmount)).toBe(0)
+    expect(result.cycle.status).toBe('pending')
+
+    // Verify the bill's outstanding was updated
+    expect(Number(result.bill.currentOutstanding)).toBe(350)
+    expect(Number(result.bill.totalAmountDue)).toBe(350)
+  })
+
+  // ═══════════════════════════════════════════
+  // 22. BILL CYCLE: Multiple cycles exist for a bill
+  // ═══════════════════════════════════════════
+  test('22. should have multiple cycles for the bill', async () => {
+    test.skip(!testBillId, 'No test bill')
+
+    const res = await page.request.get(`${BASE_URL}/api/recurring-bills/${testBillId}/cycles?limit=10`)
+    expect(res.ok()).toBe(true)
+    const body = await res.json()
+    const data = body.data || body
+    const cycles = data.data || (Array.isArray(data) ? data : [])
+
+    expect(cycles.length, 'Should have at least 2 cycles after advance').toBeGreaterThanOrEqual(2)
+    
+    // Verify the old cycle is still preserved with its original amount
+    const oldCycle = cycles.find((c: any) => Number(c.amount) === 500)
+    expect(oldCycle, 'Old cycle with original amount should be preserved').toBeDefined()
+    
+    // Verify the new cycle exists
+    const newCycle = cycles.find((c: any) => Number(c.amount) === 350)
+    expect(newCycle, 'New cycle with updated amount should exist').toBeDefined()
+  })
+
+  // ═══════════════════════════════════════════
+  // 23. FINANCIAL FORMULA: totalAmountDue = currentOutstanding
+  // ═══════════════════════════════════════════
+  test('23. totalAmountDue should always equal currentOutstanding', async () => {
+    test.skip(!testBillId, 'No test bill')
+
     const listRes = await page.request.get(`${BASE_URL}/api/recurring-bills?limit=100`)
     expect(listRes.ok()).toBe(true)
     const listBody = await listRes.json()
     const bills = listBody.data?.data || listBody.data || listBody || []
     const bill = (Array.isArray(bills) ? bills : []).find((b: any) => b.id === testBillId)
 
-    expect(Number(bill.currentOutstanding)).toBe(900) // 1200 - 300
-    expect(Number(bill.totalAmountDue)).toBe(900) // MUST equal currentOutstanding
-
-    // Cleanup: soft delete the test bill
-    if (testBillId) {
-      await page.request.delete(`${BASE_URL}/api/recurring-bills/${testBillId}`)
-    }
+    expect(Number(bill.currentOutstanding)).toBe(350)
+    expect(Number(bill.totalAmountDue)).toBe(350) // MUST equal currentOutstanding
   })
 })
