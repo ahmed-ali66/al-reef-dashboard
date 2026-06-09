@@ -27,7 +27,7 @@ const SERVICE_TYPES = [
 const BILLING_FREQUENCIES = ['monthly', 'quarterly', 'semi_annual', 'annual'] as const
 const PAYMENT_METHODS = ['cash', 'bank_transfer', 'cheque', 'online'] as const
 
-type TabType = 'all' | 'upcoming' | 'overdue' | 'paid' | 'partially_paid' | 'outstanding' | 'due_soon' | 'custom_range'
+type TabType = 'all' | 'upcoming' | 'overdue' | 'paid' | 'partially_paid' | 'outstanding' | 'due_soon' | 'custom_range' | 'payments'
 type DatePreset = '7d' | '30d' | 'quarter' | 'year' | 'custom'
 
 const emptyBillForm = {
@@ -77,14 +77,19 @@ export default function RecurringBills() {
   const [billDialogOpen, setBillDialogOpen] = useState(false)
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false)
   const [historyDialogOpen, setHistoryDialogOpen] = useState(false)
+  const [editPaymentDialogOpen, setEditPaymentDialogOpen] = useState(false)
   const [editing, setEditing] = useState<RecurringBillData | null>(null)
   const [payingBill, setPayingBill] = useState<RecurringBillData | null>(null)
   const [historyBill, setHistoryBill] = useState<RecurringBillData | null>(null)
   const [payments, setPayments] = useState<BillPaymentData[]>([])
+  const [allPayments, setAllPayments] = useState<BillPaymentData[]>([])
+  const [allPaymentsTotal, setAllPaymentsTotal] = useState(0)
+  const [editingPayment, setEditingPayment] = useState<BillPaymentData | null>(null)
 
   // Forms
   const [billForm, setBillForm] = useState({ ...emptyBillForm })
   const [paymentForm, setPaymentForm] = useState({ ...emptyPaymentForm })
+  const [editPaymentForm, setEditPaymentForm] = useState({ ...emptyPaymentForm })
   const [saving, setSaving] = useState(false)
   const [exporting, setExporting] = useState(false)
 
@@ -148,6 +153,30 @@ export default function RecurringBills() {
   }, [activeTab, serviceFilter, customDateFrom, customDateTo])
 
   useEffect(() => { fetchBills() }, [fetchBills])
+
+  // Fetch all payments when on the payments tab
+  const fetchAllPayments = useCallback(async () => {
+    try {
+      const params = new URLSearchParams()
+      params.set('limit', '1000')
+      if (serviceFilter !== 'all') params.set('serviceType', serviceFilter)
+      if (searchQuery) params.set('search', searchQuery)
+
+      const res = await fetch(`/api/recurring-bills/payments?${params.toString()}`)
+      if (res.ok) {
+        const data = await res.json()
+        const paymentList = data.data?.data || data.data || data || []
+        setAllPayments(Array.isArray(paymentList) ? paymentList : [])
+        setAllPaymentsTotal(data.data?.pagination?.total || paymentList.length || 0)
+      }
+    } catch (e) {
+      console.error('Failed to fetch all payments:', e)
+    }
+  }, [serviceFilter, searchQuery])
+
+  useEffect(() => {
+    if (activeTab === 'payments') fetchAllPayments()
+  }, [activeTab, fetchAllPayments])
 
   // ─── Client-side category filters ───
   const now = new Date()
@@ -394,6 +423,70 @@ export default function RecurringBills() {
     } catch (error) {
       console.error('Failed to delete bill:', error)
       alert('Failed to delete bill. Please try again.')
+    }
+  }
+
+  const openEditPayment = (payment: BillPaymentData) => {
+    setEditingPayment(payment)
+    setEditPaymentForm({
+      amount: payment.amount,
+      paymentDate: new Date(payment.paymentDate).toISOString().split('T')[0],
+      paymentMethod: payment.paymentMethod || 'bank_transfer',
+      reference: payment.reference || '',
+      notes: payment.notes || '',
+    })
+    setEditPaymentDialogOpen(true)
+  }
+
+  const handleEditPayment = async () => {
+    if (!editingPayment) return
+    setSaving(true)
+    try {
+      const res = await fetch(`/api/recurring-bills/payments/${editingPayment.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: Number(editPaymentForm.amount),
+          paymentDate: editPaymentForm.paymentDate,
+          paymentMethod: editPaymentForm.paymentMethod,
+          reference: editPaymentForm.reference || null,
+          notes: editPaymentForm.notes || null,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        alert(err.error || 'Failed to update payment')
+        setSaving(false)
+        return
+      }
+      setEditPaymentDialogOpen(false)
+      setEditingPayment(null)
+      // Refresh both payments list and bills
+      fetchAllPayments()
+      fetchBills()
+    } catch (error) {
+      console.error('Failed to edit payment:', error)
+      alert('Failed to edit payment. Please try again.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDeletePayment = async (payment: BillPaymentData) => {
+    if (!confirm(t('deletePaymentConfirm', lang))) return
+    try {
+      const res = await fetch(`/api/recurring-bills/payments/${payment.id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const err = await res.json()
+        alert(err.error || 'Failed to delete payment')
+        return
+      }
+      // Refresh both payments list and bills
+      fetchAllPayments()
+      fetchBills()
+    } catch (error) {
+      console.error('Failed to delete payment:', error)
+      alert('Failed to delete payment. Please try again.')
     }
   }
 
@@ -691,6 +784,20 @@ export default function RecurringBills() {
           {dueSoonCount > 0 && <Badge className="ml-2 bg-white/20 text-xs">{dueSoonCount}</Badge>}
         </Button>
 
+        {/* All Payments Tab */}
+        {isFinancial && (
+          <Button
+            variant={activeTab === 'payments' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setActiveTab('payments')}
+            className={activeTab === 'payments' ? 'bg-blue-600 hover:bg-blue-700 text-white' : ''}
+          >
+            <CreditCard className="w-3.5 h-3.5 mr-1" />
+            {t('allPayments', lang)}
+            {allPaymentsTotal > 0 && <Badge className="ml-2 bg-white/20 text-xs">{allPaymentsTotal}</Badge>}
+          </Button>
+        )}
+
         {/* Custom Date Range Tab with Popover */}
         <Popover open={dateRangeOpen} onOpenChange={setDateRangeOpen}>
           <PopoverTrigger asChild>
@@ -810,7 +917,81 @@ export default function RecurringBills() {
         </Select>
       </div>
 
-      {/* Bills Table */}
+      {/* All Payments Table (when payments tab is active) */}
+      {activeTab === 'payments' && isFinancial && (
+        <Card>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t('billProvider', lang)}</TableHead>
+                    <TableHead>{t('serviceType', lang)}</TableHead>
+                    <TableHead>{t('paymentDate', lang)}</TableHead>
+                    <TableHead>{t('amount', lang)}</TableHead>
+                    <TableHead>{t('outstandingBefore', lang)}</TableHead>
+                    <TableHead>{t('outstandingAfter', lang)}</TableHead>
+                    <TableHead>{t('paymentMethod', lang)}</TableHead>
+                    <TableHead>{t('reference', lang)}</TableHead>
+                    <TableHead className="text-right">{t('category', lang)}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {allPayments.map(payment => (
+                    <TableRow key={payment.id}>
+                      <TableCell>
+                        <div>
+                          <p className="font-medium text-sm">{payment.recurringBill?.providerName || '—'}</p>
+                          {payment.recurringBill?.buildingName && (
+                            <p className="text-xs text-muted-foreground">{payment.recurringBill.buildingName}</p>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary" className="text-xs">
+                          {getServiceTypeLabel(payment.recurringBill?.serviceType || '', lang)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm">{formatDate(payment.paymentDate)}</TableCell>
+                      <TableCell className="font-semibold text-sm text-emerald">{formatAED(payment.amount)}</TableCell>
+                      <TableCell className="text-sm">{formatAED(payment.outstandingBefore)}</TableCell>
+                      <TableCell className="text-sm">{formatAED(payment.outstandingAfter)}</TableCell>
+                      <TableCell className="text-sm">{payment.paymentMethod || '—'}</TableCell>
+                      <TableCell className="text-sm">{payment.reference || '—'}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => openEditPayment(payment)}
+                            className="p-1.5 rounded hover:bg-muted text-muted-foreground"
+                            title={t('editPayment', lang)}
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeletePayment(payment)}
+                            className="p-1.5 rounded hover:bg-red-50 text-muted-foreground hover:text-red-500"
+                            title={t('deletePayment', lang)}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            {allPayments.length === 0 && (
+              <div className="text-center py-8 text-muted-foreground">
+                {t('noPayments', lang)}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Bills Table (hidden when payments tab is active) */}
+      {activeTab !== 'payments' && (
       <Card>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -1022,6 +1203,7 @@ export default function RecurringBills() {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* ─── Add/Edit Bill Dialog ─── */}
       <Dialog open={billDialogOpen} onOpenChange={setBillDialogOpen}>
@@ -1291,6 +1473,7 @@ export default function RecurringBills() {
                         <TableHead>{t('outstandingAfter', lang)}</TableHead>
                         <TableHead>{t('paymentMethod', lang)}</TableHead>
                         <TableHead>{t('reference', lang)}</TableHead>
+                        {isFinancial && <TableHead className="text-right">{t('category', lang)}</TableHead>}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1308,6 +1491,26 @@ export default function RecurringBills() {
                           </TableCell>
                           <TableCell className="text-sm">{p.paymentMethod || '—'}</TableCell>
                           <TableCell className="text-sm">{p.reference || '—'}</TableCell>
+                          {isFinancial && (
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  onClick={() => { setHistoryDialogOpen(false); openEditPayment(p); }}
+                                  className="p-1.5 rounded hover:bg-muted text-muted-foreground"
+                                  title={t('editPayment', lang)}
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => { setHistoryDialogOpen(false); handleDeletePayment(p); }}
+                                  className="p-1.5 rounded hover:bg-red-50 text-muted-foreground hover:text-red-500"
+                                  title={t('deletePayment', lang)}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </TableCell>
+                          )}
                         </TableRow>
                       ))}
                     </TableBody>
@@ -1316,6 +1519,89 @@ export default function RecurringBills() {
               )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Edit Payment Dialog ─── */}
+      <Dialog open={editPaymentDialogOpen} onOpenChange={setEditPaymentDialogOpen}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{t('editPayment', lang)}</DialogTitle>
+          </DialogHeader>
+          {editingPayment && (
+            <div className="space-y-4">
+              {/* Bill info summary */}
+              <Card>
+                <CardContent className="p-3 space-y-1">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">{t('billProvider', lang)}</span>
+                    <span className="font-medium">{editingPayment.recurringBill?.providerName || '—'}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">{t('serviceType', lang)}</span>
+                    <Badge variant="secondary" className="text-xs">
+                      {getServiceTypeLabel(editingPayment.recurringBill?.serviceType || '', lang)}
+                    </Badge>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">{t('originalAmount', lang)}</span>
+                    <span className="font-medium">{formatAED(editingPayment.amount)}</span>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <div>
+                <Label>{t('paymentAmount', lang)} (AED) *</Label>
+                <Input
+                  type="number"
+                  value={editPaymentForm.amount}
+                  onChange={e => setEditPaymentForm({ ...editPaymentForm, amount: Number(e.target.value) })}
+                />
+              </div>
+              <div>
+                <Label>{t('paymentDate', lang)} *</Label>
+                <Input
+                  type="date"
+                  value={editPaymentForm.paymentDate}
+                  onChange={e => setEditPaymentForm({ ...editPaymentForm, paymentDate: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label>{t('paymentMethod', lang)}</Label>
+                <Select value={editPaymentForm.paymentMethod} onValueChange={v => setEditPaymentForm({ ...editPaymentForm, paymentMethod: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {PAYMENT_METHODS.map(m => (
+                      <SelectItem key={m} value={m}>
+                        {m === 'cash' ? t('cash', lang) :
+                         m === 'bank_transfer' ? t('bankTransfer', lang) :
+                         m === 'cheque' ? t('cheque', lang) : 'Online'}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>{t('reference', lang)}</Label>
+                <Input value={editPaymentForm.reference} onChange={e => setEditPaymentForm({ ...editPaymentForm, reference: e.target.value })} />
+              </div>
+              <div>
+                <Label>{t('notes', lang)}</Label>
+                <Textarea value={editPaymentForm.notes} onChange={e => setEditPaymentForm({ ...editPaymentForm, notes: e.target.value })} rows={2} />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditPaymentDialogOpen(false)}>{t('cancel', lang)}</Button>
+            <Button
+              onClick={handleEditPayment}
+              className="bg-emerald hover:bg-emerald/90 text-white"
+              disabled={editPaymentForm.amount <= 0 || saving}
+            >
+              {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              {t('save', lang)}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

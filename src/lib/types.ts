@@ -297,4 +297,13 @@ export interface BillPaymentData {
   outstandingAfter: number
   createdBy: string
   createdAt: string
+  recurringBill?: {
+    id: string
+    providerName: string
+    serviceType: string
+    buildingName: string | null
+    accountNumber: string | null
+    currentOutstanding: number
+    totalAmountDue: number
+  }
 }

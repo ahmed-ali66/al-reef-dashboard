@@ -622,6 +622,16 @@ export const translations = {
   totalLiability: { en: 'Total Liability', ar: 'إجمالي الالتزام', bn: 'মোট দায়বদ্ধতা', ur: 'کل ذمہ داری' },
   paymentReference: { en: 'Payment Ref', ar: 'مرجع الدفع', bn: 'পেমেন্ট রেফারেন্স', ur: 'ادائیگی کا حوالہ' },
 
+  // Recurring Bills - Payment Management
+  allPayments: { en: 'All Payments', ar: 'جميع المدفوعات', bn: 'সকল পেমেন্ট', ur: 'تمام ادائیگیاں' },
+  editPayment: { en: 'Edit Payment', ar: 'تعديل الدفعة', bn: 'পেমেন্ট সম্পাদনা', ur: 'ادائیگی میں ترمیم' },
+  deletePayment: { en: 'Delete Payment', ar: 'حذف الدفعة', bn: 'পেমেন্ট মুছুন', ur: 'ادائیگی حذف کریں' },
+  deletePaymentConfirm: { en: 'Are you sure you want to delete this payment? The bill outstanding balance will be adjusted accordingly.', ar: 'هل أنت متأكد من حذف هذه الدفعة؟ سيتم تعديل الرصيد المعلق للفاتورة وفقاً لذلك.', bn: 'আপনি কি নিশ্চিত যে আপনি এই পেমেন্টটি মুছে ফেলতে চান? বিলের বকেয়া ব্যালেন্স সেই অনুযায়ী সামঞ্জস্য করা হবে।', ur: 'کیا آپ یقینی طور پر اس ادائیگی کو حذف کرنا چاہتے ہیں؟ بل کا بقایا بیلنس اس کے مطابق ایڈجسٹ کیا جائے گا۔' },
+  paymentAmount: { en: 'Payment Amount', ar: 'مبلغ الدفعة', bn: 'পেমেন্ট পরিমাণ', ur: 'ادائیگی کی رقم' },
+  paymentDate: { en: 'Payment Date', ar: 'تاريخ الدفع', bn: 'পেমেন্ট তারিখ', ur: 'ادائیگی کی تاریخ' },
+  billProvider: { en: 'Bill Provider', ar: 'مزود الفاتورة', bn: 'বিল সরবরাহকারী', ur: 'بل فراہم کنندہ' },
+  searchPayments: { en: 'Search Payments...', ar: 'بحث المدفوعات...', bn: 'পেমেন্ট খুঁজুন...', ur: 'ادائیگیاں تلاش کریں...' },
+
   // Recurring Bills - Export
   exportPDF: { en: 'Export PDF', ar: 'تصدير PDF', bn: 'PDF রপ্তানি', ur: 'PDF ایکسپورٹ' },
   exportXLSX: { en: 'Export Excel', ar: 'تصدير Excel', bn: 'Excel রপ্তানি', ur: 'Excel ایکسپورٹ' },
