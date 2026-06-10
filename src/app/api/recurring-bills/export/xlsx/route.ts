@@ -72,7 +72,6 @@ export async function GET(request: Request) {
     const today = now.toISOString().split('T')[0]
 
     // Categorize bills — with cycle-based totalAmountDue correction
-    // Fix totalAmountDue: derive from the latest cycle's amount when corrupted
     const correctedBills = bills.map(b => {
       const bill: any = { ...b }
       if (bill.cycles && bill.cycles.length > 0) {
@@ -147,11 +146,12 @@ export async function GET(request: Request) {
 
     // ─── Overdue Bills Sheet ───
     if (overdueBills.length > 0) {
-      const overdueHeader = ['Provider', 'Property', 'Outstanding (AED)', 'Days Overdue', 'Service Type', 'Due Date']
+      const overdueHeader = ['Provider', 'Account No.', 'Property', 'Outstanding (AED)', 'Days Overdue', 'Service Type', 'Due Date']
       const overdueRows = overdueBills.map(b => {
         const daysOverdue = Math.max(0, Math.ceil((now.getTime() - b.nextDueDate.getTime()) / (1000 * 60 * 60 * 24)))
         return [
           b.providerName,
+          b.accountNumber || '',
           b.property?.name || b.buildingName || '',
           safeNumber(b.currentOutstanding).toFixed(2),
           daysOverdue,
@@ -166,11 +166,12 @@ export async function GET(request: Request) {
 
     // ─── Upcoming Bills Sheet ───
     if (upcomingBills.length > 0) {
-      const upcomingHeader = ['Provider', 'Property', 'Amount Due (AED)', 'Due Date', 'Days Remaining', 'Service Type']
+      const upcomingHeader = ['Provider', 'Account No.', 'Property', 'Amount Due (AED)', 'Due Date', 'Days Remaining', 'Service Type']
       const upcomingRows = upcomingBills.map(b => {
         const daysRemaining = Math.max(0, Math.ceil((b.nextDueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
         return [
           b.providerName,
+          b.accountNumber || '',
           b.property?.name || b.buildingName || '',
           safeNumber(b.totalAmountDue).toFixed(2),
           b.nextDueDate.toISOString().split('T')[0],
@@ -185,9 +186,10 @@ export async function GET(request: Request) {
 
     // ─── Paid Bills Sheet ───
     if (paidBills.length > 0) {
-      const paidHeader = ['Provider', 'Property', 'Amount (AED)', 'Payment Date', 'Payment Method', 'Reference']
+      const paidHeader = ['Provider', 'Account No.', 'Property', 'Amount (AED)', 'Payment Date', 'Payment Method', 'Reference']
       const paidRows = paidBills.map(b => [
         b.providerName,
+        b.accountNumber || '',
         b.property?.name || b.buildingName || '',
         safeNumber(b.totalAmountDue).toFixed(2),
         b.lastPaymentDate ? new Date(b.lastPaymentDate).toISOString().split('T')[0] : '',
@@ -201,13 +203,14 @@ export async function GET(request: Request) {
 
     // ─── Partially Paid Sheet ───
     if (partiallyPaidBills.length > 0) {
-      const partialHeader = ['Provider', 'Property', 'Original Amount (AED)', 'Amount Paid (AED)', 'Remaining Balance (AED)', 'Due Date', 'Service Type']
+      const partialHeader = ['Provider', 'Account No.', 'Property', 'Original Amount (AED)', 'Amount Paid (AED)', 'Remaining Balance (AED)', 'Due Date', 'Service Type']
       const partialRows = partiallyPaidBills.map(b => {
         const totalDue = safeNumber(b.totalAmountDue)
         const outstanding = safeNumber(b.currentOutstanding)
         const paid = totalDue - outstanding
         return [
           b.providerName,
+          b.accountNumber || '',
           b.property?.name || b.buildingName || '',
           totalDue.toFixed(2),
           paid.toFixed(2),
@@ -224,9 +227,10 @@ export async function GET(request: Request) {
     // ─── Outstanding Balances Sheet ───
     const outstandingBills = activeBills.filter(b => safeNumber(b.currentOutstanding) > 0)
     if (outstandingBills.length > 0) {
-      const outstandingHeader = ['Provider', 'Property', 'Previous Balance (AED)', 'Current Balance (AED)', 'Total Liability (AED)', 'Service Type', 'Due Date']
+      const outstandingHeader = ['Provider', 'Account No.', 'Property', 'Previous Balance (AED)', 'Current Balance (AED)', 'Total Liability (AED)', 'Service Type', 'Due Date']
       const outstandingRows = outstandingBills.map(b => [
         b.providerName,
+        b.accountNumber || '',
         b.property?.name || b.buildingName || '',
         safeNumber(b.previousOutstanding).toFixed(2),
         safeNumber(b.currentOutstanding).toFixed(2),
@@ -246,6 +250,7 @@ export async function GET(request: Request) {
         for (const cycle of bill.cycles) {
           allCycles.push([
             bill.providerName,
+            bill.accountNumber || '',
             bill.serviceType,
             cycle.periodStart.toISOString().split('T')[0],
             cycle.periodEnd.toISOString().split('T')[0],
@@ -260,7 +265,7 @@ export async function GET(request: Request) {
       }
     }
     if (allCycles.length > 0) {
-      const cycleHeader = ['Provider', 'Service Type', 'Period Start', 'Period End', 'Amount (AED)', 'Paid (AED)', 'Outstanding (AED)', 'Status', 'Due Date', 'Payments']
+      const cycleHeader = ['Provider', 'Account No.', 'Service Type', 'Period Start', 'Period End', 'Amount (AED)', 'Paid (AED)', 'Outstanding (AED)', 'Status', 'Due Date', 'Payments']
       const cycleWs = XLSX.utils.aoa_to_sheet([cycleHeader, ...allCycles])
       cycleWs['!cols'] = cycleHeader.map(() => ({ wch: 18 }))
       XLSX.utils.book_append_sheet(wb, cycleWs, 'Billing Cycles')

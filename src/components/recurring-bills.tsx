@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import type { RecurringBillData, BillPaymentData, BillCycleData, PropertyData } from '@/lib/types'
 import { useAppStore, isOwnerOrAdmin } from '@/lib/store'
 import { formatAED, formatDate } from '@/lib/utils'
@@ -101,6 +101,11 @@ export default function RecurringBills() {
   const [editPaymentForm, setEditPaymentForm] = useState({ ...emptyPaymentForm })
   const [saving, setSaving] = useState(false)
   const [exporting, setExporting] = useState(false)
+
+  // Account number duplicate check
+  const [accountNumberWarning, setAccountNumberWarning] = useState<string | null>(null)
+  const [checkingAccount, setCheckingAccount] = useState(false)
+  const accountCheckTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Access control
   const canAccess = !!authUser
@@ -277,6 +282,7 @@ export default function RecurringBills() {
   const openNew = () => {
     setEditing(null)
     setBillForm({ ...emptyBillForm })
+    setAccountNumberWarning(null)
     setBillDialogOpen(true)
   }
 
@@ -298,6 +304,7 @@ export default function RecurringBills() {
       propertyManager: bill.propertyManager || '',
       notes: bill.notes || '',
     })
+    setAccountNumberWarning(null)
     setBillDialogOpen(true)
   }
 
@@ -370,7 +377,11 @@ export default function RecurringBills() {
         })
         if (!res.ok) {
           const err = await res.json()
-          alert(err.error || 'Failed to update bill')
+          if (res.status === 409) {
+            alert(`⚠️ Duplicate Account Number\n\n${err.error}`)
+          } else {
+            alert(err.error || 'Failed to update bill')
+          }
           setSaving(false)
           return
         }
@@ -382,12 +393,17 @@ export default function RecurringBills() {
         })
         if (!res.ok) {
           const err = await res.json()
-          alert(err.error || 'Failed to create bill')
+          if (res.status === 409) {
+            alert(`⚠️ Duplicate Account Number\n\n${err.error}`)
+          } else {
+            alert(err.error || 'Failed to create bill')
+          }
           setSaving(false)
           return
         }
       }
       setBillDialogOpen(false)
+      setAccountNumberWarning(null)
       fetchBills()
     } catch (error) {
       console.error('Failed to save bill:', error)
@@ -970,6 +986,7 @@ export default function RecurringBills() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>{t('billProvider', lang)}</TableHead>
+                    <TableHead>{t('accountNumber', lang)}</TableHead>
                     <TableHead>{t('serviceType', lang)}</TableHead>
                     <TableHead>{t('paymentDate', lang)}</TableHead>
                     <TableHead>{t('amount', lang)}</TableHead>
@@ -991,6 +1008,7 @@ export default function RecurringBills() {
                           )}
                         </div>
                       </TableCell>
+                      <TableCell className="text-sm font-mono">{payment.recurringBill?.accountNumber || '—'}</TableCell>
                       <TableCell>
                         <Badge variant="secondary" className="text-xs">
                           {getServiceTypeLabel(payment.recurringBill?.serviceType || '', lang)}
@@ -1043,6 +1061,7 @@ export default function RecurringBills() {
               <TableHeader>
                 <TableRow>
                   <TableHead>{t('providerName', lang)}</TableHead>
+                  <TableHead>{t('accountNumber', lang)}</TableHead>
                   <TableHead>{t('building', lang)}</TableHead>
                   {activeTab === 'paid' && <TableHead>{t('amountPaid', lang)}</TableHead>}
                   {activeTab === 'paid' && <TableHead>{t('paymentDate', lang)}</TableHead>}
@@ -1083,6 +1102,7 @@ export default function RecurringBills() {
                           </Badge>
                         </div>
                       </TableCell>
+                      <TableCell className="text-sm font-mono">{bill.accountNumber || '—'}</TableCell>
                       <TableCell className="text-sm">
                         {bill.property ? getNameByLang(bill.property, lang) : bill.buildingName || '—'}
                       </TableCell>
@@ -1314,7 +1334,57 @@ export default function RecurringBills() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <Label>{t('accountNumber', lang)}</Label>
-                <Input value={billForm.accountNumber} onChange={e => setBillForm({ ...billForm, accountNumber: e.target.value })} />
+                <Input
+                  value={billForm.accountNumber}
+                  onChange={e => {
+                    setBillForm({ ...billForm, accountNumber: e.target.value })
+                    // Debounced duplicate check
+                    if (accountCheckTimer.current) clearTimeout(accountCheckTimer.current)
+                    const val = e.target.value.trim()
+                    if (!val) {
+                      setAccountNumberWarning(null)
+                      return
+                    }
+                    setCheckingAccount(true)
+                    accountCheckTimer.current = setTimeout(async () => {
+                      try {
+                        const res = await fetch(`/api/recurring-bills/check-account?accountNumber=${encodeURIComponent(val)}`)
+                        if (res.ok) {
+                          const data = await res.json()
+                          const result = data.data || data
+                          if (result.exists) {
+                            const bills = result.bills || []
+                            const existingInfo = bills
+                              .filter((b: any) => b.id !== editing?.id)
+                              .map((b: any) => `${b.providerName} (${b.propertyName || b.buildingName || 'N/A'})`)
+                              .join(', ')
+                            if (existingInfo) {
+                              setAccountNumberWarning(`Already used by: ${existingInfo}`)
+                            } else {
+                              setAccountNumberWarning(null)
+                            }
+                          } else {
+                            setAccountNumberWarning(null)
+                          }
+                        }
+                      } catch {
+                        // Silent fail — don't block user input
+                      } finally {
+                        setCheckingAccount(false)
+                      }
+                    }, 500)
+                  }}
+                />
+                {checkingAccount && (
+                  <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Checking...
+                  </p>
+                )}
+                {accountNumberWarning && (
+                  <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" /> {accountNumberWarning}
+                  </p>
+                )}
               </div>
               <div>
                 <Label>{t('contractNumber', lang)}</Label>
@@ -1401,6 +1471,12 @@ export default function RecurringBills() {
                     <span className="text-muted-foreground">{t('providerName', lang)}</span>
                     <span className="font-medium">{payingBill.providerName}</span>
                   </div>
+                  {payingBill.accountNumber && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">{t('accountNumber', lang)}</span>
+                      <span className="font-medium font-mono">{payingBill.accountNumber}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">{t('serviceType', lang)}</span>
                     <Badge variant="secondary" className="text-xs">{getServiceTypeLabel(payingBill.serviceType, lang)}</Badge>
@@ -1415,8 +1491,6 @@ export default function RecurringBills() {
                   </div>
                 </CardContent>
               </Card>
-
-              {/* Cycle selector */}
               {payingBill.cycles && payingBill.cycles.length > 0 && (
                 <div>
                   <Label>{t('payAgainstCycle', lang)}</Label>
@@ -1505,6 +1579,12 @@ export default function RecurringBills() {
                     <span className="text-muted-foreground">{t('serviceType', lang)}</span>
                     <Badge variant="secondary" className="text-xs">{getServiceTypeLabel(historyBill.serviceType, lang)}</Badge>
                   </div>
+                  {historyBill.accountNumber && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">{t('accountNumber', lang)}</span>
+                      <span className="font-medium font-mono">{historyBill.accountNumber}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">{t('currentOutstanding', lang)}</span>
                     <span className="font-medium text-red-600">{displayAmount(historyBill.currentOutstanding)}</span>

@@ -136,6 +136,7 @@ export async function GET(request: NextRequest) {
             id: true,
             providerName: true,
             serviceType: true,
+            accountNumber: true,
             property: {
               select: { id: true, name: true },
             },
@@ -150,6 +151,7 @@ export async function GET(request: NextRequest) {
       id: bp.id,
       providerName: bp.recurringBill?.providerName || '',
       serviceType: bp.recurringBill?.serviceType || '',
+      accountNumber: bp.recurringBill?.accountNumber || '',
       propertyName: bp.recurringBill?.property?.name || '',
       amount: bp.amount,
       paymentMethod: bp.paymentMethod,

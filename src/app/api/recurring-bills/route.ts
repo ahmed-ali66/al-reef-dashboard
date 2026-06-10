@@ -190,6 +190,26 @@ export async function POST(request: Request) {
       return errorResponse('Property not found or does not belong to your company', 404)
     }
 
+    // Check for duplicate account number within same company
+    if (accountNumber && accountNumber.trim()) {
+      const existingBill = await prisma.recurringBill.findFirst({
+        where: {
+          companyId: user.companyId,
+          accountNumber: accountNumber.trim(),
+          deletedAt: null,
+        },
+        include: {
+          property: { select: { name: true } },
+        },
+      })
+      if (existingBill) {
+        return errorResponse(
+          `An account with this Account Number already exists. Provider: ${existingBill.providerName}, Property: ${existingBill.property?.name || existingBill.buildingName || 'N/A'}. Please review the existing record before creating another one.`,
+          409
+        )
+      }
+    }
+
     // PHASE 3: Use safeDecimal for monetary precision
     const parsedCurrentOutstanding = safeDecimal(currentOutstanding || 0)
     if (parsedCurrentOutstanding < 0)

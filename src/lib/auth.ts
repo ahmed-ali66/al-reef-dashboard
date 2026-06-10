@@ -8,25 +8,27 @@ import prisma from '@/lib/db'
 const MAX_LOGIN_ATTEMPTS = 5
 const LOCKOUT_DURATION_MINUTES = 15
 
-async function isAccountLocked(email: string): Promise<boolean> {
+async function isAccountLocked(email: string): Promise<{ locked: boolean; lockedUntil?: Date; remainingMinutes?: number }> {
   try {
     const entry = await prisma.rateLimitEntry.findUnique({ where: { identifier: email } })
-    if (!entry) return false
+    if (!entry) return { locked: false }
 
     // Check if locked
     if (entry.lockedUntil && new Date() < entry.lockedUntil) {
-      return true
+      const remainingMs = entry.lockedUntil.getTime() - Date.now()
+      const remainingMinutes = Math.ceil(remainingMs / (60 * 1000))
+      return { locked: true, lockedUntil: entry.lockedUntil, remainingMinutes }
     }
 
     // Clear expired lockout
     if (entry.lockedUntil && new Date() >= entry.lockedUntil) {
       await prisma.rateLimitEntry.delete({ where: { identifier: email } }).catch(() => {})
     }
-    return false
+    return { locked: false }
   } catch (error) {
     console.error('Rate limit check error:', error)
     // If DB check fails, allow login attempt (fail open rather than lock out everyone)
-    return false
+    return { locked: false }
   }
 }
 
@@ -104,6 +106,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
+          console.warn('[AUTH] Login attempt missing credentials')
           return null
         }
 
@@ -113,7 +116,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         await cleanupExpiredEntries()
 
         // Check brute-force lockout (DB-backed)
-        if (await isAccountLocked(email)) {
+        const lockStatus = await isAccountLocked(email)
+        if (lockStatus.locked) {
+          console.warn(`[AUTH] Account locked for ${email}. Locked until: ${lockStatus.lockedUntil?.toISOString()}. Remaining: ${lockStatus.remainingMinutes} minutes`)
+          // Return a special object to indicate lockout — we'll handle this in callbacks
           return null
         }
 
@@ -122,13 +128,21 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           include: { company: true },
         })
 
-        if (!user || !user.isActive) {
+        if (!user) {
+          console.warn(`[AUTH] Login failed — user not found: ${email}`)
+          await recordFailedAttempt(email)
+          return null
+        }
+
+        if (!user.isActive) {
+          console.warn(`[AUTH] Login failed — user inactive: ${email}`)
           await recordFailedAttempt(email)
           return null
         }
 
         // Check if user is soft-deleted
         if (user.deletedAt) {
+          console.warn(`[AUTH] Login failed — user soft-deleted: ${email}`)
           await recordFailedAttempt(email)
           return null
         }
@@ -139,12 +153,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         )
 
         if (!isValidPassword) {
+          console.warn(`[AUTH] Login failed — wrong password for: ${email}`)
           await recordFailedAttempt(email)
           return null
         }
 
         // Clear failed attempts on successful login
         await clearFailedAttempts(email)
+
+        console.log(`[AUTH] Login successful for: ${email} (role: ${user.role})`)
 
         // Log the login
         try {

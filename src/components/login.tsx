@@ -8,13 +8,14 @@ import type { Language } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Moon, Languages, Loader2, Shield, KeyRound, ArrowLeft, CheckCircle2, Send } from 'lucide-react'
+import { Moon, Languages, Loader2, Shield, KeyRound, ArrowLeft, CheckCircle2, Send, Lock, AlertTriangle } from 'lucide-react'
 
 export default function LoginPage() {
   const { language, setLanguage } = useAppStore()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [errorType, setErrorType] = useState<'generic' | 'lockout' | 'inactive' | 'not_found'>('generic')
   const [loading, setLoading] = useState(false)
   const [showForgotPassword, setShowForgotPassword] = useState(false)
   const [resetEmail, setResetEmail] = useState('')
@@ -26,6 +27,7 @@ export default function LoginPage() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    setErrorType('generic')
     setLoading(true)
 
     try {
@@ -36,7 +38,64 @@ export default function LoginPage() {
       })
 
       if (result?.error) {
-        setError(t('loginError', language))
+        // Try to diagnose the specific error via the diagnose endpoint
+        try {
+          const diagRes = await fetch('/api/auth/diagnose', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+          })
+          if (diagRes.ok) {
+            const diagData = await diagRes.json()
+            const diag = diagData.data || diagData
+
+            if (diag.isLockedOut) {
+              setErrorType('lockout')
+              const mins = diag.lockoutMinutesRemaining || 15
+              setError(
+                language === 'en' ? `Too many failed attempts. Please try again in ${mins} minutes.` :
+                language === 'ar' ? `محاولات فاشلة كثيرة. حاول مرة أخرى بعد ${mins} دقيقة.` :
+                language === 'bn' ? `খুব বেশি ব্যর্থ প্রচেষ্টা। ${mins} মিনিট পরে আবার চেষ্টা করুন।` :
+                `بہت زیادہ ناکام کوششیں۔ ${mins} منٹ بعد دوبارہ کوشش کریں۔`
+              )
+            } else if (diag.userExists && !diag.isActive) {
+              setErrorType('inactive')
+              setError(
+                language === 'en' ? 'Your account has been deactivated. Please contact your administrator.' :
+                language === 'ar' ? 'تم تعطيل حسابك. يرجى التواصل مع المسؤول.' :
+                language === 'bn' ? 'আপনার অ্যাকাউন্ট নিষ্ক্রিয় করা হয়েছে। আপনার প্রশাসকের সাথে যোগাযোগ করুন।' :
+                'آپ کا اکاؤنٹ غیر فعال کر دیا گیا ہے۔ اپنے ایڈمن سے رابطہ کریں۔'
+              )
+            } else if (diag.userExists && diag.isDeleted) {
+              setErrorType('inactive')
+              setError(
+                language === 'en' ? 'This account no longer exists. Please contact your administrator.' :
+                language === 'ar' ? 'هذا الحساب لم يعد موجوداً. يرجى التواصل مع المسؤول.' :
+                language === 'bn' ? 'এই অ্যাকাউন্টটি আর বিদ্যমান নেই। আপনার প্রশাসকের সাথে যোগাযোগ করুন।' :
+                'یہ اکاؤنٹ اب موجود نہیں ہے۔ اپنے ایڈمن سے رابطہ کریں۔'
+              )
+            } else if (diag.userExists && diag.mustChangePassword) {
+              setError(
+                language === 'en' ? 'You must change your password. Please contact your administrator.' :
+                language === 'ar' ? 'يجب تغيير كلمة المرور. يرجى التواصل مع المسؤول.' :
+                language === 'bn' ? 'আপনাকে পাসওয়ার্ড পরিবর্তন করতে হবে। আপনার প্রশাসকের সাথে যোগাযোগ করুন।' :
+                'آپ کو پاس ورڈ تبدیل کرنا ہوگا۔ اپنے ایڈمن سے رابطہ کریں۔'
+              )
+            } else if (!diag.userExists) {
+              setErrorType('not_found')
+              setError(t('loginError', language))
+            } else {
+              // User exists, not locked, not inactive — wrong password
+              setError(t('loginError', language))
+            }
+          } else {
+            // Diagnosis failed, use generic error
+            setError(t('loginError', language))
+          }
+        } catch {
+          // Diagnosis request failed, use generic error
+          setError(t('loginError', language))
+        }
       }
       // If successful, the session will be updated and AppContent will handle the redirect
     } catch {
@@ -151,8 +210,19 @@ export default function LoginPage() {
               </p>
 
               {error && (
-                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm mb-4 animate-fade-in-up">
-                  {error}
+                <div className={`px-4 py-3 rounded-lg text-sm mb-4 animate-fade-in-up flex items-start gap-2 ${
+                  errorType === 'lockout'
+                    ? 'bg-amber-50 border border-amber-200 text-amber-700'
+                    : errorType === 'inactive'
+                    ? 'bg-orange-50 border border-orange-200 text-orange-700'
+                    : 'bg-red-50 border border-red-200 text-red-700'
+                }`}>
+                  {errorType === 'lockout' ? (
+                    <Lock className="w-4 h-4 mt-0.5 shrink-0" />
+                  ) : errorType === 'inactive' ? (
+                    <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                  ) : null}
+                  <span>{error}</span>
                 </div>
               )}
 

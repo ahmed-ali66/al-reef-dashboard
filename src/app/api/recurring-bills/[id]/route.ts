@@ -84,6 +84,27 @@ export async function PUT(
     if (ownerName !== undefined) data.ownerName = ownerName || null
     if (propertyManager !== undefined) data.propertyManager = propertyManager || null
 
+    // Check for duplicate account number if being changed
+    if (accountNumber !== undefined && accountNumber && accountNumber.trim()) {
+      const duplicateBill = await prisma.recurringBill.findFirst({
+        where: {
+          companyId: user.companyId,
+          accountNumber: accountNumber.trim(),
+          deletedAt: null,
+          id: { not: id }, // Exclude the current bill
+        },
+        include: {
+          property: { select: { name: true } },
+        },
+      })
+      if (duplicateBill) {
+        return errorResponse(
+          `An account with this Account Number already exists. Provider: ${duplicateBill.providerName}, Property: ${duplicateBill.property?.name || duplicateBill.buildingName || 'N/A'}. Please review the existing record before updating.`,
+          409
+        )
+      }
+    }
+
     // When currentOutstanding is manually changed, update totalAmountDue to match
     // only if the new outstanding is GREATER than current totalAmountDue (user is raising the bill)
     // Otherwise, leave totalAmountDue unchanged (user is adjusting balance, not bill amount)

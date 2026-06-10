@@ -86,6 +86,7 @@ export async function GET(request: Request) {
       utilityDueThisMonthAggregate,
       utilityPaidThisMonthAggregate,
       utilityServiceBreakdown,
+      utilityAccountNumbers,
       utilityOverdueCount,
     ] = await Promise.all([
       prisma.recurringBill.count({
@@ -117,6 +118,11 @@ export async function GET(request: Request) {
         where: { companyId, deletedAt: null, status: 'active' },
         _sum: { currentOutstanding: true },
         _count: true,
+      }),
+      // Get account numbers for bills grouped by service type
+      prisma.recurringBill.findMany({
+        where: { companyId, deletedAt: null, status: 'active', accountNumber: { not: null } },
+        select: { serviceType: true, accountNumber: true, providerName: true },
       }),
       prisma.recurringBill.count({
         where: {
@@ -293,12 +299,18 @@ export async function GET(request: Request) {
         totalDueThisMonth: utilityDueThisMonth,
         totalPaidThisMonth: utilityPaidThisMonth,
         overdueBills: utilityOverdueCount,
-        serviceTypeBreakdown: utilityServiceBreakdown.map((item) => ({
-          serviceType: item.serviceType,
-          count: item._count,
-          totalAmountDue: safeNumber(item._sum.currentOutstanding),
-          totalOutstanding: safeNumber(item._sum.currentOutstanding),
-        })),
+        serviceTypeBreakdown: utilityServiceBreakdown.map((item) => {
+          const accountNums = utilityAccountNumbers
+            .filter((b: any) => b.serviceType === item.serviceType)
+            .map((b: any) => ({ provider: b.providerName, accountNumber: b.accountNumber }))
+          return {
+            serviceType: item.serviceType,
+            count: item._count,
+            totalAmountDue: safeNumber(item._sum.currentOutstanding),
+            totalOutstanding: safeNumber(item._sum.currentOutstanding),
+            accountNumbers: accountNums,
+          }
+        }),
         cycleSummary: {
           totalCycles: utilityCycleAgg._count,
           totalCycleOutstanding: safeNumber(utilityCycleAgg._sum.outstandingAmount),

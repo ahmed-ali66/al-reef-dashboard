@@ -78,7 +78,6 @@ export async function GET(request: Request) {
     const today = now.toISOString().split('T')[0]
 
     // Categorize bills — with cycle-based totalAmountDue correction
-    // Fix totalAmountDue: derive from the latest cycle's amount when corrupted
     const correctedBills = bills.map(b => {
       const bill = serialize(b) as any
       if (bill.cycles && bill.cycles.length > 0) {
@@ -127,83 +126,166 @@ export async function GET(request: Request) {
     const chunks: Buffer[] = []
     doc.on('data', (chunk: Buffer) => chunks.push(chunk))
 
-    const pageWidth = doc.page.width - 100 // margins
+    const marginLeft = 50
+    const marginRight = 50
+    const pageWidth = doc.page.width - marginLeft - marginRight
 
-    // Helper functions
-    const addHeader = () => {
-      // Company name
+    // ─── Helper: Truncate text with ellipsis ───
+    const truncateText = (text: string, maxWidth: number, fontName: string, fontSize: number): string => {
+      doc.font(fontName).fontSize(fontSize)
+      if (doc.widthOfString(text) <= maxWidth) return text
+      let truncated = text
+      while (truncated.length > 0 && doc.widthOfString(truncated + '...') > maxWidth) {
+        truncated = truncated.slice(0, -1)
+      }
+      return truncated + '...'
+    }
+
+    // ─── Helper: Add header with dynamic Y positioning ───
+    const addHeader = (): number => {
+      let y = marginLeft
+
+      // Company name — large bold
       doc.fontSize(18).fillColor('#1a5276').font('Helvetica-Bold')
-      doc.text(company?.name || 'Al Reef Al Madeena', 50, 50, { width: pageWidth })
-      
-      // Report title
+      const companyName = company?.name || 'Al Reef Al Madeena'
+      doc.text(companyName, marginLeft, y, { width: pageWidth, lineBreak: true })
+      // Track actual height after rendering
+      const companyNameHeight = doc.heightOfString(companyName, { width: pageWidth })
+      y += companyNameHeight + 8
+
+      // Report title — on its own line with gap
       doc.fontSize(14).fillColor('#2c3e50').font('Helvetica')
-      doc.text('Recurring Bills & Utilities Report', 50, 75, { width: pageWidth })
-      
-      // Date and separator
-      doc.fontSize(9).fillColor('#7f8c8d')
-      doc.text(`Generated: ${today} | Total Bills: ${totalBills} | Outstanding: AED ${totalOutstanding.toFixed(2)}`, 50, 95, { width: pageWidth })
-      
-      // Separator line
-      doc.moveTo(50, 115).lineTo(50 + pageWidth, 115).strokeColor('#1a5276').lineWidth(2).stroke()
-      
-      return 125
+      doc.text('Recurring Bills & Utilities Report', marginLeft, y, { width: pageWidth, lineBreak: true })
+      const titleHeight = doc.heightOfString('Recurring Bills & Utilities Report', { width: pageWidth })
+      y += titleHeight + 6
+
+      // Generated date and summary — on its own line
+      doc.fontSize(9).fillColor('#7f8c8d').font('Helvetica')
+      const summaryLine = `Generated: ${today} | Total Bills: ${totalBills} | Outstanding: AED ${totalOutstanding.toFixed(2)} | Paid: AED ${totalPaidAmount.toFixed(2)}`
+      doc.text(summaryLine, marginLeft, y, { width: pageWidth, lineBreak: true })
+      const summaryHeight = doc.heightOfString(summaryLine, { width: pageWidth })
+      y += summaryHeight + 10
+
+      // Separator line — drawn AFTER all header content with proper gap
+      doc.moveTo(marginLeft, y).lineTo(marginLeft + pageWidth, y).strokeColor('#1a5276').lineWidth(2).stroke()
+      y += 10
+
+      return y
     }
 
-    const addSectionTitle = (title: string, y: number, color: string = '#1a5276') => {
-      doc.fontSize(12).fillColor(color).font('Helvetica-Bold')
-      doc.text(title, 50, y, { width: pageWidth })
-      doc.moveTo(50, y + 16).lineTo(50 + pageWidth, y + 16).strokeColor(color).lineWidth(0.5).stroke()
-      return y + 22
-    }
-
-    const drawTable = (headers: string[], rows: string[][], y: number): number => {
-      const colWidths = headers.map(() => pageWidth / headers.length)
-      const rowHeight = 20
-      const headerHeight = 24
-
-      if (y + headerHeight + rowHeight * Math.min(rows.length, 3) > doc.page.height - 60) {
+    // ─── Helper: Add section title ───
+    const addSectionTitle = (title: string, y: number, color: string = '#1a5276'): number => {
+      // Check if we need a new page (need at least header + a few rows of space)
+      if (y + 50 > doc.page.height - 60) {
         doc.addPage()
         y = 50
       }
 
-      // Header background
-      doc.rect(50, y, pageWidth, headerHeight).fill('#1a5276')
-      let x = 50
-      headers.forEach((h, i) => {
-        doc.fontSize(8).fillColor('#ffffff').font('Helvetica-Bold')
-        doc.text(h, x + 4, y + 7, { width: colWidths[i] - 8, align: 'left' })
-        x += colWidths[i]
-      })
-      y += headerHeight
+      doc.fontSize(12).fillColor(color).font('Helvetica-Bold')
+      doc.text(title, marginLeft, y, { width: pageWidth, lineBreak: true })
+      const titleH = doc.heightOfString(title, { width: pageWidth })
+      y += titleH + 2
+      doc.moveTo(marginLeft, y).lineTo(marginLeft + pageWidth, y).strokeColor(color).lineWidth(0.5).stroke()
+      y += 8
+      return y
+    }
 
-      // Rows
+    // ─── Helper: Add footer to current page ───
+    const addFooter = () => {
+      const footerY = doc.page.height - 35
+      doc.fontSize(7).fillColor('#95a5a6').font('Helvetica')
+      doc.text(
+        `Generated by Al Reef Al Madeena Real Estate Management System | ${today} | Confidential`,
+        marginLeft,
+        footerY,
+        { width: pageWidth, align: 'center' }
+      )
+    }
+
+    // ─── Helper: Smart column width calculation ───
+    // Column importance: provider(25%), account#(15%), property(20%), numbers(15%), dates/status(12.5% each)
+    type ColumnSpec = { header: string; widthPct: number }
+
+    const drawTable = (columns: ColumnSpec[], rows: string[][], y: number): number => {
+      const colWidths = columns.map(c => (c.widthPct / 100) * pageWidth)
+      const padding = 4
+      const headerFontSize = 8
+      const cellFontSize = 7.5
+      const headerHeight = 24
+      const minRowHeight = 18
+      const headerFont = 'Helvetica-Bold'
+      const cellFont = 'Helvetica'
+
+      // Helper to draw table header
+      const drawHeader = (startY: number): number => {
+        doc.rect(marginLeft, startY, pageWidth, headerHeight).fill('#1a5276')
+        let x = marginLeft
+        columns.forEach((col, i) => {
+          const truncatedHeader = truncateText(col.header, colWidths[i] - padding * 2, headerFont, headerFontSize)
+          doc.fontSize(headerFontSize).fillColor('#ffffff').font(headerFont)
+          doc.text(truncatedHeader, x + padding, startY + 7, {
+            width: colWidths[i] - padding * 2,
+            align: 'left',
+            lineBreak: false,
+          })
+          x += colWidths[i]
+        })
+        return startY + headerHeight
+      }
+
+      // Check if we need a new page
+      if (y + headerHeight + minRowHeight > doc.page.height - 60) {
+        addFooter()
+        doc.addPage()
+        y = 50
+      }
+
+      y = drawHeader(y)
+
+      // Draw rows
       rows.forEach((row, ri) => {
-        if (y + rowHeight > doc.page.height - 60) {
+        // Calculate row height based on the tallest cell
+        let maxCellHeight = minRowHeight
+        row.forEach((cell, i) => {
+          doc.font(cellFont).fontSize(cellFontSize)
+          const cellHeight = doc.heightOfString(String(cell), {
+            width: colWidths[i] - padding * 2,
+            lineBreak: true,
+          })
+          maxCellHeight = Math.max(maxCellHeight, cellHeight + 8)
+        })
+
+        // Cap row height to prevent overflow
+        maxCellHeight = Math.min(maxCellHeight, 60)
+
+        // Check for page break
+        if (y + maxCellHeight > doc.page.height - 60) {
+          addFooter()
           doc.addPage()
           y = 50
-          // Re-draw header on new page
-          doc.rect(50, y, pageWidth, headerHeight).fill('#1a5276')
-          let hx = 50
-          headers.forEach((h, i) => {
-            doc.fontSize(8).fillColor('#ffffff').font('Helvetica-Bold')
-            doc.text(h, hx + 4, y + 7, { width: colWidths[i] - 8, align: 'left' })
-            hx += colWidths[i]
-          })
-          y += headerHeight
+          y = drawHeader(y)
         }
 
         // Alternate row background
         if (ri % 2 === 0) {
-          doc.rect(50, y, pageWidth, rowHeight).fill('#f8f9fa')
+          doc.rect(marginLeft, y, pageWidth, maxCellHeight).fill('#f8f9fa')
         }
 
-        x = 50
+        // Draw cells
+        let x = marginLeft
         row.forEach((cell, i) => {
-          doc.fontSize(7.5).fillColor('#2c3e50').font('Helvetica')
-          doc.text(cell, x + 4, y + 5, { width: colWidths[i] - 8, align: 'left' })
+          const truncated = truncateText(String(cell), colWidths[i] - padding * 2, cellFont, cellFontSize)
+          doc.fontSize(cellFontSize).fillColor('#2c3e50').font(cellFont)
+          doc.text(truncated, x + padding, y + 4, {
+            width: colWidths[i] - padding * 2,
+            align: 'left',
+            lineBreak: true,
+            height: maxCellHeight - 6,
+            ellipsis: true,
+          })
           x += colWidths[i]
         })
-        y += rowHeight
+        y += maxCellHeight
       })
 
       return y + 8
@@ -229,7 +311,7 @@ export async function GET(request: Request) {
     summaryData.forEach((item, i) => {
       const col = i % 2
       const row = Math.floor(i / 2)
-      const sx = 50 + col * (pageWidth / 2)
+      const sx = marginLeft + col * (pageWidth / 2)
       const sy = y + row * 18
 
       doc.fontSize(9).fillColor('#7f8c8d').font('Helvetica')
@@ -246,13 +328,21 @@ export async function GET(request: Request) {
         const daysOverdue = Math.max(0, Math.ceil((now.getTime() - new Date(b.nextDueDate).getTime()) / (1000 * 60 * 60 * 24)))
         return [
           b.providerName,
+          b.accountNumber || '—',
           b.property?.name || b.buildingName || '-',
           `AED ${safeNumber(b.currentOutstanding).toFixed(2)}`,
           `${daysOverdue} days`,
           b.serviceType,
         ]
       })
-      y = drawTable(['Provider', 'Property', 'Outstanding', 'Days Overdue', 'Type'], overdueRows, y)
+      y = drawTable([
+        { header: 'Provider', widthPct: 25 },
+        { header: 'Account#', widthPct: 15 },
+        { header: 'Property', widthPct: 20 },
+        { header: 'Outstanding', widthPct: 15 },
+        { header: 'Days Overdue', widthPct: 12.5 },
+        { header: 'Type', widthPct: 12.5 },
+      ], overdueRows, y)
     }
 
     // Upcoming Bills Section
@@ -263,13 +353,21 @@ export async function GET(request: Request) {
         const daysRemaining = Math.max(0, Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
         return [
           b.providerName,
+          b.accountNumber || '—',
           b.property?.name || b.buildingName || '-',
           `AED ${safeNumber(b.totalAmountDue).toFixed(2)}`,
           dueDate.toISOString().split('T')[0],
           `${daysRemaining} days`,
         ]
       })
-      y = drawTable(['Provider', 'Property', 'Amount Due', 'Due Date', 'Remaining'], upcomingRows, y)
+      y = drawTable([
+        { header: 'Provider', widthPct: 25 },
+        { header: 'Account#', widthPct: 15 },
+        { header: 'Property', widthPct: 20 },
+        { header: 'Amount Due', widthPct: 15 },
+        { header: 'Due Date', widthPct: 12.5 },
+        { header: 'Remaining', widthPct: 12.5 },
+      ], upcomingRows, y)
     }
 
     // Paid Bills Section
@@ -277,12 +375,20 @@ export async function GET(request: Request) {
       y = addSectionTitle(`Paid Bills (${paidBills.length})`, y, '#27ae60')
       const paidRows = paidBills.map(b => [
         b.providerName,
+        b.accountNumber || '—',
         b.property?.name || b.buildingName || '-',
         `AED ${safeNumber(b.totalAmountDue).toFixed(2)}`,
         b.lastPaymentDate ? new Date(b.lastPaymentDate).toISOString().split('T')[0] : '-',
         b.payments?.[0]?.reference || '-',
       ])
-      y = drawTable(['Provider', 'Property', 'Amount', 'Payment Date', 'Reference'], paidRows, y)
+      y = drawTable([
+        { header: 'Provider', widthPct: 25 },
+        { header: 'Account#', widthPct: 15 },
+        { header: 'Property', widthPct: 20 },
+        { header: 'Amount', widthPct: 15 },
+        { header: 'Payment Date', widthPct: 12.5 },
+        { header: 'Reference', widthPct: 12.5 },
+      ], paidRows, y)
     }
 
     // Partially Paid Bills Section
@@ -294,13 +400,21 @@ export async function GET(request: Request) {
         const paid = totalDue - outstanding
         return [
           b.providerName,
+          b.accountNumber || '—',
           `AED ${totalDue.toFixed(2)}`,
           `AED ${paid.toFixed(2)}`,
           `AED ${outstanding.toFixed(2)}`,
           new Date(b.nextDueDate).toISOString().split('T')[0],
         ]
       })
-      y = drawTable(['Provider', 'Original Amt', 'Amount Paid', 'Remaining', 'Due Date'], partialRows, y)
+      y = drawTable([
+        { header: 'Provider', widthPct: 25 },
+        { header: 'Account#', widthPct: 15 },
+        { header: 'Original Amt', widthPct: 15 },
+        { header: 'Paid', widthPct: 15 },
+        { header: 'Remaining', widthPct: 15 },
+        { header: 'Due Date', widthPct: 15 },
+      ], partialRows, y)
     }
 
     // Outstanding Balance Summary
@@ -308,28 +422,38 @@ export async function GET(request: Request) {
       y = addSectionTitle(`Outstanding Balances (${outstandingBills.length})`, y, '#c0392b')
       const outstandingRows = outstandingBills.map(b => [
         b.providerName,
+        b.accountNumber || '—',
         b.property?.name || b.buildingName || '-',
         `AED ${safeNumber(b.previousOutstanding).toFixed(2)}`,
         `AED ${safeNumber(b.currentOutstanding).toFixed(2)}`,
         b.serviceType,
       ])
-      y = drawTable(['Provider', 'Property', 'Previous Bal', 'Current Bal', 'Type'], outstandingRows, y)
+      y = drawTable([
+        { header: 'Provider', widthPct: 25 },
+        { header: 'Account#', widthPct: 15 },
+        { header: 'Property', widthPct: 20 },
+        { header: 'Previous Bal', widthPct: 15 },
+        { header: 'Current Bal', widthPct: 12.5 },
+        { header: 'Type', widthPct: 12.5 },
+      ], outstandingRows, y)
 
       // Total liability
       const totalPrev = outstandingBills.reduce((s, b) => s + safeNumber(b.previousOutstanding), 0)
       const totalCurr = outstandingBills.reduce((s, b) => s + safeNumber(b.currentOutstanding), 0)
+
+      if (y + 25 > doc.page.height - 60) {
+        addFooter()
+        doc.addPage()
+        y = 50
+      }
+
       doc.fontSize(10).fillColor('#c0392b').font('Helvetica-Bold')
-      doc.text(`Total Liability: AED ${totalCurr.toFixed(2)} (Previous: AED ${totalPrev.toFixed(2)})`, 50, y, { width: pageWidth })
+      doc.text(`Total Liability: AED ${totalCurr.toFixed(2)} (Previous: AED ${totalPrev.toFixed(2)})`, marginLeft, y, { width: pageWidth })
       y += 20
     }
 
-    // Footer
-    const footerY = doc.page.height - 40
-    doc.fontSize(7).fillColor('#95a5a6').font('Helvetica')
-    doc.text(`Generated by Al Reef Al Madeena Real Estate Management System | ${today} | Confidential`, 50, footerY, {
-      width: pageWidth,
-      align: 'center',
-    })
+    // Add footer to last page
+    addFooter()
 
     doc.end()
 
