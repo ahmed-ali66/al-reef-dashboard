@@ -11,7 +11,12 @@ import {
 // Only accessible to authenticated admin/owner users OR rate-limited for unauthenticated access
 export async function POST(request: Request) {
   try {
-    const body = await request.json()
+    let body: any = {}
+    try {
+      body = await request.json()
+    } catch {
+      return errorResponse('Email is required', 400)
+    }
     const { email } = body
 
     if (!email || typeof email !== 'string') {
