@@ -68,6 +68,9 @@ export async function GET(request: Request) {
     const targetYear = searchParams.get('year')?.trim()
 
     const now = new Date()
+    // FIX: Use start-of-day for overdue/upcoming comparisons
+    // "Overdue ONLY IF: currentDate > dueDate" — bills due today are NOT overdue
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
 
     const where: any = {
       companyId: user.companyId,
@@ -91,7 +94,7 @@ export async function GET(request: Request) {
         where.cycles = {
           some: {
             status: { in: ['pending', 'partially_paid', 'overdue'] },
-            dueDate: { lt: now, gte: monthStart, lte: monthEnd },
+            dueDate: { lt: startOfToday, gte: monthStart, lte: monthEnd },
           },
         }
       } else if (upcoming) {
@@ -100,7 +103,7 @@ export async function GET(request: Request) {
         where.cycles = {
           some: {
             status: { in: ['pending', 'partially_paid', 'overdue'] },
-            dueDate: { gte: now, lte: thirtyDaysFromNow },
+            dueDate: { gte: startOfToday, lte: thirtyDaysFromNow },
           },
         }
       } else {
@@ -116,16 +119,16 @@ export async function GET(request: Request) {
       where.cycles = {
         some: {
           status: { in: ['pending', 'partially_paid', 'overdue'] },
-          dueDate: { lt: now },
+          dueDate: { lt: startOfToday },
         },
       }
     } else if (upcoming) {
-      const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+      const thirtyDaysFromNow = new Date(startOfToday.getTime() + 30 * 24 * 60 * 60 * 1000)
       where.status = 'active'
       where.cycles = {
         some: {
           status: { in: ['pending', 'partially_paid', 'overdue'] },
-          dueDate: { gte: now, lte: thirtyDaysFromNow },
+          dueDate: { gte: startOfToday, lte: thirtyDaysFromNow },
         },
       }
     }

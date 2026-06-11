@@ -55,8 +55,11 @@ export async function GET(request: Request) {
 
     // Overdue cycles: dueDate < start of selected month AND still open
     // (For historical months, everything due that month that wasn't paid is overdue)
-    // For current month, overdue = dueDate < now AND still open
-    const overdueDateThreshold = isCurrentMonth ? now : monthEnd
+    // For current month, overdue = dueDate < today AND still open
+    // FIX: Use start-of-day for "Overdue ONLY IF: currentDate > dueDate"
+    // (bills due today are NOT overdue — they become overdue tomorrow)
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const overdueDateThreshold = isCurrentMonth ? startOfToday : monthEnd
 
     // Run all queries in parallel for performance
     const [
@@ -92,14 +95,14 @@ export async function GET(request: Request) {
         _sum: { outstandingAmount: true },
       }),
 
-      // totalDueThisMonth: same as outstanding for the selected month
-      // (cycles due this month that are still open)
+      // totalDueThisMonth: sum of full cycle amounts (not outstanding) for open cycles
+      // due in the selected month. This is the gross bill obligation, not the net remaining.
       prisma.billCycle.aggregate({
         where: {
           ...cycleDueThisMonth,
           status: { in: openCycleStatuses },
         },
-        _sum: { outstandingAmount: true },
+        _sum: { amount: true },
       }),
 
       // totalOverdueAmount: open cycles due BEFORE the threshold (now for current month,
@@ -264,7 +267,7 @@ export async function GET(request: Request) {
         ? safeNumber(outstandingAgg._sum.outstandingAmount)
         : 0,
       totalDueThisMonth: financialAccess
-        ? safeNumber(dueThisMonthAgg._sum.outstandingAmount)
+        ? safeNumber(dueThisMonthAgg._sum.amount)
         : 0,
       totalPaidThisMonth: financialAccess
         ? safeNumber(paidThisMonthAgg._sum.amount)

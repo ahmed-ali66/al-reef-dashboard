@@ -237,9 +237,12 @@ export default function RecurringBills() {
   const isOverdue = (bill: RecurringBillData) => {
     if (bill.status !== 'active') return false
     // FIX: Check cycle-level dueDate instead of bill.nextDueDate
+    // Overdue ONLY IF: currentDate > dueDate (date-only, not datetime)
     const cycleDue = getEarliestOpenCycleDueDate(bill)
     if (!cycleDue) return false
-    return cycleDue < now
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const dueDay = new Date(cycleDue.getFullYear(), cycleDue.getMonth(), cycleDue.getDate())
+    return dueDay < today  // strictly less: same-day is NOT overdue
   }
 
   const isUpcoming = (bill: RecurringBillData) => {
@@ -247,17 +250,21 @@ export default function RecurringBills() {
     // FIX: Check cycle-level dueDate instead of bill.nextDueDate
     const cycleDue = getEarliestOpenCycleDueDate(bill)
     if (!cycleDue) return false
-    const thirtyDays = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
-    return cycleDue >= now && cycleDue <= thirtyDays
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const dueDay = new Date(cycleDue.getFullYear(), cycleDue.getMonth(), cycleDue.getDate())
+    const thirtyDays = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000)
+    return dueDay >= today && dueDay <= thirtyDays
   }
 
   const isDueSoon = (bill: RecurringBillData) => {
     if (bill.status !== 'active') return false
-    // FIX: Check cycle-level dueDate instead of bill.nextDueDate
+    // FIX: Due Soon ONLY IF: 0 <= (dueDate - currentDate) <= 7 days
     const cycleDue = getEarliestOpenCycleDueDate(bill)
     if (!cycleDue) return false
-    const sevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
-    return cycleDue >= now && cycleDue <= sevenDays
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const dueDay = new Date(cycleDue.getFullYear(), cycleDue.getMonth(), cycleDue.getDate())
+    const sevenDays = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000)
+    return dueDay >= today && dueDay <= sevenDays
   }
 
   const isPaid = (bill: RecurringBillData) => {
@@ -723,14 +730,21 @@ export default function RecurringBills() {
 
   const getOverdueDays = (dueDate: string): number => {
     const due = new Date(dueDate)
-    const diff = now.getTime() - due.getTime()
-    return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)))
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate())
+    const diff = today.getTime() - dueDay.getTime()
+    const days = Math.round(diff / (1000 * 60 * 60 * 24))
+    // NEVER return 0 days overdue — if diff is 0, the bill is due today, NOT overdue
+    return days > 0 ? days : 0
   }
 
   const getDaysRemaining = (dueDate: string): number => {
     const due = new Date(dueDate)
-    const diff = due.getTime() - now.getTime()
-    return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)))
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate())
+    const diff = dueDay.getTime() - today.getTime()
+    const days = Math.round(diff / (1000 * 60 * 60 * 24))
+    return Math.max(0, days)
   }
 
   const displayAmount = (amount: number) => {
@@ -741,7 +755,12 @@ export default function RecurringBills() {
   // Summary stats
   const totalBills = summary?.totalBills ?? bills.filter(b => b.status === 'active').length
   const totalOutstanding = summary?.totalOutstanding ?? bills.reduce((s, b) => s + b.currentOutstanding, 0)
-  const totalDueThisMonth = summary?.totalDueThisMonth ?? bills.reduce((s, b) => s + (isUpcoming(b) ? b.totalAmountDue : 0), 0)
+  const totalDueThisMonth = summary?.totalDueThisMonth ?? bills.reduce((s, b) => {
+    // Sum full cycle amounts for active bills with open cycles (matching API logic)
+    if (b.status !== 'active') return s
+    if (!b.cycles || b.cycles.length === 0) return s
+    return s + b.cycles.reduce((cs, c) => cs + (parseFloat(String(c.amount)) || 0), 0)
+  }, 0)
   const totalPaidThisMonth = summary?.totalPaidThisMonth ?? 0
 
   // Date preset handler
@@ -1225,8 +1244,12 @@ export default function RecurringBills() {
               <TableBody>
                 {sortedFiltered.map(bill => {
                   const overdue = isOverdue(bill)
-                  const overdueDays = overdue ? getOverdueDays(bill.nextDueDate) : 0
-                  const daysRemaining = getDaysRemaining(bill.nextDueDate)
+                  // FIX: Use cycle-level dueDate for day calculations, not bill.nextDueDate
+                  // bill.nextDueDate may point to a FUTURE cycle while the current cycle is overdue
+                  const cycleDueDate = getEarliestOpenCycleDueDate(bill)
+                  const displayDueDate = cycleDueDate ? cycleDueDate.toISOString() : bill.nextDueDate
+                  const overdueDays = overdue ? getOverdueDays(displayDueDate) : 0
+                  const daysRemaining = getDaysRemaining(displayDueDate)
                   return (
                     <TableRow key={bill.id} className={overdue ? 'bg-red-50/50' : ''}>
                       <TableCell>
@@ -1325,7 +1348,7 @@ export default function RecurringBills() {
 
                       <TableCell>
                         <div>
-                          <p className="text-sm">{formatDate(bill.nextDueDate)}</p>
+                          <p className="text-sm">{formatDate(displayDueDate)}</p>
                           {overdue && (
                             <Badge className="bg-red-100 text-red-800 border-red-200 text-xs mt-1">
                               {overdueDays} {t('daysOverdue', lang)}
