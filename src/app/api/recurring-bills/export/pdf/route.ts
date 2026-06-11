@@ -205,23 +205,32 @@ export async function GET(request: Request) {
     }
 
     // ─── Helper: Add header with dynamic Y positioning ───
+    // Uses measured text heights (heightOfString) instead of fixed positions
+    // so that long company names wrap correctly and push subsequent elements down.
     const addHeader = (): number => {
       let y = marginLeft
 
+      // Company name — large bold, ALLOWED to wrap for long names
       doc.fontSize(18).fillColor('#1a5276').font('Helvetica-Bold')
       const companyName = company?.name || 'Al Reef Al Madeena'
-      doc.text(companyName, marginLeft, y, { width: pageWidth, lineBreak: false })
-      y += doc.currentLineHeight() + 8
+      // lineBreak: true lets PDFKit wrap long company names across lines
+      doc.text(companyName, marginLeft, y, { width: pageWidth, lineBreak: true })
+      // Measure the actual rendered height (accounts for multi-line wrapping)
+      y += doc.heightOfString(companyName, { width: pageWidth, fontSize: 18 }) + 10
 
+      // Report title — on its own line with sufficient margin
       doc.fontSize(14).fillColor('#2c3e50').font('Helvetica')
-      doc.text('Recurring Bills & Utilities Report', marginLeft, y, { width: pageWidth, lineBreak: false })
-      y += doc.currentLineHeight() + 6
+      const reportTitle = 'Recurring Bills & Utilities Report'
+      doc.text(reportTitle, marginLeft, y, { width: pageWidth, lineBreak: true })
+      y += doc.heightOfString(reportTitle, { width: pageWidth, fontSize: 14 }) + 8
 
+      // Summary line — generated date and key metrics
       doc.fontSize(9).fillColor('#7f8c8d').font('Helvetica')
       const summaryLine = `Generated: ${today} | Total Bills: ${totalBills} | Outstanding: AED ${totalOutstanding.toFixed(2)} | Paid This Month: AED ${totalPaidThisMonth.toFixed(2)}`
-      doc.text(summaryLine, marginLeft, y, { width: pageWidth, lineBreak: false })
-      y += doc.currentLineHeight() + 10
+      doc.text(summaryLine, marginLeft, y, { width: pageWidth, lineBreak: true })
+      y += doc.heightOfString(summaryLine, { width: pageWidth, fontSize: 9 }) + 12
 
+      // Separator line
       doc.moveTo(marginLeft, y).lineTo(marginLeft + pageWidth, y).strokeColor('#1a5276').lineWidth(2).stroke()
       y += 10
 
@@ -236,8 +245,8 @@ export async function GET(request: Request) {
       }
 
       doc.fontSize(12).fillColor(color).font('Helvetica-Bold')
-      doc.text(title, marginLeft, y, { width: pageWidth, lineBreak: false })
-      y += doc.currentLineHeight() + 2
+      doc.text(title, marginLeft, y, { width: pageWidth, lineBreak: true })
+      y += doc.heightOfString(title, { width: pageWidth, fontSize: 12 }) + 2
       doc.moveTo(marginLeft, y).lineTo(marginLeft + pageWidth, y).strokeColor(color).lineWidth(0.5).stroke()
       y += 8
       return y
