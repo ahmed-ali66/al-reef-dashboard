@@ -88,6 +88,29 @@ export async function GET(request: Request) {
 
     const now = new Date()
     const today = now.toISOString().split('T')[0]
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+
+    // Helper: check if a bill has any overdue cycle (cycle dueDate < today)
+    const hasOverdueCycle = (bill: any) => {
+      if (!bill.cycles || bill.cycles.length === 0) return false
+      return bill.cycles.some((c: any) =>
+        ['pending', 'partially_paid', 'overdue'].includes(c.status) &&
+        new Date(c.dueDate) < startOfToday
+      )
+    }
+
+    // Helper: get earliest open cycle dueDate for day calculations
+    const getEarliestCycleDue = (bill: any): Date | null => {
+      if (!bill.cycles || bill.cycles.length === 0) return null
+      const openCycles = bill.cycles.filter((c: any) =>
+        ['pending', 'partially_paid', 'overdue'].includes(c.status)
+      )
+      if (openCycles.length === 0) return null
+      return openCycles.reduce((min: Date, c: any) => {
+        const d = new Date(c.dueDate)
+        return d < min ? d : min
+      }, new Date(openCycles[0].dueDate))
+    }
 
     // Categorize bills — with cycle-based totalAmountDue correction
     const correctedBills = bills.map(b => {
@@ -104,8 +127,14 @@ export async function GET(request: Request) {
     })
 
     const activeBills = correctedBills.filter(b => b.status === 'active')
-    const overdueBills = activeBills.filter(b => b.nextDueDate < now)
-    const upcomingBills = activeBills.filter(b => b.nextDueDate >= now && b.nextDueDate <= new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000))
+    // FIX: Use cycle-level dueDate for overdue detection, not bill.nextDueDate
+    // bill.nextDueDate may point to a future cycle while an older cycle is overdue
+    const overdueBills = activeBills.filter(b => hasOverdueCycle(b))
+    const upcomingBills = activeBills.filter(b => {
+      const cycleDue = getEarliestCycleDue(b)
+      const refDate = cycleDue || new Date(b.nextDueDate)
+      return refDate >= startOfToday && refDate <= new Date(startOfToday.getTime() + 30 * 24 * 60 * 60 * 1000)
+    })
     const paidBills = activeBills.filter(b => parseFloat(String(b.currentOutstanding)) <= 0)
     const partiallyPaidBills = activeBills.filter(b => {
       const outstanding = parseFloat(String(b.currentOutstanding))
@@ -166,7 +195,10 @@ export async function GET(request: Request) {
     if (overdueBills.length > 0) {
       const overdueHeader = ['Provider', 'Account No.', 'Property', 'Outstanding (AED)', 'Days Overdue', 'Service Type', 'Due Date']
       const overdueRows = overdueBills.map(b => {
-        const daysOverdue = Math.max(0, Math.ceil((now.getTime() - b.nextDueDate.getTime()) / (1000 * 60 * 60 * 24)))
+        // FIX: Use cycle-level dueDate for days overdue calculation
+        const cycleDue = getEarliestCycleDue(b)
+        const overdueRefDate = cycleDue || b.nextDueDate
+        const daysOverdue = Math.max(0, Math.ceil((startOfToday.getTime() - new Date(overdueRefDate).getTime()) / (1000 * 60 * 60 * 24)))
         return [
           b.providerName,
           b.accountNumber || '',
@@ -186,7 +218,10 @@ export async function GET(request: Request) {
     if (upcomingBills.length > 0) {
       const upcomingHeader = ['Provider', 'Account No.', 'Property', 'Amount Due (AED)', 'Due Date', 'Days Remaining', 'Service Type']
       const upcomingRows = upcomingBills.map(b => {
-        const daysRemaining = Math.max(0, Math.ceil((b.nextDueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+        // FIX: Use cycle-level dueDate for days remaining calculation
+        const upcomingCycleDue = getEarliestCycleDue(b)
+        const upcomingRefDate = upcomingCycleDue || b.nextDueDate
+        const daysRemaining = Math.max(0, Math.ceil((new Date(upcomingRefDate).getTime() - startOfToday.getTime()) / (1000 * 60 * 60 * 24)))
         return [
           b.providerName,
           b.accountNumber || '',

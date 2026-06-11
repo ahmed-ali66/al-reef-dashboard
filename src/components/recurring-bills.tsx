@@ -1244,12 +1244,12 @@ export default function RecurringBills() {
               <TableBody>
                 {sortedFiltered.map(bill => {
                   const overdue = isOverdue(bill)
-                  // FIX: Use cycle-level dueDate for day calculations, not bill.nextDueDate
-                  // bill.nextDueDate may point to a FUTURE cycle while the current cycle is overdue
+                  // FIX: Use cycle-level dueDate for overdue/due-soon DAY calculations,
+                  // but ALWAYS display bill.nextDueDate as the "Next Due Date" (single source of truth)
                   const cycleDueDate = getEarliestOpenCycleDueDate(bill)
-                  const displayDueDate = cycleDueDate ? cycleDueDate.toISOString() : bill.nextDueDate
-                  const overdueDays = overdue ? getOverdueDays(displayDueDate) : 0
-                  const daysRemaining = getDaysRemaining(displayDueDate)
+                  const calcDueDate = cycleDueDate ? cycleDueDate.toISOString() : bill.nextDueDate
+                  const overdueDays = overdue ? getOverdueDays(calcDueDate) : 0
+                  const daysRemaining = getDaysRemaining(calcDueDate)
                   return (
                     <TableRow key={bill.id} className={overdue ? 'bg-red-50/50' : ''}>
                       <TableCell>
@@ -1348,7 +1348,7 @@ export default function RecurringBills() {
 
                       <TableCell>
                         <div>
-                          <p className="text-sm">{formatDate(displayDueDate)}</p>
+                          <p className="text-sm">{formatDate(bill.nextDueDate)}</p>
                           {overdue && (
                             <Badge className="bg-red-100 text-red-800 border-red-200 text-xs mt-1">
                               {overdueDays} {t('daysOverdue', lang)}
