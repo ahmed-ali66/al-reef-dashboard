@@ -1,0 +1,89 @@
+# RECONCILIATION REPORT: Bill-Level vs Cycle-Level Outstanding Balances
+# Generated: 2026-06-11T17:42:01.918Z
+# Total discrepant records: 39
+
+BILL_ID | PROVIDER | TYPE | BILL_OUTSTANDING | CYCLE_OUTSTANDING | DELTA | DIRECTION | OPEN_CYCLES | TOTAL_CYCLES | ACCOUNT# | BUILDING
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+cmq9ouglp0 | Taqa | electricity | 64292.00 | 47843.00 | 16449.00 | BILL>CYCLE | 1 | 1 | O992422222 | 5 - Khalifa Villa
+cmq9qexbp0 | Taqa | electricity | 15515.84 | 0.00 | 15515.84 | BILL>CYCLE | 1 | 1 | 7669060000 | 32 - New Office 02
+cmq877vto0 | Taqa | electricity | 22574.00 | 7325.00 | 15249.00 | BILL>CYCLE | 1 | 1 | 4544233333 | 65 - India House 01
+cmq9r1nds0 | Taqa | electricity | 9799.98 | 0.00 | 9799.98 | BILL>CYCLE | 1 | 1 | 5460440000 | 18M - Al Mutarid Vil
+cmq86ef970 | Taqa | electricity | 16010.62 | 9881.00 | 6129.62 | BILL>CYCLE | 1 | 1 | 1133860000 | 16 - Al Sarooj Villa
+cmq9qiczq0 | Taqa | electricity | 5929.54 | 0.00 | 5929.54 | BILL>CYCLE | 1 | 1 | 2485340000 | 38 - Zakher New
+cmq9qtmao0 | Taqa | electricity | 20646.38 | 26329.00 | -5682.62 | CYCLE>BILL | 1 | 1 | 5062850000 | Rotana Villa 1
+cmq86y9mb0 | Taqa | electricity | 9841.82 | 4679.00 | 5162.82 | BILL>CYCLE | 1 | 1 | 4642450000 | 29 - Al Ain Mall New
+cmq9qnfmf0 | Taqa | electricity | 14364.59 | 9754.00 | 4610.59 | BILL>CYCLE | 1 | 1 | 7994512222 | 56 - Jahili New 1
+cmq86931p0 | Taqa | electricity | 7991.43 | 4307.00 | 3684.43 | BILL>CYCLE | 1 | 1 | 5721921111 | 9 - Neima
+cmq9qw0ad0 | Taqa | electricity | 10275.12 | 6813.00 | 3462.12 | BILL>CYCLE | 1 | 1 | 2779612222 | 12/14 - Niyadat New 
+cmq8664mz0 | Taqa | electricity | 16377.18 | 13053.00 | 3324.18 | BILL>CYCLE | 1 | 1 | 4272621111 | 3 - Salhie Villa
+cmq86deuz0 | Taqa | electricity | 7871.47 | 4567.00 | 3304.47 | BILL>CYCLE | 1 | 1 | 4563540000 | 15 - Al Ain Mall Old
+cmq9qut5j0 | Taqa | electricity | 13489.97 | 10271.00 | 3218.97 | BILL>CYCLE | 1 | 1 | 5759460000 | Rotana Villa 2
+cmq9r35mb0 | Taqa | electricity | 12585.32 | 9538.00 | 3047.32 | BILL>CYCLE | 1 | 1 | 5350121111 | 5S - Sinayaa 7
+cmq9r4cg70 | Taqa | electricity | 6020.75 | 3325.00 | 2695.75 | BILL>CYCLE | 1 | 1 | 3167822222 | 5S - Sinayaa 2
+cmq87a7y00 | Taqa | electricity | 10461.76 | 7855.00 | 2606.76 | BILL>CYCLE | 1 | 1 | 4774722222 | 65 - India House 03
+cmq87lqcm0 | Taqa | electricity | 3067.14 | 512.00 | 2555.14 | BILL>CYCLE | 1 | 1 | 3806622222 | 183 - Al Khabessi
+cmq9qyvwa0 | Taqa | electricity | 5554.20 | 3097.00 | 2457.20 | BILL>CYCLE | 1 | 1 | 3046950000 | 12/14 - Niyadat New 
+cmq86ah4h0 | Taqa | electricity | 5164.19 | 3091.00 | 2073.19 | BILL>CYCLE | 1 | 1 | 9386140000 | 15 - Al Ain Mall Old
+cmq87kjpt0 | Taqa | electricity | 2628.55 | 662.00 | 1966.55 | BILL>CYCLE | 1 | 1 | 5682512222 | 147 - Haboot Villa
+cmq86fues0 | Taqa | electricity | 5484.90 | 3878.00 | 1606.90 | BILL>CYCLE | 1 | 1 | 5358122222 | 18 - Al Niyadat Old 
+cmq87naz70 | Taqa | electricity | 2114.00 | 3618.00 | -1504.00 | CYCLE>BILL | 1 | 1 | 5661421111 | 15M - Al Maqam
+cmq86c8o50 | Taqa | electricity | 3510.73 | 2021.00 | 1489.73 | BILL>CYCLE | 1 | 1 | 4337050000 | 15 - Al Ain Mall Old
+cmq87jpkc0 | Taqa | electricity | 4364.96 | 2880.00 | 1484.96 | BILL>CYCLE | 1 | 1 | 4674041111 | 128 - Bateen 2
+cmq867oru0 | Taqa | electricity | 3212.13 | 4650.00 | -1437.87 | CYCLE>BILL | 1 | 1 | 3990331111 | 8 - Matowa Villa 
+cmq879gok0 | Taqa | electricity | 5214.11 | 3816.00 | 1398.11 | BILL>CYCLE | 1 | 1 | 5699940000 | 65 - India House 02
+cmq871vhh0 | Taqa | electricity | 4930.43 | 3602.00 | 1328.43 | BILL>CYCLE | 1 | 1 | 8102631111 | 32 - New Office
+cmq9qww9l0 | Taqa | electricity | 4346.93 | 3148.00 | 1198.93 | BILL>CYCLE | 1 | 1 | 3898921111 | 12/14 - Niyadat New 
+cmq9qjk4g0 | Taqa | electricity | 3022.00 | 1931.00 | 1091.00 | BILL>CYCLE | 1 | 1 | 1080270000 | 41 - Sumaly Market
+cmq876kcq0 | Taqa | electricity | 2903.31 | 1949.00 | 954.31 | BILL>CYCLE | 1 | 1 | 2223212222 | 45 - Manaseer School
+cmq9qklvh0 | Taqa | electricity | 2287.66 | 1366.00 | 921.66 | BILL>CYCLE | 1 | 1 | 9428431111 | 45 - Manaseer SCHOOL
+cmq9qoicv0 | Taqa | electricity | 4536.80 | 3622.00 | 914.80 | BILL>CYCLE | 1 | 1 | 5495041111 | 56 - Jahili New 2
+cmq9qzr3w0 | Taqa | electricity | 1534.05 | 986.00 | 548.05 | BILL>CYCLE | 1 | 1 | 1296422222 | 12/14 - Niyadat New 
+cmq86r5j60 | Taqa | electricity | 2391.24 | 1931.00 | 460.24 | BILL>CYCLE | 1 | 1 | 8055460000 | 27 - Diwan Villa
+cmq86grm90 | Taqa | electricity | 1292.24 | 1001.00 | 291.24 | BILL>CYCLE | 1 | 1 | 7593231111 | 18 - Al Niyadat Old 
+cmq9qhcum0 | Taqa | electricity | 2586.94 | 2412.00 | 174.94 | BILL>CYCLE | 1 | 1 | 9176170000 | 34 - Al Reef Al Madi
+cmq86ovk70 | Taqa | electricity | 3160.71 | 3160.00 | 0.71 | BILL>CYCLE | 1 | 1 | 3694141111 | 26 - Zafrana Villa
+cmq9p3fx50 | Taqa | electricity | 4371.20 | 4371.00 | 0.20 | BILL>CYCLE | 1 | 1 | 1186721111 | 15 - Al Ain Mall Old
+
+
+SUMMARY:
+Total discrepant records: 39
+Total positive delta (bill > cycle): 127106.68 AED
+Total negative delta (cycle > bill): -8624.49 AED
+Net delta: 118482.19 AED
+
+
+ROOT CAUSE ANALYSIS:
+============================================================
+
+1. POSITIVE DELTA (bill.currentOutstanding > cycle outstanding): 36 records
+   Total overstatement: 127106.68 AED
+   Root cause: When a cycle is advanced (POST /api/recurring-bills/cycle), the code sets
+   currentOutstanding = newCycleAmount (the NEW cycle amount). If the old cycle had
+   an outstanding balance that was NOT carried forward, this creates an inflation.
+   Additionally, the old bug where totalAmountDue was overwritten to currentOutstanding
+   after payments also contributed to data corruption.
+
+2. NEGATIVE DELTA (cycle outstanding > bill.currentOutstanding): 3 records
+   Total understatement: 8624.49 AED
+   Root cause: When payments were recorded, currentOutstanding was reduced but the
+   cycle outstandingAmount was NOT always updated correctly, or payments were allocated
+   to the bill but not to a specific cycle, leaving the cycle outstanding higher.
+
+3. SAFETY ASSESSMENT:
+   - The cycle-level data is the SOURCE OF TRUTH because it is immutable once set
+     (amount, paidAmount, outstandingAmount are only updated within transactions).
+   - The bill-level currentOutstanding was vulnerable to corruption from:
+     a) The cycle advance endpoint overwriting it without carrying forward old debt
+     b) The old payment bug where totalAmountDue was set to currentOutstanding
+     c) Manual edits via PUT /api/recurring-bills/:id that could set arbitrary values
+   - CORRECTION IS SAFE: We can safely set bill.currentOutstanding to equal
+     the sum of open cycle outstandingAmounts without losing any financial data.
+   - PROPOSED STRATEGY:
+     1. For each discrepant record, set currentOutstanding = cycle_outstanding_sum
+     2. For records where currentOutstanding > cycle_outstanding_sum (positive delta),
+        the excess likely represents historical debt that was never carried into a cycle.
+        Create a reconciliation cycle to capture this debt before overwriting.
+     3. For records where currentOutstanding < cycle_outstanding_sum (negative delta),
+        the bill is understated. Set currentOutstanding = cycle_outstanding_sum.
+     4. Create audit log entries for each correction.
+   - DO NOT AUTO-CORRECT YET. Awaiting approval.
