@@ -48,38 +48,14 @@ export default auth((req) => {
 
   // ─── Public Routes (No Authentication Required) ───────────────
 
-  // Allow NextAuth internal routes (callback, session, signin, signout)
-  if (pathname.startsWith('/api/auth/callback') ||
-      pathname.startsWith('/api/auth/signin') ||
-      pathname.startsWith('/api/auth/signout') ||
-      pathname.startsWith('/api/auth/session')) {
-    return addSecurityHeaders(NextResponse.next())
-  }
-
-  // Allow specific auth API routes that need unauthenticated access
-  if (
-    pathname === '/api/auth/signup' ||
-    pathname === '/api/auth/forgot-password' ||
-    pathname === '/api/auth/reset-password' ||
-    pathname === '/api/auth/verify-reset-token' ||
-    pathname === '/api/auth/diagnose' ||
-    pathname === '/api/auth/clear-lockout' ||
-    pathname === '/api/auth/2fa/setup' ||
-    pathname === '/api/auth/2fa/verify' ||
-    pathname === '/api/auth/2fa/enable' ||
-    pathname === '/api/auth/2fa/validate' ||
-    pathname === '/api/auth/2fa/disable'
-  ) {
+  // Allow ALL NextAuth internal routes (required for login flow)
+  // This includes csrf, providers, callback, session, signin, signout, and error routes
+  if (pathname.startsWith('/api/auth/')) {
     return addSecurityHeaders(NextResponse.next())
   }
 
   // Allow password reset request endpoint (unauthenticated access needed)
   if (pathname === '/api/reset-requests' && req.method === 'POST') {
-    return addSecurityHeaders(NextResponse.next())
-  }
-
-  // Allow health check endpoint (admin-only auth is handled within the route)
-  if (pathname === '/api/auth/health') {
     return addSecurityHeaders(NextResponse.next())
   }
 
