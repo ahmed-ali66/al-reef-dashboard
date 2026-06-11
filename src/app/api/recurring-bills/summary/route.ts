@@ -94,16 +94,16 @@ export async function GET(request: Request) {
         _sum: { outstandingAmount: true },
       }),
 
-      // totalOverdueAmount: open cycles due BEFORE the threshold (now for current month,
-      // end-of-month for historical months) — these are the truly overdue ones
-      prisma.billCycle.aggregate({
+      // totalOverdueAmount: active bills where nextDueDate < threshold
+      // Uses bill.nextDueDate (user-set date) as the single source of truth
+      prisma.recurringBill.aggregate({
         where: {
-          companyId: user.companyId,
-          status: { in: openCycleStatuses },
-          dueDate: { lt: overdueDateThreshold },
-          recurringBill: { status: 'active', deletedAt: null },
+          ...baseWhere,
+          status: 'active',
+          nextDueDate: { lt: overdueDateThreshold },
+          currentOutstanding: { gt: 0 },
         },
-        _sum: { outstandingAmount: true },
+        _sum: { currentOutstanding: true },
       }),
 
       // totalPaidThisMonth: sum of BillPayment amounts in the selected month
@@ -148,16 +148,17 @@ export async function GET(request: Request) {
         take: 5,
       }),
 
-      // overdueBillIds: distinct bill IDs that have open cycles past due
-      prisma.billCycle.findMany({
+      // overdueBillIds: active bills where nextDueDate < threshold
+      // Uses bill.nextDueDate (user-set date) as the single source of truth
+      prisma.recurringBill.findMany({
         where: {
-          companyId: user.companyId,
-          status: { in: openCycleStatuses },
-          dueDate: { lt: overdueDateThreshold },
-          recurringBill: { status: 'active', deletedAt: null },
+          ...baseWhere,
+          status: 'active',
+          nextDueDate: { lt: overdueDateThreshold },
+          currentOutstanding: { gt: 0 },
         },
-        select: { recurringBillId: true },
-        distinct: ['recurringBillId'],
+        select: { id: true },
+        distinct: ['id'],
       }),
 
       // Group by recurringBillId for service type breakdown
@@ -201,7 +202,7 @@ export async function GET(request: Request) {
     }
 
     // ── Build overdue bills list from overdueBillIds ──
-    const overdueBillIdList = overdueBillIds.map((item) => item.recurringBillId)
+    const overdueBillIdList = overdueBillIds.map((item) => item.id)
     const overdueBillsList = overdueBillIdList.length > 0
       ? await prisma.recurringBill.findMany({
           where: { id: { in: overdueBillIdList }, ...baseWhere, status: 'active' },
@@ -260,7 +261,7 @@ export async function GET(request: Request) {
         : 0,
       overdueCount: overdueBillIds.length,
       totalOverdueAmount: financialAccess
-        ? safeNumber(overdueAmountAgg._sum.outstandingAmount)
+        ? safeNumber(overdueAmountAgg._sum.currentOutstanding)
         : 0,
       upcomingBills: upcomingBills.map((bill) => financialMask(bill, amountFields)),
       overdueBills: overdueBillsList.map((bill) => financialMask(bill, amountFields)),

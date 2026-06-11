@@ -88,24 +88,15 @@ export async function GET(request: Request) {
       const monthStart = new Date(y, m - 1, 1)
       const monthEnd = new Date(y, m, 0, 23, 59, 59, 999)
 
-      // If we already have a cycles filter (overdue/upcoming), merge conditions
+      // If we already have a bill-level date filter (overdue/upcoming), use nextDueDate
       if (overdue) {
         where.status = 'active'
-        where.cycles = {
-          some: {
-            status: { in: ['pending', 'partially_paid', 'overdue'] },
-            dueDate: { lt: startOfToday, gte: monthStart, lte: monthEnd },
-          },
-        }
+        where.nextDueDate = { lt: startOfToday, gte: monthStart, lte: monthEnd }
+        where.currentOutstanding = { gt: 0 }
       } else if (upcoming) {
-        const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+        const thirtyDaysFromNow = new Date(startOfToday.getTime() + 30 * 24 * 60 * 60 * 1000)
         where.status = 'active'
-        where.cycles = {
-          some: {
-            status: { in: ['pending', 'partially_paid', 'overdue'] },
-            dueDate: { gte: startOfToday, lte: thirtyDaysFromNow },
-          },
-        }
+        where.nextDueDate = { gte: startOfToday, lte: thirtyDaysFromNow }
       } else {
         // Default: bills with any cycle due in the selected month
         where.cycles = {
@@ -116,21 +107,12 @@ export async function GET(request: Request) {
       }
     } else if (overdue) {
       where.status = 'active'
-      where.cycles = {
-        some: {
-          status: { in: ['pending', 'partially_paid', 'overdue'] },
-          dueDate: { lt: startOfToday },
-        },
-      }
+      where.nextDueDate = { lt: startOfToday }
+      where.currentOutstanding = { gt: 0 }
     } else if (upcoming) {
       const thirtyDaysFromNow = new Date(startOfToday.getTime() + 30 * 24 * 60 * 60 * 1000)
       where.status = 'active'
-      where.cycles = {
-        some: {
-          status: { in: ['pending', 'partially_paid', 'overdue'] },
-          dueDate: { gte: startOfToday, lte: thirtyDaysFromNow },
-        },
-      }
+      where.nextDueDate = { gte: startOfToday, lte: thirtyDaysFromNow }
     }
 
     // Determine month boundaries for cycle filtering
