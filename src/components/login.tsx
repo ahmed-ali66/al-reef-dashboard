@@ -37,20 +37,83 @@ export default function LoginPage() {
         redirect: false,
       })
 
+      // FIX: Handle CSRF/session errors specifically
+      // NextAuth v5 can return 'Configuration' or 'Verification' errors for CSRF failures
       if (result?.error) {
-        // Try to diagnose the specific error via the diagnose endpoint
-        try {
-          const diagRes = await fetch('/api/auth/diagnose', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: email.trim() }),
-          })
-          if (diagRes.ok) {
-            const diagData = await diagRes.json()
-            const diag = diagData.data || diagData
+        const errorCode = result.error
 
-            if (diag.dbError) {
-              // Server/database connectivity issue
+        // CSRF / configuration errors — these are NOT credential failures
+        if (errorCode === 'Configuration' || errorCode === 'Verification') {
+          console.error('[LOGIN] CSRF/Session error:', errorCode)
+          setErrorType('server_error')
+          setError(
+            language === 'en' ? 'Session error. Please clear your browser cookies and try again.' :
+            language === 'ar' ? 'خطأ في الجلسة. يرجى مسح ملفات تعريف الارتباط والمحاولة مرة أخرى.' :
+            language === 'bn' ? 'সেশন ত্রুটি। আপনার ব্রাউজার কুকিজ মুছে আবার চেষ্টা করুন।' :
+            'سیشن کی خرابی۔ براہ کرم اپنے براؤزر کے کوکیز صاف کریں اور دوبارہ کوشش کریں۔'
+          )
+        } else {
+          // Credential errors — try to diagnose the specific issue
+          try {
+            const diagRes = await fetch('/api/auth/diagnose', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email: email.trim() }),
+            })
+            if (diagRes.ok) {
+              const diagData = await diagRes.json()
+              const diag = diagData.data || diagData
+
+              if (diag.dbError) {
+                // Server/database connectivity issue
+                setErrorType('server_error')
+                setError(
+                  language === 'en' ? 'Server is temporarily unavailable. Please try again in a moment.' :
+                  language === 'ar' ? 'الخادم غير متاح مؤقتاً. يرجى المحاولة مرة أخرى بعد قليل.' :
+                  language === 'bn' ? 'সার্ভার সাময়িকভাবে অনুপলব্ধ। অনুগ্রহ করে কিছুক্ষণ পরে আবার চেষ্টা করুন।' :
+                  'سرور عارضی طور پر دستیاب نہیں ہے۔ براہ کرم تھوڑی دیر بعد دوبارہ کوشش کریں۔'
+                )
+              } else if (diag.isLockedOut) {
+                setErrorType('lockout')
+                const mins = diag.lockoutMinutesRemaining || 15
+                setError(
+                  language === 'en' ? `Too many failed attempts. Please try again in ${mins} minutes.` :
+                  language === 'ar' ? `محاولات فاشلة كثيرة. حاول مرة أخرى بعد ${mins} دقيقة.` :
+                  language === 'bn' ? `খুব বেশি ব্যর্থ প্রচেষ্টা। ${mins} মিনিট পরে আবার চেষ্টা করুন।` :
+                  `بہت زیادہ ناکام کوششیں۔ ${mins} منٹ بعد دوبارہ کوشش کریں۔`
+                )
+              } else if (diag.userExists && !diag.isActive) {
+                setErrorType('inactive')
+                setError(
+                  language === 'en' ? 'Your account has been deactivated. Please contact your administrator.' :
+                  language === 'ar' ? 'تم تعطيل حسابك. يرجى التواصل مع المسؤول.' :
+                  language === 'bn' ? 'আপনার অ্যাকাউন্ট নিষ্ক্রিয় করা হয়েছে। আপনার প্রশাসকের সাথে যোগাযোগ করুন।' :
+                  'آپ کا اکاؤنٹ غیر فعال کر دیا گیا ہے۔ اپنے ایڈمن سے رابطہ کریں۔'
+                )
+              } else if (diag.userExists && diag.isDeleted) {
+                setErrorType('inactive')
+                setError(
+                  language === 'en' ? 'This account no longer exists. Please contact your administrator.' :
+                  language === 'ar' ? 'هذا الحساب لم يعد موجوداً. يرجى التواصل مع المسؤول.' :
+                  language === 'bn' ? 'এই অ্যাকাউন্টটি আর বিদ্যমান নেই। আপনার প্রশাসকের সাথে যোগাযোগ করুন।' :
+                  'یہ اکاؤنٹ اب موجود نہیں ہے۔ اپنے ایڈمن سے رابطہ کریں۔'
+                )
+              } else if (diag.userExists && diag.mustChangePassword) {
+                setError(
+                  language === 'en' ? 'You must change your password. Please contact your administrator.' :
+                  language === 'ar' ? 'يجب تغيير كلمة المرور. يرجى التواصل مع المسؤول.' :
+                  language === 'bn' ? 'আপনাকে পাসওয়ার্ড পরিবর্তন করতে হবে। আপনার প্রশাসকের সাথে যোগাযোগ করুন।' :
+                  'آپ کو پاس ورڈ تبدیل کرنا ہوگا۔ اپنے ایڈمن سے رابطہ کریں۔'
+                )
+              } else if (!diag.userExists) {
+                setErrorType('not_found')
+                setError(t('loginError', language))
+              } else {
+                // User exists, not locked, not inactive — wrong password
+                setError(t('loginError', language))
+              }
+            } else if (diagRes.status === 503) {
+              // Server/database error
               setErrorType('server_error')
               setError(
                 language === 'en' ? 'Server is temporarily unavailable. Please try again in a moment.' :
@@ -58,61 +121,14 @@ export default function LoginPage() {
                 language === 'bn' ? 'সার্ভার সাময়িকভাবে অনুপলব্ধ। অনুগ্রহ করে কিছুক্ষণ পরে আবার চেষ্টা করুন।' :
                 'سرور عارضی طور پر دستیاب نہیں ہے۔ براہ کرم تھوڑی دیر بعد دوبارہ کوشش کریں۔'
               )
-            } else if (diag.isLockedOut) {
-              setErrorType('lockout')
-              const mins = diag.lockoutMinutesRemaining || 15
-              setError(
-                language === 'en' ? `Too many failed attempts. Please try again in ${mins} minutes.` :
-                language === 'ar' ? `محاولات فاشلة كثيرة. حاول مرة أخرى بعد ${mins} دقيقة.` :
-                language === 'bn' ? `খুব বেশি ব্যর্থ প্রচেষ্টা। ${mins} মিনিট পরে আবার চেষ্টা করুন।` :
-                `بہت زیادہ ناکام کوششیں۔ ${mins} منٹ بعد دوبارہ کوشش کریں۔`
-              )
-            } else if (diag.userExists && !diag.isActive) {
-              setErrorType('inactive')
-              setError(
-                language === 'en' ? 'Your account has been deactivated. Please contact your administrator.' :
-                language === 'ar' ? 'تم تعطيل حسابك. يرجى التواصل مع المسؤول.' :
-                language === 'bn' ? 'আপনার অ্যাকাউন্ট নিষ্ক্রিয় করা হয়েছে। আপনার প্রশাসকের সাথে যোগাযোগ করুন।' :
-                'آپ کا اکاؤنٹ غیر فعال کر دیا گیا ہے۔ اپنے ایڈمن سے رابطہ کریں۔'
-              )
-            } else if (diag.userExists && diag.isDeleted) {
-              setErrorType('inactive')
-              setError(
-                language === 'en' ? 'This account no longer exists. Please contact your administrator.' :
-                language === 'ar' ? 'هذا الحساب لم يعد موجوداً. يرجى التواصل مع المسؤول.' :
-                language === 'bn' ? 'এই অ্যাকাউন্টটি আর বিদ্যমান নেই। আপনার প্রশাসকের সাথে যোগাযোগ করুন।' :
-                'یہ اکاؤنٹ اب موجود نہیں ہے۔ اپنے ایڈمن سے رابطہ کریں۔'
-              )
-            } else if (diag.userExists && diag.mustChangePassword) {
-              setError(
-                language === 'en' ? 'You must change your password. Please contact your administrator.' :
-                language === 'ar' ? 'يجب تغيير كلمة المرور. يرجى التواصل مع المسؤول.' :
-                language === 'bn' ? 'আপনাকে পাসওয়ার্ড পরিবর্তন করতে হবে। আপনার প্রশাসকের সাথে যোগাযোগ করুন।' :
-                'آپ کو پاس ورڈ تبدیل کرنا ہوگا۔ اپنے ایڈمن سے رابطہ کریں۔'
-              )
-            } else if (!diag.userExists) {
-              setErrorType('not_found')
-              setError(t('loginError', language))
             } else {
-              // User exists, not locked, not inactive — wrong password
+              // Diagnosis failed, use generic error
               setError(t('loginError', language))
             }
-          } else if (diagRes.status === 503) {
-            // Server/database error
-            setErrorType('server_error')
-            setError(
-              language === 'en' ? 'Server is temporarily unavailable. Please try again in a moment.' :
-              language === 'ar' ? 'الخادم غير متاح مؤقتاً. يرجى المحاولة مرة أخرى بعد قليل.' :
-              language === 'bn' ? 'সার্ভার সাময়িকভাবে অনুপলব্ধ। অনুগ্রহ করে কিছুক্ষণ পরে আবার চেষ্টা করুন।' :
-              'سرور عارضی طور پر دستیاب نہیں ہے۔ براہ کرم تھوڑی دیر بعد دوبارہ کوشش کریں۔'
-            )
-          } else {
-            // Diagnosis failed, use generic error
+          } catch {
+            // Diagnosis request failed, use generic error
             setError(t('loginError', language))
           }
-        } catch {
-          // Diagnosis request failed, use generic error
-          setError(t('loginError', language))
         }
       }
       // If successful, the session will be updated and AppContent will handle the redirect

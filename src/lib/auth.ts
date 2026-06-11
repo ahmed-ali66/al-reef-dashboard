@@ -262,6 +262,12 @@ async function cleanupExpiredEntries(): Promise<void> {
 
 // ─── NextAuth Configuration ─────────────────────────────────────
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  // CRITICAL FIX: trustHost is required for Vercel deployments.
+  // Without this, NextAuth v5 rejects the host header from Vercel's CDN/proxy,
+  // causing CSRF token validation failures that result in "Unauthorized" errors.
+  // This is the ROOT CAUSE of the intermittent then total auth failure.
+  trustHost: true,
+
   providers: [
     Credentials({
       name: 'credentials',
@@ -429,6 +435,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   pages: {
     signIn: '/',
+    error: '/',  // FIX: Redirect auth errors back to login page instead of /api/auth/error raw JSON
   },
   session: {
     strategy: 'jwt',
