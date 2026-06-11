@@ -97,29 +97,12 @@ export async function GET(request: Request) {
     const today = now.toISOString().split('T')[0]
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
 
-    // Helper: check if a bill has any overdue cycle (cycle dueDate < today)
-    const hasOverdueCycle = (bill: any) => {
-      if (!bill.cycles || bill.cycles.length === 0) return false
-      return bill.cycles.some((c: any) =>
-        ['pending', 'partially_paid', 'overdue'].includes(c.status) &&
-        new Date(c.dueDate) < startOfToday
-      )
-    }
+    // FIX: bill.nextDueDate is the SINGLE source of truth for all date logic.
+    // Do NOT use getEarliestCycleDue or cycle-based due dates for overdue/due-soon detection.
+    // Overdue: bill.nextDueDate < today AND currentOutstanding > 0
+    // Upcoming: bill.nextDueDate >= today AND bill.nextDueDate <= today + 30 days
 
-    // Helper: get earliest open cycle dueDate for day calculations
-    const getEarliestCycleDue = (bill: any): Date | null => {
-      if (!bill.cycles || bill.cycles.length === 0) return null
-      const openCycles = bill.cycles.filter((c: any) =>
-        ['pending', 'partially_paid', 'overdue'].includes(c.status)
-      )
-      if (openCycles.length === 0) return null
-      return openCycles.reduce((min: Date, c: any) => {
-        const d = new Date(c.dueDate)
-        return d < min ? d : min
-      }, new Date(openCycles[0].dueDate))
-    }
-
-    // Categorize bills — with cycle-based totalAmountDue correction
+    // Categorize bills
     const correctedBills = bills.map(b => {
       const bill = serialize(b) as any
       if (bill.cycles && bill.cycles.length > 0) {
@@ -134,12 +117,15 @@ export async function GET(request: Request) {
     })
 
     const activeBills = correctedBills.filter(b => b.status === 'active')
-    // FIX: Use cycle-level dueDate for overdue detection, not bill.nextDueDate
-    const overdueBills = activeBills.filter(b => hasOverdueCycle(b))
+    // FIX: Use bill.nextDueDate as the single source of truth for overdue detection
+    const overdueBills = activeBills.filter(b => {
+      const dueDate = new Date(new Date(b.nextDueDate).getFullYear(), new Date(b.nextDueDate).getMonth(), new Date(b.nextDueDate).getDate())
+      return dueDate < startOfToday && parseFloat(String(b.currentOutstanding)) > 0
+    })
     const upcomingBills = activeBills.filter(b => {
-      const cycleDue = getEarliestCycleDue(b)
-      const refDate = cycleDue || new Date(b.nextDueDate)
-      return refDate >= startOfToday && refDate <= new Date(startOfToday.getTime() + 30 * 24 * 60 * 60 * 1000)
+      const dueDate = new Date(new Date(b.nextDueDate).getFullYear(), new Date(b.nextDueDate).getMonth(), new Date(b.nextDueDate).getDate())
+      const thirtyDays = new Date(startOfToday.getTime() + 30 * 24 * 60 * 60 * 1000)
+      return dueDate >= startOfToday && dueDate <= thirtyDays
     })
     const paidBills = activeBills.filter(b => parseFloat(String(b.currentOutstanding)) <= 0)
     const partiallyPaidBills = activeBills.filter(b => {
@@ -149,16 +135,16 @@ export async function GET(request: Request) {
     })
     const outstandingBills = activeBills.filter(b => parseFloat(String(b.currentOutstanding)) > 0)
 
-    // Summary metrics
+    // Summary metrics — NO Total Due, only Current Outstanding
     const totalBills = activeBills.length
     const totalOutstanding = activeBills.reduce((s, b) => s + safeNumber(b.currentOutstanding), 0)
-    const totalDue = activeBills.reduce((s, b) => s + safeNumber(b.totalAmountDue), 0)
     const totalPaidAmount = bills.reduce((s, b) => s + (b.payments?.[0] ? safeNumber(b.payments[0].amount) : 0), 0)
 
-    // Generate PDF
+    // Generate PDF with bufferPages so we can add footers to all pages at the end
     const doc = new PDFDocument({
       size: 'A4',
       margins: { top: 50, bottom: 50, left: 50, right: 50 },
+      bufferPages: true,
       info: {
         Title: 'Recurring Bills Report',
         Author: company?.name || 'Al Reef Al Madeena',
@@ -193,7 +179,6 @@ export async function GET(request: Request) {
       doc.fontSize(18).fillColor('#1a5276').font('Helvetica-Bold')
       const companyName = company?.name || 'Al Reef Al Madeena'
       doc.text(companyName, marginLeft, y, { width: pageWidth, lineBreak: true })
-      // Track actual height after rendering
       const companyNameHeight = doc.heightOfString(companyName, { width: pageWidth })
       y += companyNameHeight + 8
 
@@ -210,7 +195,7 @@ export async function GET(request: Request) {
       const summaryHeight = doc.heightOfString(summaryLine, { width: pageWidth })
       y += summaryHeight + 10
 
-      // Separator line — drawn AFTER all header content with proper gap
+      // Separator line
       doc.moveTo(marginLeft, y).lineTo(marginLeft + pageWidth, y).strokeColor('#1a5276').lineWidth(2).stroke()
       y += 10
 
@@ -234,20 +219,7 @@ export async function GET(request: Request) {
       return y
     }
 
-    // ─── Helper: Add footer to current page ───
-    const addFooter = () => {
-      const footerY = doc.page.height - 35
-      doc.fontSize(7).fillColor('#95a5a6').font('Helvetica')
-      doc.text(
-        `Generated by Al Reef Al Madeena Real Estate Management System | ${today} | Confidential`,
-        marginLeft,
-        footerY,
-        { width: pageWidth, align: 'center' }
-      )
-    }
-
     // ─── Helper: Smart column width calculation ───
-    // Column importance: provider(25%), account#(15%), property(20%), numbers(15%), dates/status(12.5% each)
     type ColumnSpec = { header: string; widthPct: number }
 
     const drawTable = (columns: ColumnSpec[], rows: string[][], y: number): number => {
@@ -279,7 +251,6 @@ export async function GET(request: Request) {
 
       // Check if we need a new page
       if (y + headerHeight + minRowHeight > doc.page.height - 60) {
-        addFooter()
         doc.addPage()
         y = 50
       }
@@ -304,7 +275,6 @@ export async function GET(request: Request) {
 
         // Check for page break
         if (y + maxCellHeight > doc.page.height - 60) {
-          addFooter()
           doc.addPage()
           y = 50
           y = drawHeader(y)
@@ -339,12 +309,11 @@ export async function GET(request: Request) {
 
     let y = addHeader()
 
-    // Summary Statistics Box
+    // Summary Statistics Box — NO "Total Due"
     y = addSectionTitle('Summary Statistics', y)
     const summaryData = [
       ['Total Bills', String(totalBills)],
       ['Total Outstanding', `AED ${totalOutstanding.toFixed(2)}`],
-      ['Total Due', `AED ${totalDue.toFixed(2)}`],
       ['Overdue Bills', String(overdueBills.length)],
       ['Upcoming Bills (30 days)', String(upcomingBills.length)],
       ['Paid Bills', String(paidBills.length)],
@@ -359,9 +328,9 @@ export async function GET(request: Request) {
       const sy = y + row * 18
 
       doc.fontSize(9).fillColor('#7f8c8d').font('Helvetica')
-      doc.text(`${item[0]}:`, sx + 4, sy, { width: pageWidth / 2 - 60 })
+      doc.text(`${item[0]}:`, sx + 4, sy, { width: pageWidth / 2 - 60, lineBreak: false })
       doc.fontSize(9).fillColor('#2c3e50').font('Helvetica-Bold')
-      doc.text(item[1], sx + pageWidth / 2 - 80, sy, { width: 76, align: 'right' })
+      doc.text(item[1], sx + pageWidth / 2 - 80, sy, { width: 76, align: 'right', lineBreak: false })
     })
     y += Math.ceil(summaryData.length / 2) * 18 + 15
 
@@ -369,10 +338,9 @@ export async function GET(request: Request) {
     if (overdueBills.length > 0) {
       y = addSectionTitle(`Overdue Bills (${overdueBills.length})`, y, '#c0392b')
       const overdueRows = overdueBills.map(b => {
-        // FIX: Use cycle-level dueDate for days overdue calculation
-        const cycleDue = getEarliestCycleDue(b)
-        const overdueRefDate = cycleDue ? cycleDue.toISOString() : b.nextDueDate
-        const daysOverdue = Math.max(0, Math.ceil((startOfToday.getTime() - new Date(overdueRefDate).getTime()) / (1000 * 60 * 60 * 24)))
+        // FIX: Use bill.nextDueDate as the single source of truth
+        const dueDate = new Date(b.nextDueDate)
+        const daysOverdue = Math.max(0, Math.ceil((startOfToday.getTime() - new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate()).getTime()) / (1000 * 60 * 60 * 24)))
         return [
           b.providerName,
           b.accountNumber || '—',
@@ -396,16 +364,14 @@ export async function GET(request: Request) {
     if (upcomingBills.length > 0) {
       y = addSectionTitle(`Upcoming Bills (${upcomingBills.length})`, y, '#e67e22')
       const upcomingRows = upcomingBills.map(b => {
-        // FIX: Use cycle-level dueDate for days remaining calculation
-        const upcomingCycleDue = getEarliestCycleDue(b)
-        const upcomingRefDate = upcomingCycleDue ? upcomingCycleDue.toISOString() : b.nextDueDate
-        const dueDate = new Date(upcomingRefDate)
-        const daysRemaining = Math.max(0, Math.ceil((dueDate.getTime() - startOfToday.getTime()) / (1000 * 60 * 60 * 24)))
+        // FIX: Use bill.nextDueDate as the single source of truth
+        const dueDate = new Date(b.nextDueDate)
+        const daysRemaining = Math.max(0, Math.ceil((new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate()).getTime() - startOfToday.getTime()) / (1000 * 60 * 60 * 24)))
         return [
           b.providerName,
           b.accountNumber || '—',
           b.property?.name || b.buildingName || '-',
-          `AED ${safeNumber(b.totalAmountDue).toFixed(2)}`,
+          `AED ${safeNumber(b.currentOutstanding).toFixed(2)}`,
           dueDate.toISOString().split('T')[0],
           `${daysRemaining} days`,
         ]
@@ -414,7 +380,7 @@ export async function GET(request: Request) {
         { header: 'Provider', widthPct: 25 },
         { header: 'Account#', widthPct: 15 },
         { header: 'Property', widthPct: 20 },
-        { header: 'Amount Due', widthPct: 15 },
+        { header: 'Outstanding', widthPct: 15 },
         { header: 'Due Date', widthPct: 12.5 },
         { header: 'Remaining', widthPct: 12.5 },
       ], upcomingRows, y)
@@ -427,7 +393,7 @@ export async function GET(request: Request) {
         b.providerName,
         b.accountNumber || '—',
         b.property?.name || b.buildingName || '-',
-        `AED ${safeNumber(b.totalAmountDue).toFixed(2)}`,
+        `AED ${safeNumber(b.currentOutstanding).toFixed(2)}`,
         b.lastPaymentDate ? new Date(b.lastPaymentDate).toISOString().split('T')[0] : '-',
         b.payments?.[0]?.reference || '-',
       ])
@@ -492,7 +458,6 @@ export async function GET(request: Request) {
       const totalCurr = outstandingBills.reduce((s, b) => s + safeNumber(b.currentOutstanding), 0)
 
       if (y + 25 > doc.page.height - 60) {
-        addFooter()
         doc.addPage()
         y = 50
       }
@@ -502,8 +467,19 @@ export async function GET(request: Request) {
       y += 20
     }
 
-    // Add footer to last page
-    addFooter()
+    // ─── Add footers to ALL pages at the end (prevents blank page bug) ───
+    // Using bufferPages: true, we can switch to each page and draw the footer
+    const range = doc.bufferedPageRange()
+    for (let i = range.start; i < range.start + range.count; i++) {
+      doc.switchToPage(i)
+      doc.fontSize(7).fillColor('#95a5a6').font('Helvetica')
+      doc.text(
+        `Generated by Al Reef Al Madeena Real Estate Management System | ${today} | Confidential`,
+        marginLeft,
+        doc.page.height - 35,
+        { width: pageWidth, align: 'center', lineBreak: false }
+      )
+    }
 
     doc.end()
 

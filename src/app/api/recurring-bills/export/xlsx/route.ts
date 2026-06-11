@@ -90,50 +90,22 @@ export async function GET(request: Request) {
     const today = now.toISOString().split('T')[0]
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
 
-    // Helper: check if a bill has any overdue cycle (cycle dueDate < today)
-    const hasOverdueCycle = (bill: any) => {
-      if (!bill.cycles || bill.cycles.length === 0) return false
-      return bill.cycles.some((c: any) =>
-        ['pending', 'partially_paid', 'overdue'].includes(c.status) &&
-        new Date(c.dueDate) < startOfToday
-      )
-    }
+    // FIX: bill.nextDueDate is the SINGLE source of truth for all date logic.
+    // Do NOT use getEarliestCycleDue or cycle-based due dates for overdue/due-soon detection.
 
-    // Helper: get earliest open cycle dueDate for day calculations
-    const getEarliestCycleDue = (bill: any): Date | null => {
-      if (!bill.cycles || bill.cycles.length === 0) return null
-      const openCycles = bill.cycles.filter((c: any) =>
-        ['pending', 'partially_paid', 'overdue'].includes(c.status)
-      )
-      if (openCycles.length === 0) return null
-      return openCycles.reduce((min: Date, c: any) => {
-        const d = new Date(c.dueDate)
-        return d < min ? d : min
-      }, new Date(openCycles[0].dueDate))
-    }
-
-    // Categorize bills — with cycle-based totalAmountDue correction
-    const correctedBills = bills.map(b => {
-      const bill: any = { ...b }
-      if (bill.cycles && bill.cycles.length > 0) {
-        const latestCycle = bill.cycles[0]
-        const cycleAmount = parseFloat(String(latestCycle.amount))
-        const storedTotalDue = parseFloat(String(bill.totalAmountDue))
-        if (storedTotalDue <= parseFloat(String(bill.currentOutstanding)) || storedTotalDue === 0) {
-          bill.totalAmountDue = cycleAmount
-        }
-      }
-      return bill
+    // Categorize bills
+    const activeBills = bills.filter(b => b.status === 'active')
+    // FIX: Use bill.nextDueDate as the single source of truth for overdue detection
+    const overdueBills = activeBills.filter(b => {
+      const dueDate = new Date(b.nextDueDate)
+      const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate())
+      return dueDay < startOfToday && parseFloat(String(b.currentOutstanding)) > 0
     })
-
-    const activeBills = correctedBills.filter(b => b.status === 'active')
-    // FIX: Use cycle-level dueDate for overdue detection, not bill.nextDueDate
-    // bill.nextDueDate may point to a future cycle while an older cycle is overdue
-    const overdueBills = activeBills.filter(b => hasOverdueCycle(b))
     const upcomingBills = activeBills.filter(b => {
-      const cycleDue = getEarliestCycleDue(b)
-      const refDate = cycleDue || new Date(b.nextDueDate)
-      return refDate >= startOfToday && refDate <= new Date(startOfToday.getTime() + 30 * 24 * 60 * 60 * 1000)
+      const dueDate = new Date(b.nextDueDate)
+      const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate())
+      const thirtyDays = new Date(startOfToday.getTime() + 30 * 24 * 60 * 60 * 1000)
+      return dueDay >= startOfToday && dueDay <= thirtyDays
     })
     const paidBills = activeBills.filter(b => parseFloat(String(b.currentOutstanding)) <= 0)
     const partiallyPaidBills = activeBills.filter(b => {
@@ -145,7 +117,7 @@ export async function GET(request: Request) {
     // Create workbook
     const wb = XLSX.utils.book_new()
 
-    // ─── Summary Sheet ───
+    // ─── Summary Sheet — NO Total Due ───
     const summaryData = [
       ['Recurring Bills & Utilities Report'],
       ['Company', company?.name || 'Al Reef Al Madeena'],
@@ -154,20 +126,17 @@ export async function GET(request: Request) {
       ['Metric', 'Value'],
       ['Total Bills', activeBills.length],
       ['Total Outstanding (AED)', activeBills.reduce((s, b) => s + safeNumber(b.currentOutstanding), 0).toFixed(2)],
-      ['Total Due (AED)', activeBills.reduce((s, b) => s + safeNumber(b.totalAmountDue), 0).toFixed(2)],
       ['Overdue Bills', overdueBills.length],
       ['Upcoming Bills (30 days)', upcomingBills.length],
       ['Paid Bills', paidBills.length],
       ['Partially Paid', partiallyPaidBills.length],
-      ['Total Overdue Amount (AED)', overdueBills.reduce((s, b) => s + safeNumber(b.currentOutstanding), 0).toFixed(2)],
-      ['Total Upcoming Amount (AED)', upcomingBills.reduce((s, b) => s + safeNumber(b.totalAmountDue), 0).toFixed(2)],
     ]
     const summaryWs = XLSX.utils.aoa_to_sheet(summaryData)
     summaryWs['!cols'] = [{ wch: 30 }, { wch: 20 }]
     XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary')
 
-    // ─── All Bills Sheet ───
-    const allBillsHeader = ['Provider', 'Service Type', 'Property', 'Building', 'Owner', 'Account No.', 'Contract No.', 'Total Due (AED)', 'Outstanding (AED)', 'Previous Outstanding (AED)', 'Next Due Date', 'Billing Frequency', 'Status', 'Last Payment Date', 'Last Payment Amount (AED)', 'Grace Period (Days)', 'Auto Renew']
+    // ─── All Bills Sheet — NO "Total Due" column ───
+    const allBillsHeader = ['Provider', 'Service Type', 'Property', 'Building', 'Owner', 'Account No.', 'Contract No.', 'Outstanding (AED)', 'Previous Outstanding (AED)', 'Next Due Date', 'Billing Frequency', 'Status', 'Last Payment Date', 'Last Payment Amount (AED)', 'Grace Period (Days)', 'Auto Renew']
     const allBillsRows = bills.map(b => [
       b.providerName,
       b.serviceType,
@@ -176,7 +145,6 @@ export async function GET(request: Request) {
       b.ownerName || '',
       b.accountNumber || '',
       b.contractNumber || '',
-      safeNumber(b.totalAmountDue).toFixed(2),
       safeNumber(b.currentOutstanding).toFixed(2),
       safeNumber(b.previousOutstanding).toFixed(2),
       b.nextDueDate.toISOString().split('T')[0],
@@ -195,10 +163,10 @@ export async function GET(request: Request) {
     if (overdueBills.length > 0) {
       const overdueHeader = ['Provider', 'Account No.', 'Property', 'Outstanding (AED)', 'Days Overdue', 'Service Type', 'Due Date']
       const overdueRows = overdueBills.map(b => {
-        // FIX: Use cycle-level dueDate for days overdue calculation
-        const cycleDue = getEarliestCycleDue(b)
-        const overdueRefDate = cycleDue || b.nextDueDate
-        const daysOverdue = Math.max(0, Math.ceil((startOfToday.getTime() - new Date(overdueRefDate).getTime()) / (1000 * 60 * 60 * 24)))
+        // FIX: Use bill.nextDueDate as the single source of truth
+        const dueDate = new Date(b.nextDueDate)
+        const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate())
+        const daysOverdue = Math.max(0, Math.ceil((startOfToday.getTime() - dueDay.getTime()) / (1000 * 60 * 60 * 24)))
         return [
           b.providerName,
           b.accountNumber || '',
@@ -216,17 +184,17 @@ export async function GET(request: Request) {
 
     // ─── Upcoming Bills Sheet ───
     if (upcomingBills.length > 0) {
-      const upcomingHeader = ['Provider', 'Account No.', 'Property', 'Amount Due (AED)', 'Due Date', 'Days Remaining', 'Service Type']
+      const upcomingHeader = ['Provider', 'Account No.', 'Property', 'Outstanding (AED)', 'Due Date', 'Days Remaining', 'Service Type']
       const upcomingRows = upcomingBills.map(b => {
-        // FIX: Use cycle-level dueDate for days remaining calculation
-        const upcomingCycleDue = getEarliestCycleDue(b)
-        const upcomingRefDate = upcomingCycleDue || b.nextDueDate
-        const daysRemaining = Math.max(0, Math.ceil((new Date(upcomingRefDate).getTime() - startOfToday.getTime()) / (1000 * 60 * 60 * 24)))
+        // FIX: Use bill.nextDueDate as the single source of truth
+        const dueDate = new Date(b.nextDueDate)
+        const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate())
+        const daysRemaining = Math.max(0, Math.ceil((dueDay.getTime() - startOfToday.getTime()) / (1000 * 60 * 60 * 24)))
         return [
           b.providerName,
           b.accountNumber || '',
           b.property?.name || b.buildingName || '',
-          safeNumber(b.totalAmountDue).toFixed(2),
+          safeNumber(b.currentOutstanding).toFixed(2),
           b.nextDueDate.toISOString().split('T')[0],
           daysRemaining,
           b.serviceType,
@@ -280,14 +248,13 @@ export async function GET(request: Request) {
     // ─── Outstanding Balances Sheet ───
     const outstandingBills = activeBills.filter(b => safeNumber(b.currentOutstanding) > 0)
     if (outstandingBills.length > 0) {
-      const outstandingHeader = ['Provider', 'Account No.', 'Property', 'Previous Balance (AED)', 'Current Balance (AED)', 'Total Liability (AED)', 'Service Type', 'Due Date']
+      const outstandingHeader = ['Provider', 'Account No.', 'Property', 'Previous Balance (AED)', 'Current Balance (AED)', 'Service Type', 'Due Date']
       const outstandingRows = outstandingBills.map(b => [
         b.providerName,
         b.accountNumber || '',
         b.property?.name || b.buildingName || '',
         safeNumber(b.previousOutstanding).toFixed(2),
         safeNumber(b.currentOutstanding).toFixed(2),
-        safeNumber(b.totalAmountDue).toFixed(2),
         b.serviceType,
         b.nextDueDate.toISOString().split('T')[0],
       ])
