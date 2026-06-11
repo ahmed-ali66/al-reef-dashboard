@@ -448,13 +448,15 @@ export async function GET(request: Request) {
         const totalDue = safeNumber(b.totalAmountDue)
         const outstanding = safeNumber(b.currentOutstanding)
         const paid = totalDue - outstanding
+        const cycleDue = getEarliestCycleDue(b)
+        const displayDate = cycleDue ? cycleDue.toISOString().split('T')[0] : new Date(b.nextDueDate).toISOString().split('T')[0]
         return [
           b.providerName,
           b.accountNumber || '—',
           `AED ${totalDue.toFixed(2)}`,
           `AED ${paid.toFixed(2)}`,
           `AED ${outstanding.toFixed(2)}`,
-          new Date(b.nextDueDate).toISOString().split('T')[0],
+          displayDate,
         ]
       })
       y = drawTable([

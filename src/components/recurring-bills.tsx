@@ -395,6 +395,10 @@ export default function RecurringBills() {
 
   const openEdit = (bill: RecurringBillData) => {
     setEditing(bill)
+    // Single source of truth: use earliest open cycle dueDate if available,
+    // otherwise fall back to bill.nextDueDate
+    const cycleDue = getEarliestOpenCycleDueDate(bill)
+    const effectiveDueDate = cycleDue ? cycleDue.toISOString() : bill.nextDueDate
     setBillForm({
       propertyId: bill.propertyId,
       providerName: bill.providerName,
@@ -402,7 +406,7 @@ export default function RecurringBills() {
       accountNumber: bill.accountNumber || '',
       contractNumber: bill.contractNumber || '',
       currentOutstanding: bill.currentOutstanding,
-      nextDueDate: new Date(bill.nextDueDate).toISOString().split('T')[0],
+      nextDueDate: new Date(effectiveDueDate).toISOString().split('T')[0],
       billingFrequency: bill.billingFrequency,
       autoRenew: bill.autoRenew,
       gracePeriodDays: bill.gracePeriodDays,
@@ -1349,7 +1353,7 @@ export default function RecurringBills() {
 
                       <TableCell>
                         <div>
-                          <p className="text-sm">{formatDate(bill.nextDueDate)}</p>
+                          <p className="text-sm">{formatDate(calcDueDate)}</p>
                           {overdue && (
                             <Badge className="bg-red-100 text-red-800 border-red-200 text-xs mt-1">
                               {overdueDays} {t('daysOverdue', lang)}
