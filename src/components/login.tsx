@@ -32,29 +32,72 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      // FIX: Use custom sign-in endpoint that bypasses the NextAuth v5 client flow
-      // which depends on /api/auth/csrf and /api/auth/providers endpoints that
-      // return 401 on Vercel deployments with certain configurations.
-      // This custom endpoint authenticates server-side and sets the session cookie directly.
-      const customRes = await fetch('/api/auth/custom-signin', {
+      // FIX: Use custom login endpoint at /api/login (outside /api/auth/*)
+      // because NextAuth v5's /api/auth/csrf and /api/auth/providers return 401 on Vercel.
+      // Step 1: Verify credentials via custom endpoint
+      const loginRes = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim(), password }),
       })
 
-      if (customRes.ok) {
-        // Authentication succeeded — refresh the session
-        // The session cookie was set by the server, so we just need to
-        // tell NextAuth to re-fetch the session
-        await getSession()
-        // The AppContent component will detect the session change and redirect
-        // Force a page reload to ensure the session is properly synced
-        window.location.reload()
-        return
+      if (loginRes.ok) {
+        // Credentials are valid — now authenticate via NextAuth callback
+        // which works on Vercel (unlike csrf/providers endpoints)
+        // We need to get a CSRF token from the cookie first
+        const csrfRes = await fetch('/api/auth/csrf')
+        let csrfToken = ''
+        
+        // Try to get CSRF token from the cookie (the endpoint might return 401 but sets the cookie)
+        const csrfCookies = document.cookie
+        const csrfMatch = csrfCookies.match(/(?:__Host-)?authjs\.csrf-token=([^;]+)/)
+        if (csrfMatch) {
+          csrfToken = decodeURIComponent(csrfMatch[1]).split('|')[0]
+        }
+
+        // Call the NextAuth callback directly with the CSRF token
+        const formData = new URLSearchParams()
+        formData.append('email', email.trim())
+        formData.append('password', password)
+        formData.append('csrfToken', csrfToken)
+        formData.append('callbackUrl', window.location.origin)
+        formData.append('json', 'true')
+
+        const callbackRes = await fetch('/api/auth/callback/credentials', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: formData.toString(),
+          redirect: 'manual',
+        })
+
+        // The callback might redirect (302) on success or return an error
+        if (callbackRes.status === 302 || callbackRes.ok) {
+          // Authentication succeeded — refresh session and reload
+          await getSession()
+          window.location.reload()
+          return
+        }
+
+        // If callback failed but login succeeded, still try to establish session
+        // by using the standard signIn flow as a fallback
+        try {
+          await signIn('credentials', {
+            email: email.trim(),
+            password,
+            redirect: false,
+          })
+          await getSession()
+          window.location.reload()
+          return
+        } catch {
+          // Last resort — just reload and hope the session is established
+          window.location.reload()
+          return
+        }
       }
 
       // Authentication failed — determine the specific error
-      const errorData = await customRes.json().catch(() => ({ error: 'Unknown' }))
+      const errorData = await loginRes.json().catch(() => ({ error: 'Unknown' }))
       const errorCode = errorData.error
 
       // Try to diagnose the specific error via the diagnose endpoint
