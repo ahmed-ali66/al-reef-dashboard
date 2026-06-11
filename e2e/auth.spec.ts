@@ -73,12 +73,16 @@ test.describe('Authentication System - Stability Tests', () => {
       const loginForm = page.locator('input[id="email"]')
       await expect(loginForm).not.toBeVisible({ timeout: 10000 })
 
-      // Logout by clearing session
-      // The app uses NextAuth, so we can call the signout endpoint
-      await page.evaluate(async () => {
-        const { signOut } = await import('next-auth/react')
-        await signOut({ callbackUrl: '/' })
-      })
+      // Logout by calling the NextAuth signout callback directly
+      await page.goto(`${BASE_URL}/api/auth/signout`)
+      await page.waitForLoadState('networkidle')
+      // Submit the signout form if present
+      const signoutButton = page.locator('button[type="submit"]')
+      if (await signoutButton.isVisible().catch(() => false)) {
+        await signoutButton.click()
+      }
+      // Also clear cookies to ensure full session reset
+      await page.context().clearCookies()
 
       // Wait for redirect to login page
       await page.waitForURL('**/', { timeout: 15000 })
