@@ -178,15 +178,10 @@ export async function GET(request: Request) {
       'lastPaymentAmount',
     ]
     const serializedBills = bills.map(serialize).map((bill: any) => {
-      // Fix totalAmountDue: derive from the latest open cycle's amount
-      if (bill.cycles && bill.cycles.length > 0) {
-        const latestCycle = bill.cycles[0]
-        const cycleAmount = parseFloat(String(latestCycle.amount))
-        const storedTotalDue = parseFloat(String(bill.totalAmountDue))
-        if (storedTotalDue <= parseFloat(String(bill.currentOutstanding)) || storedTotalDue === 0) {
-          bill.totalAmountDue = cycleAmount
-        }
-      }
+      // ARCHITECTURE: Do NOT modify totalAmountDue from cycle data.
+      // totalAmountDue is a stored DB field — if it needs correction,
+      // fix it at the source (DB update), not by overriding in read paths.
+      // Previous "correctedBills" logic caused data inconsistencies.
 
       if (!financialAccess) {
         for (const f of amountFields) {

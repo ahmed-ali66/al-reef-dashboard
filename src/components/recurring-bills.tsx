@@ -207,22 +207,34 @@ export default function RecurringBills() {
   }, [activeTab, fetchAllPayments])
 
   // ─── Client-side category filters ───
+  // ARCHITECTURE: bill.currentOutstanding is the SOLE source of truth.
+  // bill.nextDueDate is the SOLE source of truth for date classification.
+  // No cycle-level aggregation is used for classification or totals.
   const now = new Date()
 
-  // Helper: get outstanding from cycle data (source of truth)
-  const getCycleOutstanding = (bill: RecurringBillData): number => {
-    if (!bill.cycles || bill.cycles.length === 0) return parseFloat(String(bill.currentOutstanding)) || 0
-    return bill.cycles.reduce((sum, c) => sum + (parseFloat(String(c.outstandingAmount)) || 0), 0)
+  // Helper: safely get outstanding from bill.currentOutstanding
+  const getBillOutstanding = (bill: RecurringBillData): number => {
+    return parseFloat(String(bill.currentOutstanding)) || 0
+  }
+
+  // Helper: check if a bill has any actual payment records
+  const hasBillPayments = (bill: RecurringBillData): boolean => {
+    if (bill.lastPaymentDate) return true
+    if (bill.cycles && bill.cycles.length > 0) {
+      return bill.cycles.some((c: any) =>
+        parseFloat(String(c.paidAmount)) > 0 || (c._count?.payments ?? 0) > 0
+      )
+    }
+    return false
   }
 
   const isOverdue = (bill: RecurringBillData) => {
     if (bill.status !== 'active') return false
-    // Use bill.nextDueDate as the single source of truth —
-    // this is the date the user explicitly set.
-    // Overdue ONLY IF: currentDate > nextDueDate (date-only comparison)
+    // bill.nextDueDate is SOLE source of truth for date classification
+    // Overdue ONLY IF: currentDate > nextDueDate (same-day is NOT overdue)
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
     const dueDay = new Date(new Date(bill.nextDueDate).getFullYear(), new Date(bill.nextDueDate).getMonth(), new Date(bill.nextDueDate).getDate())
-    return dueDay < today  // strictly less: same-day is NOT overdue
+    return dueDay < today
   }
 
   const isUpcoming = (bill: RecurringBillData) => {
@@ -242,22 +254,19 @@ export default function RecurringBills() {
     return dueDay >= today && dueDay <= sevenDays
   }
 
+  // PAID = outstanding <= 0 AND has actual payment records
   const isPaid = (bill: RecurringBillData) => {
-    // FIX: Use cycle-level outstanding instead of bill.currentOutstanding
-    return bill.status === 'active' && getCycleOutstanding(bill) <= 0
+    return bill.status === 'active' && getBillOutstanding(bill) <= 0 && hasBillPayments(bill)
   }
 
+  // PARTIALLY PAID = outstanding > 0 AND has actual payment records
   const isPartiallyPaid = (bill: RecurringBillData) => {
-    if (bill.status !== 'active') return false
-    const outstanding = getCycleOutstanding(bill)
-    const totalDue = (bill.cycles?.reduce((s, c) => s + (parseFloat(String(c.amount)) || 0), 0))
-      ?? (parseFloat(String(bill.totalAmountDue)) || 0)
-    return outstanding > 0 && outstanding < totalDue && !isOverdue(bill)
+    return bill.status === 'active' && getBillOutstanding(bill) > 0 && hasBillPayments(bill)
   }
 
+  // OUTSTANDING = outstanding > 0 (regardless of payment status)
   const isOutstanding = (bill: RecurringBillData) => {
-    // FIX: Use cycle-level outstanding instead of bill.currentOutstanding
-    return bill.status === 'active' && getCycleOutstanding(bill) > 0
+    return bill.status === 'active' && getBillOutstanding(bill) > 0
   }
 
   const isInDateRange = (bill: RecurringBillData) => {
@@ -353,8 +362,8 @@ export default function RecurringBills() {
   const partiallyPaidCount = bills.filter(b => isPartiallyPaid(b)).length
   const outstandingCount = bills.filter(b => isOutstanding(b)).length
   const dueSoonCount = bills.filter(b => isDueSoon(b)).length
-  // FIX: Use overdueCount from summary API (cycle-based) instead of counting
-  // overdueBills list, which was previously based on bill.nextDueDate
+  // ARCHITECTURE: overdueCount uses bill.nextDueDate as SOLE source of truth
+  // Summary API now uses the same canonical logic
   const overdueCount = summary?.overdueCount ?? bills.filter(b => isOverdue(b)).length
   const upcomingCount = bills.filter(b => isUpcoming(b)).length
 
