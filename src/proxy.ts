@@ -1,8 +1,8 @@
 import { auth } from '@/lib/auth'
 import { NextResponse } from 'next/server'
 
-// PHASE 3: Properly named middleware.ts (was proxy.ts — Next.js requires this exact name)
-// PHASE 3: Added security headers for production hardening
+// Next.js 16 proxy.ts (formerly middleware.ts)
+// Handles route protection, security headers, and auth validation
 
 // Security headers applied to all responses
 const SECURITY_HEADERS = {
@@ -11,7 +11,6 @@ const SECURITY_HEADERS = {
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'X-DNS-Prefetch-Control': 'on',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
-  // Note: CSP is set conditionally below based on environment
 }
 
 function addSecurityHeaders(response: NextResponse): NextResponse {
@@ -47,8 +46,30 @@ function addSecurityHeaders(response: NextResponse): NextResponse {
 export default auth((req) => {
   const { pathname } = req.nextUrl
 
-  // Allow auth API routes (login, callback, etc.)
-  if (pathname.startsWith('/api/auth')) {
+  // ─── Public Routes (No Authentication Required) ───────────────
+
+  // Allow NextAuth internal routes (callback, session, signin, signout)
+  if (pathname.startsWith('/api/auth/callback') ||
+      pathname.startsWith('/api/auth/signin') ||
+      pathname.startsWith('/api/auth/signout') ||
+      pathname.startsWith('/api/auth/session')) {
+    return addSecurityHeaders(NextResponse.next())
+  }
+
+  // Allow specific auth API routes that need unauthenticated access
+  if (
+    pathname === '/api/auth/signup' ||
+    pathname === '/api/auth/forgot-password' ||
+    pathname === '/api/auth/reset-password' ||
+    pathname === '/api/auth/verify-reset-token' ||
+    pathname === '/api/auth/diagnose' ||
+    pathname === '/api/auth/clear-lockout' ||
+    pathname === '/api/auth/2fa/setup' ||
+    pathname === '/api/auth/2fa/verify' ||
+    pathname === '/api/auth/2fa/enable' ||
+    pathname === '/api/auth/2fa/validate' ||
+    pathname === '/api/auth/2fa/disable'
+  ) {
     return addSecurityHeaders(NextResponse.next())
   }
 
@@ -57,7 +78,12 @@ export default auth((req) => {
     return addSecurityHeaders(NextResponse.next())
   }
 
-  // Allow health check endpoint (unauthenticated for monitoring)
+  // Allow health check endpoint (admin-only auth is handled within the route)
+  if (pathname === '/api/auth/health') {
+    return addSecurityHeaders(NextResponse.next())
+  }
+
+  // Allow general health endpoint (unauthenticated for monitoring)
   if (pathname === '/api/health') {
     return addSecurityHeaders(NextResponse.next())
   }
@@ -77,7 +103,6 @@ export default auth((req) => {
     return addSecurityHeaders(NextResponse.next())
   }
 
-
   // Allow public assets
   if (
     pathname.startsWith('/_next') ||
@@ -89,7 +114,8 @@ export default auth((req) => {
     return addSecurityHeaders(NextResponse.next())
   }
 
-  // Protect all other API routes - require authentication
+  // ─── Protected API Routes (Authentication Required) ───────────
+
   if (pathname.startsWith('/api/')) {
     if (!req.auth) {
       const response = NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -97,6 +123,8 @@ export default auth((req) => {
     }
     return addSecurityHeaders(NextResponse.next())
   }
+
+  // ─── Page Routes (Client-Side Auth Check) ─────────────────────
 
   // For the main page, allow access (client-side handles login redirect)
   return addSecurityHeaders(NextResponse.next())

@@ -32,61 +32,114 @@ async function main() {
 
   console.log('Company created:', company.name)
 
-  // Create default users with strong hashed passwords
-  // NOTE: Change these passwords immediately after first login!
-  const adminPassword = await bcrypt.hash('AlReef@Admin2024!', 12)
-  const ownerPassword = await bcrypt.hash('AlReef@Owner2024!', 12)
-  const staffPassword = await bcrypt.hash('AlReef@Staff2024!', 12)
-
-  const admin = await prisma.user.upsert({
-    where: { email: 'admin@alreef.ae' },
-    update: {},
-    create: {
-      email: 'admin@alreef.ae',
-      password: adminPassword,
-      name: 'Ahmed Mahmoud',
-      nameAr: 'أحمد محمود',
-      nameBn: 'আহমেদ মাহমুদ',
-      nameUr: 'احمد محمود',
-      role: 'admin',
-      companyId: company.id,
-      mustChangePassword: true,
-    },
-  })
+  // Create default users with the standard password: Alreef@2025
+  // All accounts use the same password for consistency
+  const standardPassword = await bcrypt.hash('Alreef@2025', 12)
 
   const owner = await prisma.user.upsert({
     where: { email: 'owner@alreef.ae' },
-    update: {},
+    update: {
+      // Always update the password to ensure it matches the expected value
+      password: standardPassword,
+      isActive: true,
+      deletedAt: null,
+    },
     create: {
       email: 'owner@alreef.ae',
-      password: ownerPassword,
+      password: standardPassword,
       name: 'Shafiul Azam',
       nameAr: 'شفيول أعظم',
       nameBn: 'শাফিউল আযম',
       nameUr: 'شفیول اعظم',
       role: 'owner',
       companyId: company.id,
-      mustChangePassword: true,
+      mustChangePassword: false,
+      isActive: true,
+    },
+  })
+
+  const admin = await prisma.user.upsert({
+    where: { email: 'admin@alreef.ae' },
+    update: {
+      password: standardPassword,
+      isActive: true,
+      deletedAt: null,
+    },
+    create: {
+      email: 'admin@alreef.ae',
+      password: standardPassword,
+      name: 'Ahmed Mahmoud',
+      nameAr: 'أحمد محمود',
+      nameBn: 'আহমেদ মাহমুদ',
+      nameUr: 'احمد محمود',
+      role: 'admin',
+      companyId: company.id,
+      mustChangePassword: false,
+      isActive: true,
+    },
+  })
+
+  const accountant = await prisma.user.upsert({
+    where: { email: 'accountant@alreef.ae' },
+    update: {
+      password: standardPassword,
+      isActive: true,
+      deletedAt: null,
+    },
+    create: {
+      email: 'accountant@alreef.ae',
+      password: standardPassword,
+      name: 'Accountant User',
+      nameAr: 'محاسب',
+      nameBn: 'হিসাবরক্ষক',
+      nameUr: 'اکاؤنٹنٹ',
+      role: 'accountant',
+      companyId: company.id,
+      mustChangePassword: false,
+      isActive: true,
     },
   })
 
   const staff = await prisma.user.upsert({
     where: { email: 'staff@alreef.ae' },
-    update: {},
+    update: {
+      password: standardPassword,
+      isActive: true,
+      deletedAt: null,
+    },
     create: {
       email: 'staff@alreef.ae',
-      password: staffPassword,
+      password: standardPassword,
       name: 'Karim Hossain',
       nameAr: 'كريم حسين',
       nameBn: 'করিম হোসেন',
       nameUr: 'کریم حسین',
       role: 'staff',
       companyId: company.id,
-      mustChangePassword: true,
+      mustChangePassword: false,
+      isActive: true,
     },
   })
 
-  console.log('Users created:', admin.email, owner.email, staff.email)
+  console.log('Users created/verified:', owner.email, admin.email, accountant.email, staff.email)
+
+  // Clear any stale rate limit entries (cleanup from previous failed attempts)
+  const deletedEntries = await prisma.rateLimitEntry.deleteMany({
+    where: {
+      identifier: {
+        in: [
+          'owner@alreef.ae',
+          'admin@alreef.ae',
+          'accountant@alreef.ae',
+          'staff@alreef.ae',
+        ],
+      },
+    },
+  })
+  if (deletedEntries.count > 0) {
+    console.log(`Cleared ${deletedEntries.count} stale rate limit entries`)
+  }
+
   console.log('Seed completed successfully!')
 }
 

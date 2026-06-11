@@ -15,7 +15,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
-  const [errorType, setErrorType] = useState<'generic' | 'lockout' | 'inactive' | 'not_found'>('generic')
+  const [errorType, setErrorType] = useState<'generic' | 'lockout' | 'inactive' | 'not_found' | 'server_error'>('generic')
   const [loading, setLoading] = useState(false)
   const [showForgotPassword, setShowForgotPassword] = useState(false)
   const [resetEmail, setResetEmail] = useState('')
@@ -32,7 +32,7 @@ export default function LoginPage() {
 
     try {
       const result = await signIn('credentials', {
-        email,
+        email: email.trim(),
         password,
         redirect: false,
       })
@@ -43,13 +43,22 @@ export default function LoginPage() {
           const diagRes = await fetch('/api/auth/diagnose', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email }),
+            body: JSON.stringify({ email: email.trim() }),
           })
           if (diagRes.ok) {
             const diagData = await diagRes.json()
             const diag = diagData.data || diagData
 
-            if (diag.isLockedOut) {
+            if (diag.dbError) {
+              // Server/database connectivity issue
+              setErrorType('server_error')
+              setError(
+                language === 'en' ? 'Server is temporarily unavailable. Please try again in a moment.' :
+                language === 'ar' ? 'الخادم غير متاح مؤقتاً. يرجى المحاولة مرة أخرى بعد قليل.' :
+                language === 'bn' ? 'সার্ভার সাময়িকভাবে অনুপলব্ধ। অনুগ্রহ করে কিছুক্ষণ পরে আবার চেষ্টা করুন।' :
+                'سرور عارضی طور پر دستیاب نہیں ہے۔ براہ کرم تھوڑی دیر بعد دوبارہ کوشش کریں۔'
+              )
+            } else if (diag.isLockedOut) {
               setErrorType('lockout')
               const mins = diag.lockoutMinutesRemaining || 15
               setError(
@@ -88,6 +97,15 @@ export default function LoginPage() {
               // User exists, not locked, not inactive — wrong password
               setError(t('loginError', language))
             }
+          } else if (diagRes.status === 503) {
+            // Server/database error
+            setErrorType('server_error')
+            setError(
+              language === 'en' ? 'Server is temporarily unavailable. Please try again in a moment.' :
+              language === 'ar' ? 'الخادم غير متاح مؤقتاً. يرجى المحاولة مرة أخرى بعد قليل.' :
+              language === 'bn' ? 'সার্ভার সাময়িকভাবে অনুপলব্ধ। অনুগ্রহ করে কিছুক্ষণ পরে আবার চেষ্টা করুন।' :
+              'سرور عارضی طور پر دستیاب نہیں ہے۔ براہ کرم تھوڑی دیر بعد دوبارہ کوشش کریں۔'
+            )
           } else {
             // Diagnosis failed, use generic error
             setError(t('loginError', language))
@@ -120,12 +138,8 @@ export default function LoginPage() {
         }),
       })
 
-      if (res.ok) {
-        setResetSent(true)
-      } else {
-        // Still show success to prevent email enumeration
-        setResetSent(true)
-      }
+      // Always show success to prevent email enumeration
+      setResetSent(true)
     } catch {
       setResetSent(true)
     }
@@ -215,11 +229,15 @@ export default function LoginPage() {
                     ? 'bg-amber-50 border border-amber-200 text-amber-700'
                     : errorType === 'inactive'
                     ? 'bg-orange-50 border border-orange-200 text-orange-700'
+                    : errorType === 'server_error'
+                    ? 'bg-blue-50 border border-blue-200 text-blue-700'
                     : 'bg-red-50 border border-red-200 text-red-700'
                 }`}>
                   {errorType === 'lockout' ? (
                     <Lock className="w-4 h-4 mt-0.5 shrink-0" />
                   ) : errorType === 'inactive' ? (
+                    <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                  ) : errorType === 'server_error' ? (
                     <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
                   ) : null}
                   <span>{error}</span>
@@ -237,6 +255,7 @@ export default function LoginPage() {
                     placeholder="owner@alreefjanoubi.ae"
                     className="mt-1.5"
                     required
+                    autoComplete="email"
                   />
                 </div>
                 <div>
@@ -249,6 +268,7 @@ export default function LoginPage() {
                     placeholder="••••••••"
                     className="mt-1.5"
                     required
+                    autoComplete="current-password"
                   />
                 </div>
                 <Button

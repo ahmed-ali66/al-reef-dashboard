@@ -13,26 +13,42 @@ export async function POST(request: Request) {
       return errorResponse('Token is required')
     }
 
-    if (!newPassword || newPassword.length < 6) {
-      return errorResponse('New password must be at least 6 characters')
+    // FIX: Enforce same password policy as admin reset (8 chars, 1 uppercase, 1 number)
+    if (!newPassword || newPassword.length < 8) {
+      return errorResponse('New password must be at least 8 characters')
+    }
+    if (!/[A-Z]/.test(newPassword)) {
+      return errorResponse('Password must contain at least one uppercase letter')
+    }
+    if (!/[0-9]/.test(newPassword)) {
+      return errorResponse('Password must contain at least one number')
     }
 
+    // FIX: Use atomic token consumption to prevent TOCTOU race condition
+    // Update the token with a usedAt timestamp only if it's currently null (not used)
+    const consumedToken = await prisma.passwordResetToken.updateMany({
+      where: {
+        token,
+        usedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      data: {
+        usedAt: new Date(),
+      },
+    })
+
+    if (consumedToken.count === 0) {
+      // Token was either already used, expired, or doesn't exist
+      return errorResponse('Invalid or expired reset token')
+    }
+
+    // Get the token details for the email
     const resetToken = await prisma.passwordResetToken.findUnique({
       where: { token },
     })
 
     if (!resetToken) {
-      return errorResponse('Invalid or expired reset token')
-    }
-
-    // Check if token has been used
-    if (resetToken.usedAt) {
-      return errorResponse('This reset token has already been used')
-    }
-
-    // Check if token has expired
-    if (new Date(resetToken.expiresAt) < new Date()) {
-      return errorResponse('This reset token has expired')
+      return errorResponse('Invalid reset token')
     }
 
     // Find the user
@@ -47,34 +63,32 @@ export async function POST(request: Request) {
     // Hash the new password
     const hashedPassword = await bcrypt.hash(newPassword, 12)
 
-    // Update the user's password
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { password: hashedPassword },
-    })
-
-    // Mark the token as used
-    await prisma.passwordResetToken.update({
-      where: { id: resetToken.id },
-      data: { usedAt: new Date() },
-    })
+    // Update the user's password in a transaction with audit log
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: user.id },
+        data: {
+          password: hashedPassword,
+          passwordChangedAt: new Date(),
+          mustChangePassword: false,
+        },
+      }),
+      prisma.auditLog.create({
+        data: {
+          action: 'PASSWORD_RESET_COMPLETED',
+          entity: 'User',
+          entityId: user.id,
+          userId: user.id,
+          companyId: user.companyId,
+          details: JSON.stringify({ email: user.email, method: 'self_service_reset' }),
+        },
+      }),
+    ])
 
     // Clear any rate limits for this user
     await prisma.rateLimitEntry.deleteMany({
       where: { identifier: user.email },
     }).catch(() => {})
-
-    // Create an audit log
-    await prisma.auditLog.create({
-      data: {
-        action: 'PASSWORD_RESET_COMPLETED',
-        entity: 'User',
-        entityId: user.id,
-        userId: user.id,
-        companyId: user.companyId,
-        details: JSON.stringify({ email: user.email, method: 'self_service_reset' }),
-      },
-    })
 
     return successResponse({
       message: 'Password has been reset successfully. You can now log in with your new password.',
