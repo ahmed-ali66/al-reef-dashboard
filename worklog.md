@@ -41,3 +41,28 @@ Stage Summary:
 - All views (Edit Modal, List View, PDF, XLSX, API) now show consistent bill.nextDueDate
 - Overdue detection in exports now uses cycle-level data (catches hidden overdue bills)
 - Commit: 12b4751, pushed to GitHub, deployed to Vercel
+---
+Task ID: 1
+Agent: main
+Task: Fix all data integrity bugs in Recurring Bills PDF/XLSX exports + summary API
+
+Work Log:
+- Cloned repo from GitHub (ahmed-ali66/al-reef-dashboard)
+- Read all critical files: pdf/route.ts, xlsx/route.ts, summary/route.ts, bills/route.ts, recurring-bills.tsx, schema.prisma
+- Identified root causes for all 7 reported bugs
+- Fixed PDF export: blank pages, fabricated payments, invalid paid bills, liability calc, totalPaid
+- Fixed XLSX export: same data integrity fixes
+- Fixed Summary API: outstanding balance mismatch (cycle vs bill level aggregation)
+- Built locally (success), pushed to GitHub, deployed to Vercel
+
+Stage Summary:
+- PDF blank pages: Set bottom margin to 0, use bufferPages, lineBreak:false everywhere
+- Fabricated partial payments: Only show bills in Paid/PartiallyPaid if they have ACTUAL payment records
+- Invalid paid bills: Bills with 0 outstanding and no payments no longer appear as "paid"
+- Paid amount: Uses BillPayment aggregate query instead of latest single payment
+- Liability: Removed confusing "Previous Liability", shows only "Total Outstanding"
+- Partial paid: Shows REAL cycle.paidAmount, not fabricated (totalDue - outstanding)
+- XLSX: Same fixes applied
+- Summary API totalOutstanding: Changed from cycle.outstandingAmount (only selected month cycles) to bill.currentOutstanding (matches dashboard and exports)
+- Service type breakdown: Changed from cycle-level to bill.currentOutstanding
+- Production deployed at https://al-reef-al-junoobi.vercel.app
