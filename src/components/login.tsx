@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import { signIn } from 'next-auth/react'
-import { getSession } from 'next-auth/react'
 import { useAppStore } from '@/lib/store'
 import { t, languageNames, rtlLanguages } from '@/lib/i18n'
 import type { Language } from '@/lib/i18n'
@@ -32,148 +31,30 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      // FIX: Use custom login endpoint at /api/login (outside /api/auth/*)
-      // because NextAuth v5's /api/auth/csrf and /api/auth/providers return 401 on Vercel.
-      // Step 1: Verify credentials via custom endpoint
-      const loginRes = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim(), password }),
+      // Use the standard NextAuth signIn flow.
+      // The middleware.ts pass-through fix allows /api/auth/* endpoints to work on Vercel.
+      const result = await signIn('credentials', {
+        email: email.trim(),
+        password,
+        redirect: false,
       })
 
-      if (loginRes.ok) {
-        // Credentials are valid — now authenticate via NextAuth callback
-        // which works on Vercel (unlike csrf/providers endpoints)
-        // We need to get a CSRF token from the cookie first
-        const csrfRes = await fetch('/api/auth/csrf')
-        let csrfToken = ''
-        
-        // Try to get CSRF token from the cookie (the endpoint might return 401 but sets the cookie)
-        const csrfCookies = document.cookie
-        const csrfMatch = csrfCookies.match(/(?:__Host-)?authjs\.csrf-token=([^;]+)/)
-        if (csrfMatch) {
-          csrfToken = decodeURIComponent(csrfMatch[1]).split('|')[0]
-        }
-
-        // Call the NextAuth callback directly with the CSRF token
-        const formData = new URLSearchParams()
-        formData.append('email', email.trim())
-        formData.append('password', password)
-        formData.append('csrfToken', csrfToken)
-        formData.append('callbackUrl', window.location.origin)
-        formData.append('json', 'true')
-
-        const callbackRes = await fetch('/api/auth/callback/credentials', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: formData.toString(),
-          redirect: 'manual',
-        })
-
-        // The callback might redirect (302) on success or return an error
-        if (callbackRes.status === 302 || callbackRes.ok) {
-          // Authentication succeeded — refresh session and reload
-          await getSession()
-          window.location.reload()
-          return
-        }
-
-        // If callback failed but login succeeded, still try to establish session
-        // by using the standard signIn flow as a fallback
-        try {
-          await signIn('credentials', {
-            email: email.trim(),
-            password,
-            redirect: false,
-          })
-          await getSession()
-          window.location.reload()
-          return
-        } catch {
-          // Last resort — just reload and hope the session is established
-          window.location.reload()
-          return
-        }
-      }
-
-      // Authentication failed — determine the specific error
-      const errorData = await loginRes.json().catch(() => ({ error: 'Unknown' }))
-      const errorCode = errorData.error
-
-      // Try to diagnose the specific error via the diagnose endpoint
-      try {
-        const diagRes = await fetch('/api/auth/diagnose', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: email.trim() }),
-        })
-        if (diagRes.ok) {
-          const diagData = await diagRes.json()
-          const diag = diagData.data || diagData
-
-          if (diag.dbError) {
-            setErrorType('server_error')
-            setError(
-              language === 'en' ? 'Server is temporarily unavailable. Please try again in a moment.' :
-              language === 'ar' ? 'الخادم غير متاح مؤقتاً. يرجى المحاولة مرة أخرى بعد قليل.' :
-              language === 'bn' ? 'সার্ভার সাময়িকভাবে অনুপলব্ধ। অনুগ্রহ করে কিছুক্ষণ পরে আবার চেষ্টা করুন।' :
-              'سرور عارضی طور پر دستیاب نہیں ہے۔ براہ کرم تھوڑی دیر بعد دوبارہ کوشش کریں۔'
-            )
-          } else if (diag.isLockedOut) {
-            setErrorType('lockout')
-            const mins = diag.lockoutMinutesRemaining || 15
-            setError(
-              language === 'en' ? `Too many failed attempts. Please try again in ${mins} minutes.` :
-              language === 'ar' ? `محاولات فاشلة كثيرة. حاول مرة أخرى بعد ${mins} دقيقة.` :
-              language === 'bn' ? `খুব বেশি ব্যর্থ প্রচেষ্টা। ${mins} মিনিট পরে আবার চেষ্টা করুন।` :
-              `بہت زیادہ ناکام کوششیں۔ ${mins} منٹ بعد دوبارہ کوشش کریں۔`
-            )
-          } else if (diag.userExists && !diag.isActive) {
-            setErrorType('inactive')
-            setError(
-              language === 'en' ? 'Your account has been deactivated. Please contact your administrator.' :
-              language === 'ar' ? 'تم تعطيل حسابك. يرجى التواصل مع المسؤول.' :
-              language === 'bn' ? 'আপনার অ্যাকাউন্ট নিষ্ক্রিয় করা হয়েছে। আপনার প্রশাসকের সাথে যোগাযোগ করুন।' :
-              'آپ کا اکاؤنٹ غیر فعال کر دیا گیا ہے۔ اپنے ایڈمن سے رابطہ کریں۔'
-            )
-          } else if (diag.userExists && diag.isDeleted) {
-            setErrorType('inactive')
-            setError(
-              language === 'en' ? 'This account no longer exists. Please contact your administrator.' :
-              language === 'ar' ? 'هذا الحساب لم يعد موجوداً. يرجى التواصل مع المسؤول.' :
-              language === 'bn' ? 'এই অ্যাকাউন্টটি আর বিদ্যমান নেই। আপনার প্রশাসকের সাথে যোগাযোগ করুন।' :
-              'یہ اکاؤنٹ اب موجود نہیں ہے۔ اپنے ایڈمن سے رابطہ کریں۔'
-            )
-          } else if (diag.userExists && diag.mustChangePassword) {
-            setError(
-              language === 'en' ? 'You must change your password. Please contact your administrator.' :
-              language === 'ar' ? 'يجب تغيير كلمة المرور. يرجى التواصل مع المسؤول.' :
-              language === 'bn' ? 'আপনাকে পাসওয়ার্ড পরিবর্তন করতে হবে। আপনার প্রশাসকের সাথে যোগাযোগ করুন।' :
-              'آپ کو پاس ورڈ تبدیل کرنا ہوگا۔ اپنے ایڈمن سے رابطہ کریں۔'
-            )
-          } else if (!diag.userExists) {
-            setErrorType('not_found')
-            setError(t('loginError', language))
-          } else {
-            // User exists, not locked, not inactive — wrong password
-            setError(t('loginError', language))
-          }
-        } else if (diagRes.status === 503) {
-          setErrorType('server_error')
-          setError(
-            language === 'en' ? 'Server is temporarily unavailable. Please try again in a moment.' :
-            language === 'ar' ? 'الخادم غير متاح مؤقتاً. يرجى المحاولة مرة أخرى بعد قليل.' :
-            language === 'bn' ? 'সার্ভার সাময়িকভাবে অনুপলব্ধ। অনুগ্রহ করে কিছুক্ষণ পরে আবার চেষ্টা করুন।' :
-            'سرور عارضی طور پر دستیاب نہیں ہے۔ براہ کرم تھوڑی دیر بعد دوبارہ کوشش کریں۔'
-          )
-        } else {
+      if (result?.error) {
+        // Map NextAuth error codes to user-friendly messages
+        if (result.error === 'CredentialsSignin') {
           setError(t('loginError', language))
+        } else {
+          setError(result.error)
         }
-      } catch {
-        setError(t('loginError', language))
+        setErrorType('generic')
+      } else {
+        // Success — reload to establish session
+        window.location.reload()
+        return
       }
     } catch {
       setError(t('loginError', language))
+      setErrorType('generic')
     } finally {
       setLoading(false)
     }
@@ -308,7 +189,7 @@ export default function LoginPage() {
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="owner@alreefjanoubi.ae"
+                    placeholder="owner@alreef.ae"
                     className="mt-1.5"
                     required
                     autoComplete="email"
