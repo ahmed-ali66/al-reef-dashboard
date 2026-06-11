@@ -441,7 +441,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     strategy: 'jwt',
     maxAge: 8 * 60 * 60, // 8 hours
   },
-  secret: process.env.NEXTAUTH_SECRET,
+  // FIX: NextAuth v5 (Auth.js) renamed NEXTAUTH_SECRET to AUTH_SECRET.
+  // Check both env vars — if only AUTH_SECRET is set on Vercel, auth breaks without this.
+  // This was a major cause of the "Unauthorized" error: secret was undefined.
+  secret: process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET,
   // FIX: Explicitly set debug in development only
   debug: process.env.NODE_ENV === 'development',
 })
