@@ -168,29 +168,25 @@ export async function GET(request: Request) {
 
     // ─── All Bills Sheet ───
     const allBillsHeader = ['Provider', 'Service Type', 'Property', 'Building', 'Owner', 'Account No.', 'Contract No.', 'Total Due (AED)', 'Outstanding (AED)', 'Previous Outstanding (AED)', 'Next Due Date', 'Billing Frequency', 'Status', 'Last Payment Date', 'Last Payment Amount (AED)', 'Grace Period (Days)', 'Auto Renew']
-    const allBillsRows = bills.map(b => {
-      const cycleDueAll = getEarliestCycleDue(b)
-      const allBillsDisplayDate = cycleDueAll ? cycleDueAll.toISOString().split('T')[0] : b.nextDueDate.toISOString().split('T')[0]
-      return [
-        b.providerName,
-        b.serviceType,
-        b.property?.name || '',
-        b.buildingName || '',
-        b.ownerName || '',
-        b.accountNumber || '',
-        b.contractNumber || '',
-        safeNumber(b.totalAmountDue).toFixed(2),
-        safeNumber(b.currentOutstanding).toFixed(2),
-        safeNumber(b.previousOutstanding).toFixed(2),
-        allBillsDisplayDate,
-        b.billingFrequency,
-        b.status,
-        b.lastPaymentDate ? new Date(b.lastPaymentDate).toISOString().split('T')[0] : '',
-        b.lastPaymentAmount ? safeNumber(b.lastPaymentAmount).toFixed(2) : '',
-        b.gracePeriodDays,
-        b.autoRenew ? 'Yes' : 'No',
-      ]
-    })
+    const allBillsRows = bills.map(b => [
+      b.providerName,
+      b.serviceType,
+      b.property?.name || '',
+      b.buildingName || '',
+      b.ownerName || '',
+      b.accountNumber || '',
+      b.contractNumber || '',
+      safeNumber(b.totalAmountDue).toFixed(2),
+      safeNumber(b.currentOutstanding).toFixed(2),
+      safeNumber(b.previousOutstanding).toFixed(2),
+      b.nextDueDate.toISOString().split('T')[0],
+      b.billingFrequency,
+      b.status,
+      b.lastPaymentDate ? new Date(b.lastPaymentDate).toISOString().split('T')[0] : '',
+      b.lastPaymentAmount ? safeNumber(b.lastPaymentAmount).toFixed(2) : '',
+      b.gracePeriodDays,
+      b.autoRenew ? 'Yes' : 'No',
+    ])
     const allBillsWs = XLSX.utils.aoa_to_sheet([allBillsHeader, ...allBillsRows])
     allBillsWs['!cols'] = allBillsHeader.map(() => ({ wch: 18 }))
     XLSX.utils.book_append_sheet(wb, allBillsWs, 'All Bills')
@@ -199,11 +195,10 @@ export async function GET(request: Request) {
     if (overdueBills.length > 0) {
       const overdueHeader = ['Provider', 'Account No.', 'Property', 'Outstanding (AED)', 'Days Overdue', 'Service Type', 'Due Date']
       const overdueRows = overdueBills.map(b => {
-        // FIX: Use cycle-level dueDate for days overdue AND date display
+        // FIX: Use cycle-level dueDate for days overdue calculation
         const cycleDue = getEarliestCycleDue(b)
         const overdueRefDate = cycleDue || b.nextDueDate
         const daysOverdue = Math.max(0, Math.ceil((startOfToday.getTime() - new Date(overdueRefDate).getTime()) / (1000 * 60 * 60 * 24)))
-        const displayDate = cycleDue ? cycleDue.toISOString().split('T')[0] : b.nextDueDate.toISOString().split('T')[0]
         return [
           b.providerName,
           b.accountNumber || '',
@@ -211,7 +206,7 @@ export async function GET(request: Request) {
           safeNumber(b.currentOutstanding).toFixed(2),
           daysOverdue,
           b.serviceType,
-          displayDate,
+          b.nextDueDate.toISOString().split('T')[0],
         ]
       })
       const overdueWs = XLSX.utils.aoa_to_sheet([overdueHeader, ...overdueRows])
@@ -223,17 +218,16 @@ export async function GET(request: Request) {
     if (upcomingBills.length > 0) {
       const upcomingHeader = ['Provider', 'Account No.', 'Property', 'Amount Due (AED)', 'Due Date', 'Days Remaining', 'Service Type']
       const upcomingRows = upcomingBills.map(b => {
-        // FIX: Use cycle-level dueDate for days remaining AND date display
+        // FIX: Use cycle-level dueDate for days remaining calculation
         const upcomingCycleDue = getEarliestCycleDue(b)
         const upcomingRefDate = upcomingCycleDue || b.nextDueDate
         const daysRemaining = Math.max(0, Math.ceil((new Date(upcomingRefDate).getTime() - startOfToday.getTime()) / (1000 * 60 * 60 * 24)))
-        const displayDate = upcomingCycleDue ? upcomingCycleDue.toISOString().split('T')[0] : b.nextDueDate.toISOString().split('T')[0]
         return [
           b.providerName,
           b.accountNumber || '',
           b.property?.name || b.buildingName || '',
           safeNumber(b.totalAmountDue).toFixed(2),
-          displayDate,
+          b.nextDueDate.toISOString().split('T')[0],
           daysRemaining,
           b.serviceType,
         ]
@@ -267,8 +261,6 @@ export async function GET(request: Request) {
         const totalDue = safeNumber(b.totalAmountDue)
         const outstanding = safeNumber(b.currentOutstanding)
         const paid = totalDue - outstanding
-        const cycleDuePartial = getEarliestCycleDue(b)
-        const partialDisplayDate = cycleDuePartial ? cycleDuePartial.toISOString().split('T')[0] : b.nextDueDate.toISOString().split('T')[0]
         return [
           b.providerName,
           b.accountNumber || '',
@@ -276,7 +268,7 @@ export async function GET(request: Request) {
           totalDue.toFixed(2),
           paid.toFixed(2),
           outstanding.toFixed(2),
-          partialDisplayDate,
+          b.nextDueDate.toISOString().split('T')[0],
           b.serviceType,
         ]
       })
@@ -289,20 +281,16 @@ export async function GET(request: Request) {
     const outstandingBills = activeBills.filter(b => safeNumber(b.currentOutstanding) > 0)
     if (outstandingBills.length > 0) {
       const outstandingHeader = ['Provider', 'Account No.', 'Property', 'Previous Balance (AED)', 'Current Balance (AED)', 'Total Liability (AED)', 'Service Type', 'Due Date']
-      const outstandingRows = outstandingBills.map(b => {
-        const cycleDueOutstanding = getEarliestCycleDue(b)
-        const outstandingDisplayDate = cycleDueOutstanding ? cycleDueOutstanding.toISOString().split('T')[0] : b.nextDueDate.toISOString().split('T')[0]
-        return [
-          b.providerName,
-          b.accountNumber || '',
-          b.property?.name || b.buildingName || '',
-          safeNumber(b.previousOutstanding).toFixed(2),
-          safeNumber(b.currentOutstanding).toFixed(2),
-          safeNumber(b.totalAmountDue).toFixed(2),
-          b.serviceType,
-          outstandingDisplayDate,
-        ]
-      })
+      const outstandingRows = outstandingBills.map(b => [
+        b.providerName,
+        b.accountNumber || '',
+        b.property?.name || b.buildingName || '',
+        safeNumber(b.previousOutstanding).toFixed(2),
+        safeNumber(b.currentOutstanding).toFixed(2),
+        safeNumber(b.totalAmountDue).toFixed(2),
+        b.serviceType,
+        b.nextDueDate.toISOString().split('T')[0],
+      ])
       const outstandingWs = XLSX.utils.aoa_to_sheet([outstandingHeader, ...outstandingRows])
       outstandingWs['!cols'] = outstandingHeader.map(() => ({ wch: 20 }))
       XLSX.utils.book_append_sheet(wb, outstandingWs, 'Outstanding')
