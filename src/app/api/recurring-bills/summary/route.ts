@@ -11,6 +11,8 @@ import {
 } from '@/lib/api-utils'
 
 // GET /api/recurring-bills/summary — dashboard summary data for recurring bills
+// Supports ?month=6&year=2026 for monthly context filtering
+// When month/year provided, all metrics reflect that month only
 export async function GET(request: Request) {
   try {
     const user = await getAuthUser()
@@ -20,15 +22,41 @@ export async function GET(request: Request) {
     const financialAccess = isFinancialUser(user.role)
     const now = new Date()
 
-    // Start of current month
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-    // End of current month
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
+    // Parse month/year from query params (default: current month)
+    const { searchParams } = new URL(request.url)
+    const targetMonth = parseInt(searchParams.get('month') || String(now.getMonth() + 1))
+    const targetYear = parseInt(searchParams.get('year') || String(now.getFullYear()))
+
+    // Compute month boundaries for the selected month
+    // Using UTC-based dates to avoid timezone issues with Prisma
+    const monthStart = new Date(targetYear, targetMonth - 1, 1)
+    const monthEnd = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999)
+
+    // Is this the current month?
+    const isCurrentMonth =
+      targetMonth === now.getMonth() + 1 &&
+      targetYear === now.getFullYear()
 
     const baseWhere = {
       companyId: user.companyId,
       deletedAt: null,
     }
+
+    // ── For "Due This Month" and "Overdue" calculations:
+    // Cycles due in the selected month (regardless of their status)
+    const cycleDueThisMonth = {
+      companyId: user.companyId,
+      dueDate: { gte: monthStart, lte: monthEnd },
+      recurringBill: { status: 'active', deletedAt: null },
+    }
+
+    // Open cycles = pending/partially_paid/overdue
+    const openCycleStatuses = ['pending', 'partially_paid', 'overdue']
+
+    // Overdue cycles: dueDate < start of selected month AND still open
+    // (For historical months, everything due that month that wasn't paid is overdue)
+    // For current month, overdue = dueDate < now AND still open
+    const overdueDateThreshold = isCurrentMonth ? now : monthEnd
 
     // Run all queries in parallel for performance
     const [
@@ -42,47 +70,51 @@ export async function GET(request: Request) {
       serviceTypeBreakdown,
       cycleAgg,
     ] = await Promise.all([
-      // totalBills: count of active bills
+      // totalBills: count of active bills that have at least one cycle in the selected month
       prisma.recurringBill.count({
-        where: { ...baseWhere, status: 'active' },
+        where: {
+          ...baseWhere,
+          status: 'active',
+          cycles: {
+            some: {
+              dueDate: { gte: monthStart, lte: monthEnd },
+            },
+          },
+        },
       }),
 
-      // totalOutstanding: sum of cycle outstandingAmount across open cycles of active bills
-      // This replaces the old bill-level currentOutstanding aggregate to ensure
-      // consistency with the cycle-based "Due" metric and to avoid inflated values
-      // from bills where currentOutstanding was corrupted by prior bugs
+      // totalOutstanding: sum of open cycle outstandingAmount for cycles due in selected month
+      prisma.billCycle.aggregate({
+        where: {
+          ...cycleDueThisMonth,
+          status: { in: openCycleStatuses },
+        },
+        _sum: { outstandingAmount: true },
+      }),
+
+      // totalDueThisMonth: same as outstanding for the selected month
+      // (cycles due this month that are still open)
+      prisma.billCycle.aggregate({
+        where: {
+          ...cycleDueThisMonth,
+          status: { in: openCycleStatuses },
+        },
+        _sum: { outstandingAmount: true },
+      }),
+
+      // totalOverdueAmount: open cycles due BEFORE the threshold (now for current month,
+      // end-of-month for historical months) — these are the truly overdue ones
       prisma.billCycle.aggregate({
         where: {
           companyId: user.companyId,
-          status: { in: ['pending', 'partially_paid', 'overdue'] },
+          status: { in: openCycleStatuses },
+          dueDate: { lt: overdueDateThreshold },
           recurringBill: { status: 'active', deletedAt: null },
         },
         _sum: { outstandingAmount: true },
       }),
 
-      // totalDueThisMonth: sum of open cycle amounts due this month
-      prisma.billCycle.aggregate({
-        where: {
-          companyId: user.companyId,
-          status: { in: ['pending', 'partially_paid', 'overdue'] },
-          dueDate: { gte: monthStart, lte: monthEnd },
-          recurringBill: { status: 'active', deletedAt: null },
-        },
-        _sum: { outstandingAmount: true },
-      }),
-
-      // totalOverdueAmount: sum of cycle outstandingAmount for overdue cycles (dueDate < now)
-      prisma.billCycle.aggregate({
-        where: {
-          companyId: user.companyId,
-          status: { in: ['pending', 'partially_paid', 'overdue'] },
-          dueDate: { lt: now },
-          recurringBill: { status: 'active', deletedAt: null },
-        },
-        _sum: { outstandingAmount: true },
-      }),
-
-      // totalPaidThisMonth: sum of BillPayment amounts this month (exclude deleted bills)
+      // totalPaidThisMonth: sum of BillPayment amounts in the selected month
       prisma.billPayment.aggregate({
         where: {
           companyId: user.companyId,
@@ -92,14 +124,14 @@ export async function GET(request: Request) {
         _sum: { amount: true },
       }),
 
-      // upcomingBills: next 5 bills by EARLIEST open cycle due date
+      // upcomingBills: next 5 bills with open cycles due AFTER now (only meaningful for current month)
       prisma.recurringBill.findMany({
         where: {
           ...baseWhere,
           status: 'active',
           cycles: {
             some: {
-              status: { in: ['pending', 'partially_paid', 'overdue'] },
+              status: { in: openCycleStatuses },
               dueDate: { gte: now },
             },
           },
@@ -115,7 +147,7 @@ export async function GET(request: Request) {
             },
           },
           cycles: {
-            where: { status: { in: ['pending', 'partially_paid', 'overdue'] } },
+            where: { status: { in: openCycleStatuses } },
             orderBy: { dueDate: 'asc' },
             take: 1,
           },
@@ -124,36 +156,33 @@ export async function GET(request: Request) {
         take: 5,
       }),
 
-      // overdueBillIds: distinct bill IDs that have open cycles with dueDate < now
-      // FIX: Uses cycle-level dueDate instead of bill-level nextDueDate
+      // overdueBillIds: distinct bill IDs that have open cycles past due
       prisma.billCycle.findMany({
         where: {
           companyId: user.companyId,
-          status: { in: ['pending', 'partially_paid', 'overdue'] },
-          dueDate: { lt: now },
+          status: { in: openCycleStatuses },
+          dueDate: { lt: overdueDateThreshold },
           recurringBill: { status: 'active', deletedAt: null },
         },
         select: { recurringBillId: true },
         distinct: ['recurringBillId'],
       }),
 
-      // Group by serviceType for breakdown using cycle outstanding amounts
+      // Group by recurringBillId for service type breakdown
       prisma.billCycle.groupBy({
         by: ['recurringBillId'],
         where: {
-          companyId: user.companyId,
-          status: { in: ['pending', 'partially_paid', 'overdue'] },
-          recurringBill: { status: 'active', deletedAt: null },
+          ...cycleDueThisMonth,
+          status: { in: openCycleStatuses },
         },
         _sum: { outstandingAmount: true },
       }),
 
-      // Cycle-level aggregation (all open cycles, exclude deleted bills)
+      // Cycle-level aggregation for the selected month
       prisma.billCycle.aggregate({
         where: {
-          companyId: user.companyId,
-          status: { in: ['pending', 'partially_paid', 'overdue'] },
-          recurringBill: { deletedAt: null },
+          ...cycleDueThisMonth,
+          status: { in: openCycleStatuses },
         },
         _sum: { outstandingAmount: true, amount: true, paidAmount: true },
         _count: true,
@@ -161,15 +190,15 @@ export async function GET(request: Request) {
     ])
 
     // ── Build service type breakdown from cycle data ──
-    // We grouped cycles by recurringBillId; now look up each bill's serviceType
     const billIdsForBreakdown = serviceTypeBreakdown.map((item) => item.recurringBillId)
-    const billsForBreakdown = await prisma.recurringBill.findMany({
-      where: { id: { in: billIdsForBreakdown } },
-      select: { id: true, serviceType: true },
-    })
+    const billsForBreakdown = billIdsForBreakdown.length > 0
+      ? await prisma.recurringBill.findMany({
+          where: { id: { in: billIdsForBreakdown } },
+          select: { id: true, serviceType: true },
+        })
+      : []
     const billServiceTypeMap = new Map(billsForBreakdown.map((b) => [b.id, b.serviceType]))
 
-    // Aggregate by serviceType
     const serviceTypeMap = new Map<string, { count: number; outstanding: number }>()
     for (const item of serviceTypeBreakdown) {
       const st = billServiceTypeMap.get(item.recurringBillId) || 'custom'
@@ -180,9 +209,6 @@ export async function GET(request: Request) {
     }
 
     // ── Build overdue bills list from overdueBillIds ──
-    // FIX: Fetches bills that have overdue CYCLES (dueDate < now), not just
-    // bills where nextDueDate < now. This correctly identifies bills whose
-    // current billing cycle is past due even if nextDueDate points to the next cycle.
     const overdueBillIdList = overdueBillIds.map((item) => item.recurringBillId)
     const overdueBillsList = overdueBillIdList.length > 0
       ? await prisma.recurringBill.findMany({
@@ -199,8 +225,8 @@ export async function GET(request: Request) {
             },
             cycles: {
               where: {
-                status: { in: ['pending', 'partially_paid', 'overdue'] },
-                dueDate: { lt: now },
+                status: { in: openCycleStatuses },
+                dueDate: { lt: overdueDateThreshold },
               },
               orderBy: { dueDate: 'asc' },
               take: 1,
@@ -227,23 +253,22 @@ export async function GET(request: Request) {
       'lastPaymentAmount',
     ]
 
-    // Build response — all metrics are now cycle-based for consistency
+    // Build response — all metrics scoped to the selected month
     const data = {
+      // Return the selected month context so the frontend knows what's being viewed
+      selectedMonth: targetMonth,
+      selectedYear: targetYear,
+      isCurrentMonth,
       totalBills: activeBills,
-      // FIX: Total Outstanding is now the sum of all open cycle outstandingAmounts
-      // Previously used bill.currentOutstanding which could be inflated/corrupted
       totalOutstanding: financialAccess
         ? safeNumber(outstandingAgg._sum.outstandingAmount)
         : 0,
-      // FIX: Total Due This Month is the sum of open cycle outstandingAmounts
-      // for cycles due this month (was using cycle.amount which ignored partial payments)
       totalDueThisMonth: financialAccess
         ? safeNumber(dueThisMonthAgg._sum.outstandingAmount)
         : 0,
       totalPaidThisMonth: financialAccess
         ? safeNumber(paidThisMonthAgg._sum.amount)
         : 0,
-      // FIX: Overdue count now based on cycle-level dueDate, not bill.nextDueDate
       overdueCount: overdueBillIds.length,
       totalOverdueAmount: financialAccess
         ? safeNumber(overdueAmountAgg._sum.outstandingAmount)

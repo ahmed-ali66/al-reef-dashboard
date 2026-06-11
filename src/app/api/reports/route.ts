@@ -85,17 +85,21 @@ export async function GET(request: Request) {
       utilityOutstandingAggregate,
       utilityDueThisMonthAggregate,
       utilityPaidThisMonthAggregate,
-      utilityServiceBreakdown,
       utilityAccountNumbers,
       utilityOverdueCount,
+      utilityCycleBreakdown,
     ] = await Promise.all([
+      // Count bills with cycles due in target month
       prisma.recurringBill.count({
-        where: { companyId, deletedAt: null, status: 'active' },
+        where: {
+          companyId,
+          deletedAt: null,
+          status: 'active',
+          cycles: { some: { dueDate: { gte: startOfMonth, lte: endOfMonth } } },
+        },
       }),
-      prisma.recurringBill.aggregate({
-        where: { companyId, deletedAt: null, status: 'active' },
-        _sum: { currentOutstanding: true },
-      }),
+      // FIX: Use cycle-level outstandingAmount instead of bill.currentOutstanding
+      // for consistency with the summary API and to avoid inflated/corrupted values
       prisma.billCycle.aggregate({
         where: {
           companyId,
@@ -103,8 +107,19 @@ export async function GET(request: Request) {
           dueDate: { gte: startOfMonth, lte: endOfMonth },
           recurringBill: { deletedAt: null, status: 'active' },
         },
-        _sum: { amount: true },
+        _sum: { outstandingAmount: true },
       }),
+      // Due this month: open cycles due in target month
+      prisma.billCycle.aggregate({
+        where: {
+          companyId,
+          status: { in: ['pending', 'partially_paid', 'overdue'] },
+          dueDate: { gte: startOfMonth, lte: endOfMonth },
+          recurringBill: { deletedAt: null, status: 'active' },
+        },
+        _sum: { outstandingAmount: true },
+      }),
+      // Paid this month: bill payments in target month
       prisma.billPayment.aggregate({
         where: {
           companyId,
@@ -113,30 +128,60 @@ export async function GET(request: Request) {
         },
         _sum: { amount: true },
       }),
-      prisma.recurringBill.groupBy({
-        by: ['serviceType'],
-        where: { companyId, deletedAt: null, status: 'active' },
-        _sum: { currentOutstanding: true },
-        _count: true,
-      }),
-      // Get account numbers for bills grouped by service type
+      // Get account numbers for bills
       prisma.recurringBill.findMany({
         where: { companyId, deletedAt: null, status: 'active', accountNumber: { not: null } },
         select: { serviceType: true, accountNumber: true, providerName: true },
       }),
-      prisma.recurringBill.count({
+      // FIX: Overdue count based on cycle-level dueDate, not bill.nextDueDate
+      prisma.billCycle.findMany({
         where: {
           companyId,
-          deletedAt: null,
-          status: 'active',
-          nextDueDate: { lt: new Date() },
+          status: { in: ['pending', 'partially_paid', 'overdue'] },
+          dueDate: { lt: new Date() },
+          recurringBill: { deletedAt: null, status: 'active' },
         },
+        select: { recurringBillId: true },
+        distinct: ['recurringBillId'],
+      }),
+      // FIX: Service type breakdown from cycle-level data
+      prisma.billCycle.groupBy({
+        by: ['recurringBillId'],
+        where: {
+          companyId,
+          status: { in: ['pending', 'partially_paid', 'overdue'] },
+          dueDate: { gte: startOfMonth, lte: endOfMonth },
+          recurringBill: { deletedAt: null, status: 'active' },
+        },
+        _sum: { outstandingAmount: true },
       }),
     ])
 
-    const utilityOutstanding = safeNumber(utilityOutstandingAggregate._sum.currentOutstanding)
-    const utilityDueThisMonth = safeNumber(utilityDueThisMonthAggregate._sum.amount)
+    // FIX: All utility metrics now use cycle-level data for consistency
+    const utilityOutstanding = safeNumber(utilityOutstandingAggregate._sum.outstandingAmount)
+    const utilityDueThisMonth = safeNumber(utilityDueThisMonthAggregate._sum.outstandingAmount)
     const utilityPaidThisMonth = safeNumber(utilityPaidThisMonthAggregate._sum.amount)
+
+    // Build service type breakdown from cycle-level data
+    const cycleBillIds = utilityCycleBreakdown.map((item: any) => item.recurringBillId)
+    const cycleBillsForBreakdown = cycleBillIds.length > 0
+      ? await prisma.recurringBill.findMany({
+          where: { id: { in: cycleBillIds } },
+          select: { id: true, serviceType: true },
+        })
+      : []
+    const cycleBillServiceTypeMap = new Map(cycleBillsForBreakdown.map((b: any) => [b.id, b.serviceType]))
+
+    const utilityServiceBreakdown = new Map<string, { count: number; outstanding: number }>()
+    for (const item of utilityCycleBreakdown) {
+      const st = cycleBillServiceTypeMap.get(item.recurringBillId) || 'custom'
+      const existing = utilityServiceBreakdown.get(st) || { count: 0, outstanding: 0 }
+      existing.count += 1
+      existing.outstanding += safeNumber(item._sum.outstandingAmount)
+      utilityServiceBreakdown.set(st, existing)
+    }
+
+    const utilityOverdueBillCount = utilityOverdueCount.length
 
     // ─── 2b-2. Cycle aggregation for recurring bills ───
     const utilityCycleAgg = await prisma.billCycle.aggregate({
@@ -298,16 +343,16 @@ export async function GET(request: Request) {
         totalOutstanding: utilityOutstanding,
         totalDueThisMonth: utilityDueThisMonth,
         totalPaidThisMonth: utilityPaidThisMonth,
-        overdueBills: utilityOverdueCount,
-        serviceTypeBreakdown: utilityServiceBreakdown.map((item) => {
+        overdueBills: utilityOverdueBillCount,
+        serviceTypeBreakdown: Array.from(utilityServiceBreakdown.entries()).map(([serviceType, data]) => {
           const accountNums = utilityAccountNumbers
-            .filter((b: any) => b.serviceType === item.serviceType)
+            .filter((b: any) => b.serviceType === serviceType)
             .map((b: any) => ({ provider: b.providerName, accountNumber: b.accountNumber }))
           return {
-            serviceType: item.serviceType,
-            count: item._count,
-            totalAmountDue: safeNumber(item._sum.currentOutstanding),
-            totalOutstanding: safeNumber(item._sum.currentOutstanding),
+            serviceType,
+            count: data.count,
+            totalAmountDue: data.outstanding,
+            totalOutstanding: data.outstanding,
             accountNumbers: accountNums,
           }
         }),

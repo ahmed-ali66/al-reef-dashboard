@@ -27,20 +27,35 @@ const VALID_SERVICE_TYPES = [
   'custom',
 ]
 
-// GET /api/recurring-bills — list recurring bills with pagination and filtering (non-deleted) for the company
+// Service type sort order — defines the tertiary sort for Building > Unit > Type
+const SERVICE_TYPE_SORT_ORDER: Record<string, number> = {
+  electricity: 1,
+  water: 2,
+  etisalat: 3,
+  du: 4,
+  internet: 5,
+  municipality: 6,
+  service_charge: 7,
+  waste: 8,
+  maintenance_contract: 9,
+  security_contract: 10,
+  cleaning_contract: 11,
+  custom: 12,
+}
+
+// GET /api/recurring-bills — list recurring bills with pagination and filtering
 // Query params:
 //   - serviceType: filter by service type
 //   - status: filter by status (active, paused, cancelled)
 //   - propertyId: filter by property
-//   - overdue: boolean — bills where nextDueDate < today and status = active
+//   - overdue: boolean — bills with overdue cycles
 //   - upcoming: boolean — bills due in next 30 days
+//   - month: target month (1-12) — filters bills with cycles due in this month
+//   - year: target year — combined with month for monthly context
 export async function GET(request: Request) {
   try {
     const user = await getAuthUser()
     if (!user) return unauthorizedResponse()
-
-    // All authenticated users can view recurring bills
-    // Staff see amounts masked (handled below)
 
     const { searchParams } = new URL(request.url)
     const pagination = parsePaginationParams(searchParams)
@@ -49,23 +64,54 @@ export async function GET(request: Request) {
     const propertyId = searchParams.get('propertyId')?.trim() || undefined
     const overdue = searchParams.get('overdue')?.trim() === 'true'
     const upcoming = searchParams.get('upcoming')?.trim() === 'true'
+    const targetMonth = searchParams.get('month')?.trim()
+    const targetYear = searchParams.get('year')?.trim()
+
+    const now = new Date()
 
     const where: any = {
       companyId: user.companyId,
-      deletedAt: null, // exclude soft-deleted
+      deletedAt: null,
     }
 
     if (serviceType) where.serviceType = serviceType
     if (status) where.status = status
     if (propertyId) where.propertyId = propertyId
 
-    const now = new Date()
+    // Month/year filtering: only show bills with cycles due in the selected month
+    if (targetMonth && targetYear) {
+      const m = parseInt(targetMonth)
+      const y = parseInt(targetYear)
+      const monthStart = new Date(y, m - 1, 1)
+      const monthEnd = new Date(y, m, 0, 23, 59, 59, 999)
 
-    if (overdue) {
-      // FIX: Use cycle-level overdue detection instead of bill-level nextDueDate.
-      // A bill is overdue if it has any open cycle (pending/partially_paid/overdue)
-      // with dueDate < now. The old logic checked bill.nextDueDate which misses
-      // bills whose current cycle is past due but nextDueDate was already advanced.
+      // If we already have a cycles filter (overdue/upcoming), merge conditions
+      if (overdue) {
+        where.status = 'active'
+        where.cycles = {
+          some: {
+            status: { in: ['pending', 'partially_paid', 'overdue'] },
+            dueDate: { lt: now, gte: monthStart, lte: monthEnd },
+          },
+        }
+      } else if (upcoming) {
+        const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+        where.status = 'active'
+        where.cycles = {
+          some: {
+            status: { in: ['pending', 'partially_paid', 'overdue'] },
+            dueDate: { gte: now, lte: thirtyDaysFromNow },
+          },
+        }
+      } else {
+        // Default: bills with any cycle due in the selected month
+        where.cycles = {
+          some: {
+            dueDate: { gte: monthStart, lte: monthEnd },
+          },
+        }
+      }
+    } else if (overdue) {
       where.status = 'active'
       where.cycles = {
         some: {
@@ -74,8 +120,6 @@ export async function GET(request: Request) {
         },
       }
     } else if (upcoming) {
-      // FIX: Use cycle-level upcoming detection for consistency.
-      // A bill is upcoming if it has any open cycle due within 30 days from now.
       const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
       where.status = 'active'
       where.cycles = {
@@ -85,6 +129,23 @@ export async function GET(request: Request) {
         },
       }
     }
+
+    // Determine month boundaries for cycle filtering
+    let cycleMonthFilter: any = undefined
+    if (targetMonth && targetYear) {
+      const m = parseInt(targetMonth)
+      const y = parseInt(targetYear)
+      const monthStart = new Date(y, m - 1, 1)
+      const monthEnd = new Date(y, m, 0, 23, 59, 59, 999)
+      cycleMonthFilter = { dueDate: { gte: monthStart, lte: monthEnd } }
+    }
+
+    const cycleWhere = cycleMonthFilter
+      ? {
+          status: { in: ['pending', 'partially_paid', 'overdue'] },
+          ...cycleMonthFilter,
+        }
+      : { status: { in: ['pending', 'partially_paid', 'overdue'] } }
 
     const [bills, total] = await Promise.all([
       prisma.recurringBill.findMany({
@@ -103,7 +164,7 @@ export async function GET(request: Request) {
             select: { payments: true },
           },
           cycles: {
-            where: { status: { in: ['pending', 'partially_paid', 'overdue'] } },
+            where: cycleWhere,
             orderBy: { dueDate: 'desc' },
             take: 1,
             include: {
@@ -111,7 +172,12 @@ export async function GET(request: Request) {
             },
           },
         },
-        orderBy: { nextDueDate: 'asc' },
+        // Primary sort: property name (building), then buildingName, then serviceType
+        orderBy: [
+          { property: { name: 'asc' } },
+          { buildingName: 'asc' },
+          { serviceType: 'asc' },
+        ],
         skip: pagination.skip,
         take: pagination.limit,
       }),
@@ -128,14 +194,10 @@ export async function GET(request: Request) {
     ]
     const serializedBills = bills.map(serialize).map((bill: any) => {
       // Fix totalAmountDue: derive from the latest open cycle's amount
-      // This ensures consistency even for bills where totalAmountDue was
-      // incorrectly overwritten to equal currentOutstanding after payments
       if (bill.cycles && bill.cycles.length > 0) {
-        const latestCycle = bill.cycles[0] // cycles are ordered by dueDate desc
+        const latestCycle = bill.cycles[0]
         const cycleAmount = parseFloat(String(latestCycle.amount))
         const storedTotalDue = parseFloat(String(bill.totalAmountDue))
-        // If totalAmountDue equals currentOutstanding (the bug pattern),
-        // or is zero, use the cycle amount instead
         if (storedTotalDue <= parseFloat(String(bill.currentOutstanding)) || storedTotalDue === 0) {
           bill.totalAmountDue = cycleAmount
         }
@@ -162,7 +224,6 @@ export async function POST(request: Request) {
     const user = await getAuthUser()
     if (!user) return unauthorizedResponse()
 
-    // All authenticated users can create recurring bills
     const body = await request.json()
 
     const {
@@ -182,21 +243,18 @@ export async function POST(request: Request) {
       propertyManager,
     } = body
 
-    // Validate required fields
     if (!propertyId) return errorResponse('propertyId is required')
     if (!providerName) return errorResponse('providerName is required')
     if (!serviceType) return errorResponse('serviceType is required')
     if (!nextDueDate) return errorResponse('nextDueDate is required')
     if (!billingFrequency) return errorResponse('billingFrequency is required')
 
-    // Validate serviceType
     if (!VALID_SERVICE_TYPES.includes(serviceType)) {
       return errorResponse(
         `serviceType must be one of: ${VALID_SERVICE_TYPES.join(', ')}`
       )
     }
 
-    // Validate property belongs to company
     const property = await prisma.property.findFirst({
       where: { id: propertyId, companyId: user.companyId, deletedAt: null },
     })
@@ -204,7 +262,7 @@ export async function POST(request: Request) {
       return errorResponse('Property not found or does not belong to your company', 404)
     }
 
-    // Check for duplicate account number within same company
+    // Check for duplicate account number
     if (accountNumber && accountNumber.trim()) {
       const existingBill = await prisma.recurringBill.findFirst({
         where: {
@@ -224,12 +282,10 @@ export async function POST(request: Request) {
       }
     }
 
-    // PHASE 3: Use safeDecimal for monetary precision
     const parsedCurrentOutstanding = safeDecimal(currentOutstanding || 0)
     if (parsedCurrentOutstanding < 0)
       return errorResponse('currentOutstanding cannot be negative')
 
-    // totalAmountDue = currentOutstanding (what is owed right now)
     const totalAmountDue = parsedCurrentOutstanding
 
     const bill = await prisma.recurringBill.create({
@@ -271,7 +327,7 @@ export async function POST(request: Request) {
       data: {
         companyId: user.companyId,
         recurringBillId: bill.id,
-        periodStart: new Date(new Date(nextDueDate).getTime() - 30 * 24 * 60 * 60 * 1000), // approximate
+        periodStart: new Date(new Date(nextDueDate).getTime() - 30 * 24 * 60 * 60 * 1000),
         periodEnd: new Date(new Date(nextDueDate).getTime() - 24 * 60 * 60 * 1000),
         dueDate: new Date(nextDueDate),
         amount: totalAmountDue,
@@ -281,7 +337,6 @@ export async function POST(request: Request) {
       },
     })
 
-    // Audit log
     await createAuditLog({
       action: 'CREATE',
       entity: 'RecurringBill',

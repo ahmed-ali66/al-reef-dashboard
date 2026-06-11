@@ -561,6 +561,7 @@ export const translations = {
   softDeletedRecords: { en: 'Soft-deleted Records', ar: 'السجلات المحذوفة مؤقتاً', bn: 'সফট-ডিলিটেড রেকর্ড', ur: 'نرم حذف شدہ ریکارڈز' },
 
   // Recurring Bills & Utilities
+  currentMonth: { en: 'Current Month', ar: 'الشهر الحالي', bn: 'বর্তমান মাস', ur: 'موجودہ مہینہ' },
   recurringBills: { en: 'Recurring Bills', ar: 'الفواتير المتكررة', bn: 'পুনরাবৃত্তি বিল', ur: 'بار بار آنے والے بل' },
   recurringBillsAndUtilities: { en: 'Recurring Bills & Utilities', ar: 'الفواتير المتكررة والمرافق', bn: 'পুনরাবৃত্তি বিল ও ইউটিলিটি', ur: 'بار بار آنے والے بل اور سہولیات' },
   addRecurringBill: { en: 'Add Recurring Bill', ar: 'إضافة فاتورة متكررة', bn: 'পুনরাবৃত্তি বিল যোগ করুন', ur: 'بار بار آنے والا بل شامل کریں' },

@@ -24,6 +24,8 @@ export async function GET(request: Request) {
     const statusFilter = searchParams.get('status')?.trim() || undefined
     const dateFrom = searchParams.get('dateFrom')?.trim() || undefined
     const dateTo = searchParams.get('dateTo')?.trim() || undefined
+    const targetMonth = searchParams.get('month')?.trim() || undefined
+    const targetYear = searchParams.get('year')?.trim() || undefined
 
     const where: any = {
       companyId: user.companyId,
@@ -33,7 +35,19 @@ export async function GET(request: Request) {
     if (serviceType) where.serviceType = serviceType
     if (statusFilter) where.status = statusFilter
 
-    if (dateFrom || dateTo) {
+    // Month/year filtering: filter bills by cycles due in the selected month
+    if (targetMonth && targetYear) {
+      const m = parseInt(targetMonth)
+      const y = parseInt(targetYear)
+      const monthStart = new Date(y, m - 1, 1)
+      const monthEnd = new Date(y, m, 0, 23, 59, 59, 999)
+      where.cycles = {
+        some: {
+          dueDate: { gte: monthStart, lte: monthEnd },
+        },
+      }
+    } else if (dateFrom || dateTo) {
+      // Legacy date range filter (uses bill.nextDueDate for backward compatibility)
       where.nextDueDate = {}
       if (dateFrom) where.nextDueDate.gte = new Date(dateFrom)
       if (dateTo) where.nextDueDate.lte = new Date(dateTo + 'T23:59:59.999')
@@ -62,7 +76,12 @@ export async function GET(request: Request) {
             },
           },
         },
-        orderBy: { nextDueDate: 'asc' },
+        // Sort: Building (property name) > Building Name > Service Type
+        orderBy: [
+          { property: { name: 'asc' } },
+          { buildingName: 'asc' },
+          { serviceType: 'asc' },
+        ],
       }),
       prisma.company.findUnique({
         where: { id: user.companyId },

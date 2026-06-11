@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import type { RecurringBillData, BillPaymentData, BillCycleData, PropertyData } from '@/lib/types'
 import { useAppStore, isOwnerOrAdmin } from '@/lib/store'
 import { formatAED, formatDate } from '@/lib/utils'
-import { t, getServiceTypeLabel, getFrequencyLabel, getNameByLang, type Language } from '@/lib/i18n'
+import { t, getServiceTypeLabel, getFrequencyLabel, getNameByLang, getMonthName, type Language } from '@/lib/i18n'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,7 +16,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from '@/components/ui/textarea'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Zap, Plus, Pencil, Trash2, CreditCard, FastForward, Loader2, ShieldAlert, Search, AlertTriangle, FileDown, FileSpreadsheet, Calendar, X, History, ChevronRight } from 'lucide-react'
+import { Zap, Plus, Pencil, Trash2, CreditCard, FastForward, Loader2, ShieldAlert, Search, AlertTriangle, FileDown, FileSpreadsheet, Calendar, X, History, ChevronRight, ChevronLeft } from 'lucide-react'
 
 const SERVICE_TYPES = [
   'electricity', 'water', 'etisalat', 'du', 'internet',
@@ -66,6 +66,12 @@ export default function RecurringBills() {
   const [activeTab, setActiveTab] = useState<TabType>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [serviceFilter, setServiceFilter] = useState('all')
+
+  // Monthly billing cycle context
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const now = new Date()
+    return { month: now.getMonth() + 1, year: now.getFullYear() }
+  })
 
   // Date range filter
   const [datePreset, setDatePreset] = useState<DatePreset>('30d')
@@ -118,6 +124,8 @@ export default function RecurringBills() {
     try {
       const params = new URLSearchParams()
       params.set('limit', '1000')
+      params.set('month', String(selectedMonth.month))
+      params.set('year', String(selectedMonth.year))
 
       // Server-side filters for basic tabs
       if (activeTab === 'upcoming') {
@@ -139,9 +147,13 @@ export default function RecurringBills() {
         params.set('dateTo', customDateTo)
       }
 
+      const summaryParams = new URLSearchParams()
+      summaryParams.set('month', String(selectedMonth.month))
+      summaryParams.set('year', String(selectedMonth.year))
+
       const [billsRes, summaryRes, propsRes] = await Promise.all([
         fetch(`/api/recurring-bills?${params.toString()}`),
-        fetch('/api/recurring-bills/summary'),
+        fetch(`/api/recurring-bills/summary?${summaryParams.toString()}`),
         fetch('/api/properties?limit=1000'),
       ])
 
@@ -164,7 +176,7 @@ export default function RecurringBills() {
     } finally {
       setLoading(false)
     }
-  }, [activeTab, serviceFilter, customDateFrom, customDateTo])
+  }, [activeTab, serviceFilter, customDateFrom, customDateTo, selectedMonth])
 
   useEffect(() => { fetchBills() }, [fetchBills])
 
@@ -173,6 +185,8 @@ export default function RecurringBills() {
     try {
       const params = new URLSearchParams()
       params.set('limit', '1000')
+      params.set('month', String(selectedMonth.month))
+      params.set('year', String(selectedMonth.year))
       if (serviceFilter !== 'all') params.set('serviceType', serviceFilter)
       if (searchQuery) params.set('search', searchQuery)
 
@@ -186,7 +200,7 @@ export default function RecurringBills() {
     } catch (e) {
       console.error('Failed to fetch all payments:', e)
     }
-  }, [serviceFilter, searchQuery])
+  }, [serviceFilter, searchQuery, selectedMonth])
 
   useEffect(() => {
     if (activeTab === 'payments') fetchAllPayments()
@@ -305,6 +319,54 @@ export default function RecurringBills() {
       (bill.property && getNameByLang(bill.property, lang).toLowerCase().includes(q))
     )
   })
+
+  // ─── Sorting: Building > Unit > Service Type ───
+  const SERVICE_TYPE_SORT: Record<string, number> = {
+    electricity: 1, water: 2, etisalat: 3, du: 4, internet: 5,
+    municipality: 6, service_charge: 7, waste: 8, maintenance_contract: 9,
+    security_contract: 10, cleaning_contract: 11, custom: 12,
+  }
+
+  const sortBills = (a: RecurringBillData, b: RecurringBillData): number => {
+    // Primary: Property name (building)
+    const buildingA = a.property ? getNameByLang(a.property, lang).toLowerCase() : (a.buildingName || '').toLowerCase()
+    const buildingB = b.property ? getNameByLang(b.property, lang).toLowerCase() : (b.buildingName || '').toLowerCase()
+    if (buildingA < buildingB) return -1
+    if (buildingA > buildingB) return 1
+
+    // Secondary: buildingName field (for sub-units within the same property)
+    const bnA = (a.buildingName || '').toLowerCase()
+    const bnB = (b.buildingName || '').toLowerCase()
+    if (bnA < bnB) return -1
+    if (bnA > bnB) return 1
+
+    // Tertiary: Service type
+    const stA = SERVICE_TYPE_SORT[a.serviceType] || 99
+    const stB = SERVICE_TYPE_SORT[b.serviceType] || 99
+    return stA - stB
+  }
+
+  const sortedFiltered = [...filtered].sort(sortBills)
+
+  // ─── Month navigation ───
+  const navigateMonth = (delta: number) => {
+    setSelectedMonth(prev => {
+      let newMonth = prev.month + delta
+      let newYear = prev.year
+      if (newMonth > 12) { newMonth = 1; newYear++ }
+      if (newMonth < 1) { newMonth = 12; newYear-- }
+      return { month: newMonth, year: newYear }
+    })
+  }
+
+  const quickNav = (target: 'prev' | 'current' | 'next') => {
+    if (target === 'current') {
+      const now = new Date()
+      setSelectedMonth({ month: now.getMonth() + 1, year: now.getFullYear() })
+    } else {
+      navigateMonth(target === 'prev' ? -1 : 1)
+    }
+  }
 
   // ─── Count helpers ───
   const paidCount = bills.filter(b => isPaid(b)).length
@@ -593,6 +655,8 @@ export default function RecurringBills() {
     setExporting(true)
     try {
       const params = new URLSearchParams()
+      params.set('month', String(selectedMonth.month))
+      params.set('year', String(selectedMonth.year))
       if (serviceFilter !== 'all') params.set('serviceType', serviceFilter)
       if (activeTab === 'custom_range' && customDateFrom) params.set('dateFrom', customDateFrom)
       if (activeTab === 'custom_range' && customDateTo) params.set('dateTo', customDateTo)
@@ -621,6 +685,8 @@ export default function RecurringBills() {
     setExporting(true)
     try {
       const params = new URLSearchParams()
+      params.set('month', String(selectedMonth.month))
+      params.set('year', String(selectedMonth.year))
       if (serviceFilter !== 'all') params.set('serviceType', serviceFilter)
       if (activeTab === 'custom_range' && customDateFrom) params.set('dateFrom', customDateFrom)
       if (activeTab === 'custom_range' && customDateTo) params.set('dateTo', customDateTo)
@@ -726,7 +792,7 @@ export default function RecurringBills() {
             {t('recurringBillsAndUtilities', lang)}
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            {totalBills} {t('recurringBills', lang).toLowerCase()}
+            {totalBills} {t('recurringBills', lang).toLowerCase()} — {getMonthName(selectedMonth.month, lang)} {selectedMonth.year}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -757,6 +823,34 @@ export default function RecurringBills() {
           <Button onClick={openNew} className="bg-emerald hover:bg-emerald/90 text-white">
             <Plus className="w-4 h-4 mr-2" />
             {t('addRecurringBill', lang)}
+          </Button>
+        </div>
+      </div>
+
+      {/* Monthly Billing Cycle Navigation */}
+      <div className="flex items-center justify-center gap-3 py-2">
+        <Button variant="ghost" size="sm" onClick={() => navigateMonth(-1)}>
+          <ChevronLeft className="w-4 h-4" />
+        </Button>
+        <div className="text-center min-w-[160px]">
+          <p className="text-lg font-bold">{getMonthName(selectedMonth.month, lang)} {selectedMonth.year}</p>
+          {summary?.isCurrentMonth && (
+            <Badge className="bg-emerald-100 text-emerald-800 text-xs">{t('currentMonth', lang) || 'Current'}</Badge>
+          )}
+        </div>
+        <Button variant="ghost" size="sm" onClick={() => navigateMonth(1)}>
+          <ChevronRight className="w-4 h-4" />
+        </Button>
+        {/* Quick month buttons: prev month, current month, next month */}
+        <div className="flex gap-1 ml-2">
+          <Button variant="outline" size="sm" className="text-xs h-7" onClick={() => quickNav('prev')}>
+            {getMonthName(selectedMonth.month === 1 ? 12 : selectedMonth.month - 1, lang)}
+          </Button>
+          <Button variant="default" size="sm" className="text-xs h-7 bg-emerald hover:bg-emerald/90" onClick={() => quickNav('current')}>
+            {t('currentMonth', lang) || 'Current'}
+          </Button>
+          <Button variant="outline" size="sm" className="text-xs h-7" onClick={() => quickNav('next')}>
+            {getMonthName(selectedMonth.month === 12 ? 1 : selectedMonth.month + 1, lang)}
           </Button>
         </div>
       </div>
@@ -1129,7 +1223,7 @@ export default function RecurringBills() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map(bill => {
+                {sortedFiltered.map(bill => {
                   const overdue = isOverdue(bill)
                   const overdueDays = overdue ? getOverdueDays(bill.nextDueDate) : 0
                   const daysRemaining = getDaysRemaining(bill.nextDueDate)
@@ -1308,7 +1402,7 @@ export default function RecurringBills() {
               </TableBody>
             </Table>
           </div>
-          {filtered.length === 0 && (
+          {sortedFiltered.length === 0 && (
             <div className="text-center py-8 text-muted-foreground">
               {t('noData', lang)}
             </div>

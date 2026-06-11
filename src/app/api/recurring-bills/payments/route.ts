@@ -11,6 +11,7 @@ import {
 } from '@/lib/api-utils'
 
 // GET /api/recurring-bills/payments — list ALL payments across all bills for the company
+// Supports month/year params for monthly context filtering
 export async function GET(request: Request) {
   try {
     const user = await getAuthUser()
@@ -25,13 +26,22 @@ export async function GET(request: Request) {
     const dateTo = searchParams.get('dateTo')
     const paymentMethod = searchParams.get('paymentMethod') || undefined
     const search = searchParams.get('search') || undefined
+    const targetMonth = searchParams.get('month')?.trim()
+    const targetYear = searchParams.get('year')?.trim()
 
     const where: any = {
       companyId: user.companyId,
     }
 
-    // Filter by date range on payment date
-    if (dateFrom || dateTo) {
+    // Month/year filtering for payments: filter by paymentDate within the selected month
+    if (targetMonth && targetYear) {
+      const m = parseInt(targetMonth)
+      const y = parseInt(targetYear)
+      const monthStart = new Date(y, m - 1, 1)
+      const monthEnd = new Date(y, m, 0, 23, 59, 59, 999)
+      where.paymentDate = { gte: monthStart, lte: monthEnd }
+    } else if (dateFrom || dateTo) {
+      // Legacy date range filter
       where.paymentDate = {}
       if (dateFrom) where.paymentDate.gte = new Date(dateFrom)
       if (dateTo) where.paymentDate.lte = new Date(dateTo + 'T23:59:59.999')
@@ -77,6 +87,9 @@ export async function GET(request: Request) {
               accountNumber: true,
               currentOutstanding: true,
               totalAmountDue: true,
+              property: {
+                select: { id: true, name: true, nameAr: true, nameBn: true, nameUr: true },
+              },
             },
           },
           billCycle: {
