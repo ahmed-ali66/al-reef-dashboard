@@ -215,7 +215,7 @@ export default function RecurringBills() {
   // while the current cycle is already past due.
   const getEarliestOpenCycleDueDate = (bill: RecurringBillData): Date | null => {
     if (!bill.cycles || bill.cycles.length === 0) return null
-    // cycles are loaded with status in ['pending','partially_paid','overdue'], ordered by dueDate desc
+    // cycles are loaded with status in ['pending','partially_paid','overdue'], ordered by dueDate asc
     // Find the earliest open cycle dueDate
     const openCycles = bill.cycles.filter(c =>
       c.status === 'pending' || c.status === 'partially_paid' || c.status === 'overdue'
@@ -756,10 +756,11 @@ export default function RecurringBills() {
   const totalBills = summary?.totalBills ?? bills.filter(b => b.status === 'active').length
   const totalOutstanding = summary?.totalOutstanding ?? bills.reduce((s, b) => s + b.currentOutstanding, 0)
   const totalDueThisMonth = summary?.totalDueThisMonth ?? bills.reduce((s, b) => {
-    // Sum full cycle amounts for active bills with open cycles (matching API logic)
+    // Sum outstandingAmount for active bills with open cycles (matching API logic)
+    // Total Due = what's actually owed, identical to outstanding in a fresh system
     if (b.status !== 'active') return s
     if (!b.cycles || b.cycles.length === 0) return s
-    return s + b.cycles.reduce((cs, c) => cs + (parseFloat(String(c.amount)) || 0), 0)
+    return s + b.cycles.reduce((cs, c) => cs + (parseFloat(String(c.outstandingAmount)) || 0), 0)
   }, 0)
   const totalPaidThisMonth = summary?.totalPaidThisMonth ?? 0
 

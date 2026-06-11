@@ -95,14 +95,15 @@ export async function GET(request: Request) {
         _sum: { outstandingAmount: true },
       }),
 
-      // totalDueThisMonth: sum of full cycle amounts (not outstanding) for open cycles
-      // due in the selected month. This is the gross bill obligation, not the net remaining.
+      // totalDueThisMonth: sum of outstandingAmount for open cycles due in the selected month.
+      // This is what's actually owed — identical to totalOutstanding in a fresh system,
+      // and diverges only when partial payments leave a remaining balance.
       prisma.billCycle.aggregate({
         where: {
           ...cycleDueThisMonth,
           status: { in: openCycleStatuses },
         },
-        _sum: { amount: true },
+        _sum: { outstandingAmount: true },
       }),
 
       // totalOverdueAmount: open cycles due BEFORE the threshold (now for current month,
@@ -267,7 +268,7 @@ export async function GET(request: Request) {
         ? safeNumber(outstandingAgg._sum.outstandingAmount)
         : 0,
       totalDueThisMonth: financialAccess
-        ? safeNumber(dueThisMonthAgg._sum.amount)
+        ? safeNumber(dueThisMonthAgg._sum.outstandingAmount)
         : 0,
       totalPaidThisMonth: financialAccess
         ? safeNumber(paidThisMonthAgg._sum.amount)

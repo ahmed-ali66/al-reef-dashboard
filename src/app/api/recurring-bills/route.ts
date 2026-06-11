@@ -133,22 +133,13 @@ export async function GET(request: Request) {
       }
     }
 
-    // Determine month boundaries for cycle filtering
-    let cycleMonthFilter: any = undefined
-    if (targetMonth && targetYear) {
-      const m = parseInt(targetMonth)
-      const y = parseInt(targetYear)
-      const monthStart = new Date(y, m - 1, 1)
-      const monthEnd = new Date(y, m, 0, 23, 59, 59, 999)
-      cycleMonthFilter = { dueDate: { gte: monthStart, lte: monthEnd } }
+    // Cycle loading: ALWAYS return ALL open cycles regardless of month filter.
+    // The month filter is applied at the bill level (which bills to show),
+    // but cycles must include ALL open cycles so the frontend can correctly
+    // determine overdue/due-soon status from the earliest open cycle.
+    const openCycleWhere = {
+      status: { in: ['pending', 'partially_paid', 'overdue'] as string[] },
     }
-
-    const cycleWhere = cycleMonthFilter
-      ? {
-          status: { in: ['pending', 'partially_paid', 'overdue'] },
-          ...cycleMonthFilter,
-        }
-      : { status: { in: ['pending', 'partially_paid', 'overdue'] } }
 
     const [bills, total] = await Promise.all([
       prisma.recurringBill.findMany({
@@ -167,9 +158,9 @@ export async function GET(request: Request) {
             select: { payments: true },
           },
           cycles: {
-            where: cycleWhere,
-            orderBy: { dueDate: 'desc' },
-            take: 1,
+            where: openCycleWhere,
+            orderBy: { dueDate: 'asc' },
+            take: 20,
             include: {
               _count: { select: { payments: true } },
             },
