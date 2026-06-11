@@ -479,3 +479,43 @@ Stage Summary:
 - Admin auth diagnostic tools added, NEXTAUTH_SECRET fixed
 - Deployment URL: https://al-reef-al-junoobi.vercel.app
 - No production data modified, no demo data created
+
+---
+Task ID: auth-stabilization-p1
+Agent: Main Agent
+Task: Critical Production Issue - Authentication & Login System Stabilization (P1)
+
+Work Log:
+- Conducted comprehensive end-to-end authentication audit of 22+ files
+- Identified 5 root causes for intermittent authentication failures:
+  1. No error handling in authorize() - DB connection failures in Vercel serverless (Neon PostgreSQL cold starts) caused unhandled exceptions that appeared as "Invalid Username or Password"
+  2. Rate limiting race conditions - recordFailedAttempt() used read-then-write pattern allowing concurrent requests to bypass counting; resetAt kept extending on every failure
+  3. cleanupExpiredEntries() ran on every cold start (lastCleanup variable resets in serverless) causing unnecessary DB load and potential deletion of valid lockout entries
+  4. No middleware/proxy protection for API routes - auth checks only in route handlers
+  5. Self-service password reset had weaker policy (6 chars) than admin-created (8 chars + uppercase + number) and TOCTOU race condition on token consumption
+- Implemented comprehensive fix in auth.ts:
+  - Added withRetry() helper with automatic retry for transient DB connection errors (2 retries, exponential backoff)
+  - Added try-catch around all DB operations in authorize() - DB failures no longer record false failed attempts
+  - Fixed rate limiting: don't extend resetAt on repeated failures, don't extend lockout duration on failures after already locked
+  - Replaced module-level lastCleanup with DB-backed coordination lock for serverless-safe periodic cleanup
+  - Added email format validation before DB lookup
+  - Added auth health monitoring metrics (getAuthMetrics) for observability
+- Created /api/auth/health endpoint for admin monitoring (DB connectivity, NEXTAUTH_SECRET status, rate limit stats, auth metrics)
+- Updated proxy.ts with explicit auth route handling, public route whitelist, and 401 protection for all /api/* routes
+- Fixed self-service password reset: enforced same policy (8 chars, uppercase, number), used atomic token consumption (updateMany with WHERE usedAt=null) to prevent TOCTOU reuse
+- Fixed diagnose endpoint: reduced info disclosure for non-admin users, added DB error handling with graceful degradation
+- Updated seed.ts to create all 4 accounts with correct password Alreef@2025 and clear stale rate limits
+- Created scripts/fix-auth.ts for production database repair (reset passwords, clear lockouts, verify accounts)
+- Created e2e/auth.spec.ts comprehensive test suite: login for each role, session persistence, email case insensitivity, concurrent sessions, RBAC validation, wrong password handling
+- Updated login.tsx with server_error error type for DB connectivity issues
+- Ran fix-auth script against production Neon PostgreSQL: ALL 4 accounts verified PASS
+- Pushed to GitHub (2 commits), deployed to Vercel al-reef-al-junoobi
+- Playwright E2E tests: 8/8 passing on production (4 role logins, session persistence, case insensitivity, empty field validation, wrong password)
+
+Stage Summary:
+- ROOT CAUSE: Intermittent failures were caused by (a) Neon PostgreSQL cold start latency causing unhandled exceptions in authorize(), (b) rate limiting false lockouts from race conditions, (c) serverless-incompatible cleanup logic deleting valid entries
+- ALL 4 production accounts verified: owner@alreef.ae, admin@alreef.ae, accountant@alreef.ae, staff@alreef.ae all authenticate successfully with Alreef@2025
+- New monitoring: /api/auth/health endpoint provides real-time auth system diagnostics
+- New test coverage: 16 automated E2E test cases for authentication stability
+- Deployment URL: https://al-reef-al-junoobi.vercel.app
+- Commits: 818b25d, a1babee
