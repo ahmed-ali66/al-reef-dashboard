@@ -7,6 +7,7 @@ import {
   unauthorizedResponse,
   isFinancialUser,
   safeNumber,
+  safeDecimal,
 } from '@/lib/api-utils'
 
 // GET /api/recurring-bills/summary — dashboard summary data for recurring bills
@@ -34,9 +35,10 @@ export async function GET(request: Request) {
       activeBills,
       outstandingAgg,
       dueThisMonthAgg,
+      overdueAmountAgg,
       paidThisMonthAgg,
       upcomingBills,
-      overdueBills,
+      overdueBillIds,
       serviceTypeBreakdown,
       cycleAgg,
     ] = await Promise.all([
@@ -45,14 +47,20 @@ export async function GET(request: Request) {
         where: { ...baseWhere, status: 'active' },
       }),
 
-      // totalOutstanding: sum of currentOutstanding across active bills
-      prisma.recurringBill.aggregate({
-        where: { ...baseWhere, status: 'active' },
-        _sum: { currentOutstanding: true },
+      // totalOutstanding: sum of cycle outstandingAmount across open cycles of active bills
+      // This replaces the old bill-level currentOutstanding aggregate to ensure
+      // consistency with the cycle-based "Due" metric and to avoid inflated values
+      // from bills where currentOutstanding was corrupted by prior bugs
+      prisma.billCycle.aggregate({
+        where: {
+          companyId: user.companyId,
+          status: { in: ['pending', 'partially_paid', 'overdue'] },
+          recurringBill: { status: 'active', deletedAt: null },
+        },
+        _sum: { outstandingAmount: true },
       }),
 
-      // totalDueThisMonth: sum of latest cycle amount for bills due this month
-      // Uses cycle amount instead of bill.totalAmountDue to avoid corrupted data
+      // totalDueThisMonth: sum of open cycle amounts due this month
       prisma.billCycle.aggregate({
         where: {
           companyId: user.companyId,
@@ -60,7 +68,18 @@ export async function GET(request: Request) {
           dueDate: { gte: monthStart, lte: monthEnd },
           recurringBill: { status: 'active', deletedAt: null },
         },
-        _sum: { amount: true },
+        _sum: { outstandingAmount: true },
+      }),
+
+      // totalOverdueAmount: sum of cycle outstandingAmount for overdue cycles (dueDate < now)
+      prisma.billCycle.aggregate({
+        where: {
+          companyId: user.companyId,
+          status: { in: ['pending', 'partially_paid', 'overdue'] },
+          dueDate: { lt: now },
+          recurringBill: { status: 'active', deletedAt: null },
+        },
+        _sum: { outstandingAmount: true },
       }),
 
       // totalPaidThisMonth: sum of BillPayment amounts this month (exclude deleted bills)
@@ -73,12 +92,17 @@ export async function GET(request: Request) {
         _sum: { amount: true },
       }),
 
-      // upcomingBills: next 5 bills by due date (with property info)
+      // upcomingBills: next 5 bills by EARLIEST open cycle due date
       prisma.recurringBill.findMany({
         where: {
           ...baseWhere,
           status: 'active',
-          nextDueDate: { gte: now },
+          cycles: {
+            some: {
+              status: { in: ['pending', 'partially_paid', 'overdue'] },
+              dueDate: { gte: now },
+            },
+          },
         },
         include: {
           property: {
@@ -89,45 +113,42 @@ export async function GET(request: Request) {
               nameBn: true,
               nameUr: true,
             },
+          },
+          cycles: {
+            where: { status: { in: ['pending', 'partially_paid', 'overdue'] } },
+            orderBy: { dueDate: 'asc' },
+            take: 1,
           },
         },
         orderBy: { nextDueDate: 'asc' },
         take: 5,
       }),
 
-      // overdueBills: bills where nextDueDate < today and status = active
-      prisma.recurringBill.findMany({
+      // overdueBillIds: distinct bill IDs that have open cycles with dueDate < now
+      // FIX: Uses cycle-level dueDate instead of bill-level nextDueDate
+      prisma.billCycle.findMany({
         where: {
-          ...baseWhere,
-          status: 'active',
-          nextDueDate: { lt: now },
+          companyId: user.companyId,
+          status: { in: ['pending', 'partially_paid', 'overdue'] },
+          dueDate: { lt: now },
+          recurringBill: { status: 'active', deletedAt: null },
         },
-        include: {
-          property: {
-            select: {
-              id: true,
-              name: true,
-              nameAr: true,
-              nameBn: true,
-              nameUr: true,
-            },
-          },
-        },
-        orderBy: { nextDueDate: 'asc' },
+        select: { recurringBillId: true },
+        distinct: ['recurringBillId'],
       }),
 
-      // Group by serviceType for breakdown using cycle amounts
-      // We query bills grouped by serviceType but use cycle amounts for accuracy
-      prisma.recurringBill.groupBy({
-        by: ['serviceType'],
-        where: { ...baseWhere, status: 'active' },
-        _sum: {
-          currentOutstanding: true,
+      // Group by serviceType for breakdown using cycle outstanding amounts
+      prisma.billCycle.groupBy({
+        by: ['recurringBillId'],
+        where: {
+          companyId: user.companyId,
+          status: { in: ['pending', 'partially_paid', 'overdue'] },
+          recurringBill: { status: 'active', deletedAt: null },
         },
-        _count: true,
+        _sum: { outstandingAmount: true },
       }),
 
-      // Cycle-level aggregation (exclude deleted bills)
+      // Cycle-level aggregation (all open cycles, exclude deleted bills)
       prisma.billCycle.aggregate({
         where: {
           companyId: user.companyId,
@@ -138,6 +159,56 @@ export async function GET(request: Request) {
         _count: true,
       }),
     ])
+
+    // ── Build service type breakdown from cycle data ──
+    // We grouped cycles by recurringBillId; now look up each bill's serviceType
+    const billIdsForBreakdown = serviceTypeBreakdown.map((item) => item.recurringBillId)
+    const billsForBreakdown = await prisma.recurringBill.findMany({
+      where: { id: { in: billIdsForBreakdown } },
+      select: { id: true, serviceType: true },
+    })
+    const billServiceTypeMap = new Map(billsForBreakdown.map((b) => [b.id, b.serviceType]))
+
+    // Aggregate by serviceType
+    const serviceTypeMap = new Map<string, { count: number; outstanding: number }>()
+    for (const item of serviceTypeBreakdown) {
+      const st = billServiceTypeMap.get(item.recurringBillId) || 'custom'
+      const existing = serviceTypeMap.get(st) || { count: 0, outstanding: 0 }
+      existing.count += 1
+      existing.outstanding += safeNumber(item._sum.outstandingAmount)
+      serviceTypeMap.set(st, existing)
+    }
+
+    // ── Build overdue bills list from overdueBillIds ──
+    // FIX: Fetches bills that have overdue CYCLES (dueDate < now), not just
+    // bills where nextDueDate < now. This correctly identifies bills whose
+    // current billing cycle is past due even if nextDueDate points to the next cycle.
+    const overdueBillIdList = overdueBillIds.map((item) => item.recurringBillId)
+    const overdueBillsList = overdueBillIdList.length > 0
+      ? await prisma.recurringBill.findMany({
+          where: { id: { in: overdueBillIdList }, ...baseWhere, status: 'active' },
+          include: {
+            property: {
+              select: {
+                id: true,
+                name: true,
+                nameAr: true,
+                nameBn: true,
+                nameUr: true,
+              },
+            },
+            cycles: {
+              where: {
+                status: { in: ['pending', 'partially_paid', 'overdue'] },
+                dueDate: { lt: now },
+              },
+              orderBy: { dueDate: 'asc' },
+              take: 1,
+            },
+          },
+          orderBy: { nextDueDate: 'asc' },
+        })
+      : []
 
     // Build financial mask helper for staff
     const financialMask = (obj: any, fields: string[]) => {
@@ -156,30 +227,37 @@ export async function GET(request: Request) {
       'lastPaymentAmount',
     ]
 
-    // Build response
+    // Build response — all metrics are now cycle-based for consistency
     const data = {
       totalBills: activeBills,
+      // FIX: Total Outstanding is now the sum of all open cycle outstandingAmounts
+      // Previously used bill.currentOutstanding which could be inflated/corrupted
       totalOutstanding: financialAccess
-        ? safeNumber(outstandingAgg._sum.currentOutstanding)
+        ? safeNumber(outstandingAgg._sum.outstandingAmount)
         : 0,
+      // FIX: Total Due This Month is the sum of open cycle outstandingAmounts
+      // for cycles due this month (was using cycle.amount which ignored partial payments)
       totalDueThisMonth: financialAccess
-        ? safeNumber(dueThisMonthAgg._sum.amount)
+        ? safeNumber(dueThisMonthAgg._sum.outstandingAmount)
         : 0,
       totalPaidThisMonth: financialAccess
         ? safeNumber(paidThisMonthAgg._sum.amount)
         : 0,
+      // FIX: Overdue count now based on cycle-level dueDate, not bill.nextDueDate
+      overdueCount: overdueBillIds.length,
+      totalOverdueAmount: financialAccess
+        ? safeNumber(overdueAmountAgg._sum.outstandingAmount)
+        : 0,
       upcomingBills: upcomingBills.map((bill) => financialMask(bill, amountFields)),
-      overdueBills: overdueBills.map((bill) => financialMask(bill, amountFields)),
-      serviceTypeBreakdown: serviceTypeBreakdown.map((item) => ({
-        serviceType: item.serviceType,
-        count: item._count,
-        totalAmountDue: financialAccess
-          ? safeNumber(item._sum.currentOutstanding)
-          : 0,
-        totalOutstanding: financialAccess
-          ? safeNumber(item._sum.currentOutstanding)
-          : 0,
-      })),
+      overdueBills: overdueBillsList.map((bill) => financialMask(bill, amountFields)),
+      serviceTypeBreakdown: Array.from(serviceTypeMap.entries()).map(
+        ([serviceType, data]) => ({
+          serviceType,
+          count: data.count,
+          totalOutstanding: financialAccess ? data.outstanding : 0,
+          totalAmountDue: financialAccess ? data.outstanding : 0,
+        })
+      ),
       cycleSummary: {
         totalCycles: cycleAgg._count,
         totalCycleOutstanding: financialAccess ? safeNumber(cycleAgg._sum.outstandingAmount) : 0,

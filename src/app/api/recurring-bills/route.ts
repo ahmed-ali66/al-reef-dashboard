@@ -62,13 +62,27 @@ export async function GET(request: Request) {
     const now = new Date()
 
     if (overdue) {
-      where.nextDueDate = { lt: now }
+      // FIX: Use cycle-level overdue detection instead of bill-level nextDueDate.
+      // A bill is overdue if it has any open cycle (pending/partially_paid/overdue)
+      // with dueDate < now. The old logic checked bill.nextDueDate which misses
+      // bills whose current cycle is past due but nextDueDate was already advanced.
       where.status = 'active'
+      where.cycles = {
+        some: {
+          status: { in: ['pending', 'partially_paid', 'overdue'] },
+          dueDate: { lt: now },
+        },
+      }
     } else if (upcoming) {
+      // FIX: Use cycle-level upcoming detection for consistency.
+      // A bill is upcoming if it has any open cycle due within 30 days from now.
       const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
-      where.nextDueDate = {
-        gte: now,
-        lte: thirtyDaysFromNow,
+      where.status = 'active'
+      where.cycles = {
+        some: {
+          status: { in: ['pending', 'partially_paid', 'overdue'] },
+          dueDate: { gte: now, lte: thirtyDaysFromNow },
+        },
       }
     }
 

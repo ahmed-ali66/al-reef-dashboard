@@ -195,44 +195,80 @@ export default function RecurringBills() {
   // ─── Client-side category filters ───
   const now = new Date()
 
+  // Helper: get the earliest open cycle dueDate for a bill
+  // FIX: All date-based classifications now use the cycle-level dueDate
+  // instead of the bill-level nextDueDate, which may point to a future cycle
+  // while the current cycle is already past due.
+  const getEarliestOpenCycleDueDate = (bill: RecurringBillData): Date | null => {
+    if (!bill.cycles || bill.cycles.length === 0) return null
+    // cycles are loaded with status in ['pending','partially_paid','overdue'], ordered by dueDate desc
+    // Find the earliest open cycle dueDate
+    const openCycles = bill.cycles.filter(c =>
+      c.status === 'pending' || c.status === 'partially_paid' || c.status === 'overdue'
+    )
+    if (openCycles.length === 0) return null
+    const earliest = openCycles.reduce((min, c) => {
+      const d = new Date(c.dueDate)
+      return d < min ? d : min
+    }, new Date(openCycles[0].dueDate))
+    return earliest
+  }
+
+  // Helper: get outstanding from cycle data (source of truth)
+  const getCycleOutstanding = (bill: RecurringBillData): number => {
+    if (!bill.cycles || bill.cycles.length === 0) return parseFloat(String(bill.currentOutstanding)) || 0
+    return bill.cycles.reduce((sum, c) => sum + (parseFloat(String(c.outstandingAmount)) || 0), 0)
+  }
+
   const isOverdue = (bill: RecurringBillData) => {
-    return bill.status === 'active' && new Date(bill.nextDueDate) < now
+    if (bill.status !== 'active') return false
+    // FIX: Check cycle-level dueDate instead of bill.nextDueDate
+    const cycleDue = getEarliestOpenCycleDueDate(bill)
+    if (!cycleDue) return false
+    return cycleDue < now
   }
 
   const isUpcoming = (bill: RecurringBillData) => {
     if (bill.status !== 'active') return false
-    const due = new Date(bill.nextDueDate)
+    // FIX: Check cycle-level dueDate instead of bill.nextDueDate
+    const cycleDue = getEarliestOpenCycleDueDate(bill)
+    if (!cycleDue) return false
     const thirtyDays = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
-    return due >= now && due <= thirtyDays
+    return cycleDue >= now && cycleDue <= thirtyDays
   }
 
   const isDueSoon = (bill: RecurringBillData) => {
     if (bill.status !== 'active') return false
-    const due = new Date(bill.nextDueDate)
+    // FIX: Check cycle-level dueDate instead of bill.nextDueDate
+    const cycleDue = getEarliestOpenCycleDueDate(bill)
+    if (!cycleDue) return false
     const sevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
-    return due >= now && due <= sevenDays
+    return cycleDue >= now && cycleDue <= sevenDays
   }
 
   const isPaid = (bill: RecurringBillData) => {
-    // Use parseFloat to handle Prisma Decimal serialization ("0.00" string)
-    return bill.status === 'active' && parseFloat(String(bill.currentOutstanding)) <= 0
+    // FIX: Use cycle-level outstanding instead of bill.currentOutstanding
+    return bill.status === 'active' && getCycleOutstanding(bill) <= 0
   }
 
   const isPartiallyPaid = (bill: RecurringBillData) => {
     if (bill.status !== 'active') return false
-    // Use parseFloat to handle Prisma Decimal serialization
-    const outstanding = parseFloat(String(bill.currentOutstanding)) || 0
-    const totalDue = parseFloat(String(bill.totalAmountDue)) || 0
+    const outstanding = getCycleOutstanding(bill)
+    const totalDue = (bill.cycles?.reduce((s, c) => s + (parseFloat(String(c.amount)) || 0), 0))
+      ?? (parseFloat(String(bill.totalAmountDue)) || 0)
     return outstanding > 0 && outstanding < totalDue && !isOverdue(bill)
   }
 
   const isOutstanding = (bill: RecurringBillData) => {
-    return bill.status === 'active' && parseFloat(String(bill.currentOutstanding)) > 0
+    // FIX: Use cycle-level outstanding instead of bill.currentOutstanding
+    return bill.status === 'active' && getCycleOutstanding(bill) > 0
   }
 
   const isInDateRange = (bill: RecurringBillData) => {
     if (activeTab !== 'custom_range') return true
-    const due = new Date(bill.nextDueDate)
+    // FIX: Use cycle-level dueDate for date range filtering
+    const cycleDue = getEarliestOpenCycleDueDate(bill)
+    const due = cycleDue || new Date(bill.nextDueDate)
     const from = customDateFrom ? new Date(customDateFrom) : null
     const to = customDateTo ? new Date(customDateTo + 'T23:59:59.999') : null
     if (from && due < from) return false
@@ -275,7 +311,9 @@ export default function RecurringBills() {
   const partiallyPaidCount = bills.filter(b => isPartiallyPaid(b)).length
   const outstandingCount = bills.filter(b => isOutstanding(b)).length
   const dueSoonCount = bills.filter(b => isDueSoon(b)).length
-  const overdueCount = summary?.overdueBills?.length ?? bills.filter(b => isOverdue(b)).length
+  // FIX: Use overdueCount from summary API (cycle-based) instead of counting
+  // overdueBills list, which was previously based on bill.nextDueDate
+  const overdueCount = summary?.overdueCount ?? bills.filter(b => isOverdue(b)).length
   const upcomingCount = bills.filter(b => isUpcoming(b)).length
 
   // ─── Handlers ───
@@ -756,6 +794,9 @@ export default function RecurringBills() {
               <p className="text-2xl font-bold text-red-600">{overdueCount}</p>
               {overdueCount > 0 && <AlertTriangle className="w-5 h-5 text-red-500" />}
             </div>
+            {overdueCount > 0 && summary?.totalOverdueAmount && isFinancial && (
+              <p className="text-xs text-red-500 mt-0.5">{formatAED(summary.totalOverdueAmount)}</p>
+            )}
           </CardContent>
         </Card>
       </div>
