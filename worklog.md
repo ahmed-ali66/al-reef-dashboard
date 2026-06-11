@@ -19,3 +19,25 @@ Stage Summary:
 - Sorting is consistent across UI, PDF, and XLSX exports
 - Payment integration verified: daily and monthly reports automatically pick up bill payments
 - Production deployment successful at https://al-reef-al-junoobi.vercel.app
+
+---
+Task ID: date-mismatch-fix
+Agent: Main Agent
+Task: Fix Recurring Bills Date Mismatch - Critical UI + Data Consistency Bug
+
+Work Log:
+- Traced root cause: previous fix (commit 18c7acd) changed list view "Next Due Date" display from bill.nextDueDate to getEarliestOpenCycleDueDate(bill)
+- This caused Edit Modal to show 30/06/2026 (bill.nextDueDate) while List View showed 10/06/2026 (cycle dueDate)
+- Verified against production DB: 7 of 73 bills have nextDueDate ≠ cycle dueDate
+- Fixed: Reverted display to always use bill.nextDueDate (single source of truth for display)
+- Fixed: Overdue/due-soon DAY calculations continue using cycle-level dueDate (for accuracy)
+- Fixed: PDF and XLSX export routes — added cycle-based overdue detection and day calculations
+- Fixed: Export routes use startOfToday instead of now datetime for consistent date-only comparison
+- Ran full E2E validation: 8/8 tests pass
+- Deployed to production: https://al-reef-al-junoobi.vercel.app
+
+Stage Summary:
+- Rule established: bill.nextDueDate = display source of truth; cycle.dueDate = calculation source
+- All views (Edit Modal, List View, PDF, XLSX, API) now show consistent bill.nextDueDate
+- Overdue detection in exports now uses cycle-level data (catches hidden overdue bills)
+- Commit: 12b4751, pushed to GitHub, deployed to Vercel
