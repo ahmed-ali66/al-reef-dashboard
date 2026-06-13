@@ -47,8 +47,11 @@ export default function RentCollection() {
   const [paymentError, setPaymentError] = useState('')
   const [paymentActionLoading, setPaymentActionLoading] = useState(false)
 
-  // Tenant name search
+  // Tenant name / property search
   const [tenantSearch, setTenantSearch] = useState('')
+
+  // Unit number filter
+  const [unitFilter, setUnitFilter] = useState<string>('all')
 
   // Invoice search
   const [invoiceSearch, setInvoiceSearch] = useState('')
@@ -173,6 +176,17 @@ export default function RentCollection() {
     return 'due-soon'
   }
 
+  // Derive unique unit numbers from active tenants for the dropdown
+  const uniqueUnitNumbers = Array.from(
+    new Set(activeTenants.map(t => t.unitNumber).filter(Boolean) as string[])
+  ).sort((a, b) => {
+    // Numeric sort if both are numbers, otherwise string sort
+    const numA = Number(a)
+    const numB = Number(b)
+    if (!isNaN(numA) && !isNaN(numB)) return numA - numB
+    return a.localeCompare(b)
+  })
+
   const filteredTenants = activeTenants.filter(t => {
     const status = getTenantPaymentStatus(t)
     if (filter === 'all') return true
@@ -182,11 +196,16 @@ export default function RentCollection() {
     if (filter === 'overdue') return status === 'overdue'
     return true
   }).filter(t => {
-    // Tenant name search filter
+    // Tenant name + Property name search filter
     if (!tenantSearch.trim()) return true
     const searchLower = tenantSearch.trim().toLowerCase()
     const tenantName = getNameByLang(t, language).toLowerCase()
-    return tenantName.includes(searchLower)
+    const propertyName = t.property ? getNameByLang(t.property, language).toLowerCase() : ''
+    return tenantName.includes(searchLower) || propertyName.includes(searchLower)
+  }).filter(t => {
+    // Unit number filter
+    if (unitFilter === 'all') return true
+    return t.unitNumber === unitFilter
   })
 
   const stats = {
@@ -569,11 +588,22 @@ export default function RentCollection() {
             {f === 'overdue' && t('overdue', language)}
           </Button>
         ))}
+        <Select value={unitFilter} onValueChange={v => setUnitFilter(v)}>
+          <SelectTrigger className="w-[140px] h-9 text-sm">
+            <SelectValue placeholder={t('allUnits', language) || 'All Units'} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{t('allUnits', language) || 'All Units'}</SelectItem>
+            {uniqueUnitNumbers.map(unit => (
+              <SelectItem key={unit} value={unit}>{unit}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <div className="flex items-center gap-2 bg-white rounded-lg border px-2 py-1 ml-auto">
           <Search className="w-4 h-4 text-gray-400" />
           <input
             type="text"
-            placeholder={t('searchTenant', language) || 'Search Tenant Name'}
+            placeholder={t('searchTenant', language) || 'Search Tenant / Property'}
             value={tenantSearch}
             onChange={e => setTenantSearch(e.target.value)}
             className="border-0 outline-none text-sm w-36 lg:w-52 bg-transparent"

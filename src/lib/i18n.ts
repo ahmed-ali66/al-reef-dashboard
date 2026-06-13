@@ -80,6 +80,7 @@ export const translations = {
   addProperty: { en: 'Add Property', ar: 'إضافة عقار', bn: 'সম্পত্তি যোগ করুন', ur: 'نئی ملکیت شامل کریں' },
   editProperty: { en: 'Edit Property', ar: 'تعديل العقار', bn: 'সম্পত্তি সম্পাদনা', ur: 'ملکیت میں ترمیم' },
   propertyName: { en: 'Property Name', ar: 'اسم العقار', bn: 'সম্পত্তির নাম', ur: 'ملکیت کا نام' },
+  allUnits: { en: 'All Units', ar: 'جميع الوحدات', bn: 'সব ইউনিট', ur: 'تمام یونٹس' },
   propertyType: { en: 'Property Type', ar: 'نوع العقار', bn: 'সম্পত্তির ধরন', ur: 'ملکیت کی قسم' },
   address: { en: 'Address', ar: 'العنوان', bn: 'ঠিকানা', ur: 'پتہ' },
   totalUnitsCount: { en: 'Total Units', ar: 'إجمالي الوحدات', bn: 'মোট ইউনিট', ur: 'کل یونٹیں' },
@@ -341,7 +342,7 @@ export const translations = {
   // Additional keys for Maintenance, Expenses, Reports
   invoiceNumber: { en: 'Invoice Number', ar: 'رقم الفاتورة', bn: 'চালান নম্বর', ur: 'انوائس نمبر' },
   searchInvoice: { en: 'Search Invoice #', ar: 'بحث رقم الفاتورة', bn: 'চালান নম্বর খুঁজুন', ur: 'انوائس نمبر تلاش کریں' },
-  searchTenant: { en: 'Search Tenant Name', ar: 'بحث اسم المستأجر', bn: 'ভাড়াটিয়ার নাম খুঁজুন', ur: 'کرایہ دار کا نام تلاش کریں' },
+  searchTenant: { en: 'Search Tenant / Property', ar: 'بحث المستأجر / العقار', bn: 'ভাড়াটিয়া / সম্পত্তি খুঁজুন', ur: 'کرایہ دار / ملکیت تلاش کریں' },
   totalCashPayments: { en: 'Total Cash Payments', ar: 'إجمالي المدفوعات النقدية', bn: 'মোট নগদ পেমেন্ট', ur: 'کل نقد ادائیگیاں' },
   totalBankTransferPayments: { en: 'Total Bank Transfer', ar: 'إجمالي التحويل البنكي', bn: 'মোট ব্যাংক ট্রান্সফার', ur: 'کل بینک ٹرانسفر' },
   totalChequePayments: { en: 'Total Cheque Payments', ar: 'إجمالي مدفوعات الشيكات', bn: 'মোট চেক পেমেন্ট', ur: 'کل چیک ادائیگیاں' },
