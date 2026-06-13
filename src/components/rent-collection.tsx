@@ -53,6 +53,9 @@ export default function RentCollection() {
   // Unit number filter
   const [unitFilter, setUnitFilter] = useState<string>('all')
 
+  // Payment date filter (only applies to paid/partial tabs)
+  const [paymentDateFilter, setPaymentDateFilter] = useState<string>('')
+
   // Invoice search
   const [invoiceSearch, setInvoiceSearch] = useState('')
   const [invoiceSearchResults, setInvoiceSearchResults] = useState<any[] | null>(null)
@@ -212,9 +215,21 @@ export default function RentCollection() {
   }
 
   // Step 3: Unit number filter (applied on top of search-filtered results)
-  const filteredTenants = searchFiltered.filter(t => {
+  const unitFiltered = searchFiltered.filter(t => {
     if (unitFilter === 'all') return true
     return t.unitNumber === unitFilter
+  })
+
+  // Step 4: Payment date filter (only applies when viewing paid or partially paid)
+  const filteredTenants = unitFiltered.filter(t => {
+    if (!paymentDateFilter) return true
+    if (filter !== 'paid' && filter !== 'partial') return true
+    // Check if the tenant has any payment for the selected month/year on the filtered date
+    const payments = (t.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear)
+    return payments.some(p => {
+      const paymentDate = new Date(p.date).toISOString().split('T')[0]
+      return paymentDate === paymentDateFilter
+    })
   })
 
   const stats = {
@@ -592,7 +607,7 @@ export default function RentCollection() {
             key={f}
             variant={filter === f ? 'default' : 'outline'}
             size="sm"
-            onClick={() => setFilter(f)}
+            onClick={() => { setFilter(f); if (f !== 'paid' && f !== 'partial') setPaymentDateFilter('') }}
             className={filter === f ? 'bg-emerald hover:bg-emerald/90 text-white' : ''}
           >
             {f === 'all' && t('all', language)}
@@ -613,6 +628,23 @@ export default function RentCollection() {
             ))}
           </SelectContent>
         </Select>
+        {(filter === 'paid' || filter === 'partial') && (
+          <div className="flex items-center gap-1.5 bg-white rounded-lg border px-2 py-1">
+            <Calendar className="w-4 h-4 text-gray-400" />
+            <input
+              type="date"
+              value={paymentDateFilter}
+              onChange={e => setPaymentDateFilter(e.target.value)}
+              className="border-0 outline-none text-sm bg-transparent w-[130px] cursor-pointer"
+              title={t('paymentDate', language)}
+            />
+            {paymentDateFilter && (
+              <button onClick={() => setPaymentDateFilter('')} className="text-gray-400 hover:text-gray-600" title={t('clearFilter', language)}>
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        )}
         <div className="flex items-center gap-2 bg-white rounded-lg border px-2 py-1 ml-auto">
           <Search className="w-4 h-4 text-gray-400" />
           <input
