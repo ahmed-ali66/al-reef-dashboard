@@ -176,18 +176,8 @@ export default function RentCollection() {
     return 'due-soon'
   }
 
-  // Derive unique unit numbers from active tenants for the dropdown
-  const uniqueUnitNumbers = Array.from(
-    new Set(activeTenants.map(t => t.unitNumber).filter(Boolean) as string[])
-  ).sort((a, b) => {
-    // Numeric sort if both are numbers, otherwise string sort
-    const numA = Number(a)
-    const numB = Number(b)
-    if (!isNaN(numA) && !isNaN(numB)) return numA - numB
-    return a.localeCompare(b)
-  })
-
-  const filteredTenants = activeTenants.filter(t => {
+  // Step 1: Status filter
+  const statusFiltered = activeTenants.filter(t => {
     const status = getTenantPaymentStatus(t)
     if (filter === 'all') return true
     if (filter === 'paid') return status === 'paid'
@@ -195,15 +185,34 @@ export default function RentCollection() {
     if (filter === 'unpaid') return status === 'overdue' || status === 'unpaid' || status === 'due-soon'
     if (filter === 'overdue') return status === 'overdue'
     return true
-  }).filter(t => {
-    // Tenant name + Property name search filter
+  })
+
+  // Step 2: Search filter (tenant name + property name)
+  const searchFiltered = statusFiltered.filter(t => {
     if (!tenantSearch.trim()) return true
     const searchLower = tenantSearch.trim().toLowerCase()
     const tenantName = getNameByLang(t, language).toLowerCase()
     const propertyName = t.property ? getNameByLang(t.property, language).toLowerCase() : ''
     return tenantName.includes(searchLower) || propertyName.includes(searchLower)
-  }).filter(t => {
-    // Unit number filter
+  })
+
+  // Derive unique unit numbers from search-filtered tenants (context-aware)
+  const uniqueUnitNumbers = Array.from(
+    new Set(searchFiltered.map(t => t.unitNumber).filter(Boolean) as string[])
+  ).sort((a, b) => {
+    const numA = Number(a)
+    const numB = Number(b)
+    if (!isNaN(numA) && !isNaN(numB)) return numA - numB
+    return a.localeCompare(b)
+  })
+
+  // Reset unit filter if the selected unit is no longer available in the dropdown
+  if (unitFilter !== 'all' && !uniqueUnitNumbers.includes(unitFilter)) {
+    setUnitFilter('all')
+  }
+
+  // Step 3: Unit number filter (applied on top of search-filtered results)
+  const filteredTenants = searchFiltered.filter(t => {
     if (unitFilter === 'all') return true
     return t.unitNumber === unitFilter
   })
