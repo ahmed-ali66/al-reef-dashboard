@@ -409,8 +409,11 @@ export default function RentCollection() {
     }
   }
 
+  const [payLoading, setPayLoading] = useState(false)
+
   const handlePay = async () => {
-    if (!payingTenant) return
+    if (!payingTenant || payLoading) return
+    setPayLoading(true)
     const paymentDateObj = new Date(payForm.paymentDate)
     const isLate = paymentDateObj.getDate() > 5
     const daysLate = isLate ? paymentDateObj.getDate() - 5 : 0
@@ -435,6 +438,8 @@ export default function RentCollection() {
     } catch (error) {
       console.error('Failed to record payment:', error)
       alert('Failed to record payment. Please try again.')
+    } finally {
+      setPayLoading(false)
     }
   }
 
@@ -953,9 +958,9 @@ export default function RentCollection() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPayDialogOpen(false)}>{t('cancel', language)}</Button>
-            <Button onClick={handlePay} className="bg-emerald hover:bg-emerald/90 text-white" disabled={payForm.amount <= 0}>
-              <Check className="w-4 h-4 mr-2" />
-              {t('confirmPayment', language)}
+            <Button onClick={handlePay} className="bg-emerald hover:bg-emerald/90 text-white" disabled={payForm.amount <= 0 || payLoading}>
+              {payLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Check className="w-4 h-4 mr-2" />}
+              {payLoading ? t('processingPayment', language) : t('confirmPayment', language)}
             </Button>
           </DialogFooter>
         </DialogContent>

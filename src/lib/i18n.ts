@@ -206,6 +206,7 @@ export const translations = {
   reference: { en: 'Reference / Receipt No.', ar: 'المرجع / رقم الإيصال', bn: 'রেফারেন্স / রশিদ নম্বর', ur: 'حوالہ / رسید نمبر' },
   notes: { en: 'Notes', ar: 'ملاحظات', bn: 'নোট', ur: 'نوٹ' },
   confirmPayment: { en: 'Confirm Payment', ar: 'تأكيد الدفع', bn: 'পেমেন্ট নিশ্চিত করুন', ur: 'ادائیگی کی توثیق' },
+  processingPayment: { en: 'Processing Payment...', ar: 'جاري معالجة الدفع...', bn: 'পেমেন্ট প্রক্রিয়াকরণ হচ্ছে...', ur: 'ادائیگی پروسیسنگ...' },
   cancel: { en: 'Cancel', ar: 'إلغاء', bn: 'বাতিল', ur: 'منسوخ' },
   save: { en: 'Save', ar: 'حفظ', bn: 'সংরক্ষণ', ur: 'محفوظ کریں' },
   all: { en: 'All', ar: 'الكل', bn: 'সব', ur: 'تمام' },
