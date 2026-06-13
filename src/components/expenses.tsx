@@ -157,7 +157,11 @@ export default function Expenses() {
     setDialogOpen(true)
   }
 
+  const [savingExpense, setSavingExpense] = useState(false)
+
   const handleSave = async () => {
+    if (savingExpense) return
+    setSavingExpense(true)
     const store = useDataStore.getState()
     const body = {
       ...form,
@@ -178,6 +182,8 @@ export default function Expenses() {
     } catch (error) {
       console.error('Failed to save expense:', error)
       alert('Failed to save expense. Please try again.')
+    } finally {
+      setSavingExpense(false)
     }
   }
 
@@ -519,8 +525,9 @@ export default function Expenses() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>{t('cancel', lang)}</Button>
-            <Button onClick={handleSave} className="bg-emerald hover:bg-emerald/90 text-white" disabled={!form.description || form.amount <= 0}>
-              {t('save', lang)}
+            <Button onClick={handleSave} className="bg-emerald hover:bg-emerald/90 text-white" disabled={!form.description || form.amount <= 0 || savingExpense}>
+              {savingExpense ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+              {savingExpense ? t('savingExpense', lang) : t('save', lang)}
             </Button>
           </DialogFooter>
         </DialogContent>
