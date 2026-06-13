@@ -672,7 +672,7 @@ export default function RentCollection() {
           // Calculate true remaining balance including opening balance and credit balance
           const openingBalance = Number(tenant.openingBalance) || 0
           const creditBalance = Number(tenant.creditBalance) || 0
-          const currentCharges = tenant.rentAmount + totalAdjustments
+          const currentCharges = tenant.rentAmount - totalAdjustments
           const totalDue = openingBalance + currentCharges - creditBalance
           const remaining = totalDue - paid
           const tenantPayments = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear)

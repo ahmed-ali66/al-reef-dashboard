@@ -5,7 +5,7 @@
  * to ensure consistency between tenant cards, invoices, PDFs, dashboard, and reports.
  *
  * Formula:
- *   Current Charges = rentAmount + municipalityFee + adjustments
+ *   Current Charges = rentAmount + municipalityFee - adjustments
  *   Total Due       = Opening Balance + Current Charges - Credit Balance
  *   Remaining       = Total Due - Payments Received
  */
@@ -21,7 +21,7 @@ export interface FinancialCalcInput {
 }
 
 export interface FinancialCalcResult {
-  currentCharges: number      // rentAmount + muniFee + adjustments
+  currentCharges: number      // rentAmount + muniFee - adjustments
   totalDue: number            // openingBalance + currentCharges - creditBalance
   remainingBalance: number    // totalDue - paymentsReceived
   paymentsReceived: number
@@ -49,7 +49,7 @@ export function calculateFinancials(input: FinancialCalcInput): FinancialCalcRes
     ? (input.municipalityFee != null ? Number(input.municipalityFee) : Math.round(rentAmount * 0.05))
     : 0
 
-  const currentCharges = rentAmount + muniFee + adjustments
+  const currentCharges = rentAmount + muniFee - adjustments
   const totalDue = openingBalance + currentCharges - creditBalance
   const remainingBalance = totalDue - paymentsReceived
 
