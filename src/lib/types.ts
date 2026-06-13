@@ -1,4 +1,4 @@
-export type PageType = 'dashboard' | 'properties' | 'tenants' | 'rent' | 'maintenance' | 'expenses' | 'recurring-bills' | 'daily-report' | 'reports' | 'contracts' | 'reservations' | 'settings'
+export type PageType = 'dashboard' | 'properties' | 'tenants' | 'rent' | 'maintenance' | 'expenses' | 'recurring-bills' | 'daily-report' | 'reports' | 'contracts' | 'reservations' | 'settings' | 'system' | 'audit-logs'
 
 export interface DashboardData {
   company: {
@@ -333,4 +333,21 @@ export interface BillPaymentData {
     currentOutstanding: number
     totalAmountDue: number
   }
+}
+
+export interface AuditLogData {
+  id: string
+  action: string
+  entity: string
+  entityId: string | null
+  userId: string | null
+  user?: {
+    id: string
+    name: string
+    email: string
+    role: string
+  } | null
+  details: Record<string, any> | string | null
+  companyId: string | null
+  createdAt: string
 }

@@ -526,6 +526,15 @@ export const translations = {
 
   // System Management
   systemManagement: { en: 'System', ar: 'النظام', bn: 'সিস্টেম', ur: 'سسٹم' },
+  auditLogs: { en: 'Audit Logs', ar: 'سجل التدقيق', bn: 'অডিট লগ', ur: 'آڈٹ لاگز' },
+  auditLogTitle: { en: 'Audit Logs', ar: 'سجل التدقيق', bn: 'অডিট লগ', ur: 'آڈٹ لاگز' },
+  auditLogDesc: { en: 'Track all actions performed by users across the system', ar: 'تتبع جميع الإجراءات التي يقوم بها المستخدمون عبر النظام', bn: 'সিস্টেম জুড়ে ব্যবহারকারীদের দ্বারা সম্পাদিত সমস্ত কর্ম ট্র্যাক করুন', ur: 'سسٹم میں صارفین کے تمام اقدامات کی نگرانی کریں' },
+  actionType: { en: 'Action Type', ar: 'نوع الإجراء', bn: 'কর্মের ধরন', ur: 'عمل کی قسم' },
+  module: { en: 'Module', ar: 'الوحدة', bn: 'মডিউল', ur: 'ماڈیول' },
+  previousValue: { en: 'Previous', ar: 'السابق', bn: 'পূর্ববর্তী', ur: 'پچھلا' },
+  newValue: { en: 'New', ar: 'الجديد', bn: 'নতুন', ur: 'نیا' },
+  noResults: { en: 'No results found', ar: 'لم يتم العثور على نتائج', bn: 'কোনো ফলাফল পাওয়া যায়নি', ur: 'کوئی نتائج نہیں ملے' },
+  loadMore: { en: 'Load More', ar: 'تحميل المزيد', bn: 'আরও লোড করুন', ur: 'مزید لوڈ کریں' },
   dataProtection: { en: 'Data Protection', ar: 'حماية البيانات', bn: 'ডেটা সুরক্ষা', ur: 'ڈیٹا کی حفاظت' },
   backupHistory: { en: 'Backup History', ar: 'سجل النسخ الاحتياطي', bn: 'ব্যাকআপ ইতিহাস', ur: 'بیک اپ کی تاریخ' },
   dataIntegrity: { en: 'Data Integrity', ar: 'سلامة البيانات', bn: 'ডেটা অখণ্ডতা', ur: 'ڈیٹا کی یکسانیت' },

@@ -21,6 +21,7 @@ import Reservations from '@/components/reservations'
 import UserManagement from '@/components/user-management'
 import SystemManagement from '@/components/system-management'
 import SettingsPage from '@/components/settings-page'
+import AuditLogs from '@/components/audit-logs'
 import { Loader2 } from 'lucide-react'
 
 function AppContent() {
@@ -126,6 +127,7 @@ function AppContent() {
       case 'contracts': return <Contracts />
       case 'settings': return isSystemAdmin ? <SettingsPage /> : <AccessDenied type="admin" />
       case 'system': return isSystemAdmin ? <SystemManagement /> : <AccessDenied type="admin" />
+      case 'audit-logs': return isOwnerOrAdmin(authUser?.role || '') ? <AuditLogs /> : <AccessDenied type="admin" />
       default: return <Dashboard />
     }
     })()
