@@ -1,0 +1,918 @@
+     1→'use client'
+     2→
+     3→import { useEffect, useState, useCallback, useMemo } from 'react'
+     4→import type { ReservationData, PropertyData } from '@/lib/types'
+     5→import { t, getNameByLang, type Language } from '@/lib/i18n'
+     6→import { cn2, formatAED, formatDate } from '@/lib/utils'
+     7→import { useAppStore, isOwnerOrAdmin } from '@/lib/store'
+     8→import { useDataStore } from '@/lib/data-store'
+     9→import { Card, CardContent } from '@/components/ui/card'
+    10→import { Button } from '@/components/ui/button'
+    11→import { Input } from '@/components/ui/input'
+    12→import { Label } from '@/components/ui/label'
+    13→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    14→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+    15→import { Badge } from '@/components/ui/badge'
+    16→import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+    17→import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+    18→import { Separator } from '@/components/ui/separator'
+    19→import { ScrollArea } from '@/components/ui/scroll-area'
+    20→import { Textarea } from '@/components/ui/textarea'
+    21→import {
+    22→  CalendarCheck, Plus, Pencil, Trash2, Search,
+    23→  Loader2, Phone, Mail, Lock, AlertTriangle,
+    24→  Building, Clock, UserCheck, XCircle, CheckCircle2,
+    25→  ArrowRightLeft, Calendar, DollarSign, FileText
+    26→} from 'lucide-react'
+    27→
+    28→// ─── Form State ────────────────────────────────────────────────────────────────
+    29→
+    30→interface ReservationFormState {
+    31→  prospectName: string
+    32→  prospectNameAr: string
+    33→  prospectNameBn: string
+    34→  prospectNameUr: string
+    35→  prospectPhone: string
+    36→  prospectWhatsapp: string
+    37→  prospectEmail: string
+    38→  propertyId: string
+    39→  unitNumber: string
+    40→  depositAmount: string
+    41→  depositPaymentMethod: string
+    42→  depositReference: string
+    43→  expectedMoveInDate: string
+    44→  expiryDate: string
+    45→  notes: string
+    46→}
+    47→
+    48→const emptyForm: ReservationFormState = {
+    49→  prospectName: '', prospectNameAr: '', prospectNameBn: '', prospectNameUr: '',
+    50→  prospectPhone: '', prospectWhatsapp: '', prospectEmail: '',
+    51→  propertyId: '', unitNumber: '',
+    52→  depositAmount: '0', depositPaymentMethod: '', depositReference: '',
+    53→  expectedMoveInDate: '', expiryDate: '', notes: '',
+    54→}
+    55→
+    56→// ─── Convert-to-Tenant Form State ──────────────────────────────────────────────
+    57→
+    58→interface ConvertFormState {
+    59→  depositAppliedTo: string
+    60→  rentAmount: string
+    61→  paymentMethod: string
+    62→  leaseStart: string
+    63→  leaseEnd: string
+    64→  contractDuration: string
+    65→}
+    66→
+    67→const emptyConvertForm: ConvertFormState = {
+    68→  depositAppliedTo: 'security_deposit',
+    69→  rentAmount: '0',
+    70→  paymentMethod: '',
+    71→  leaseStart: '',
+    72→  leaseEnd: '',
+    73→  contractDuration: '12',
+    74→}
+    75→
+    76→// ─── Status Badge Helpers ──────────────────────────────────────────────────────
+    77→
+    78→const reservationStatusOptions = ['pending', 'confirmed', 'converted', 'cancelled', 'expired']
+    79→const depositStatusOptions = ['unpaid', 'partial', 'paid', 'refunded']
+    80→const paymentMethods = ['cash', 'bank_transfer', 'cheque']
+    81→
+    82→function getReservationStatusLabel(status: string, lang: Language): string {
+    83→  switch (status) {
+    84→    case 'pending': return t('pending', lang)
+    85→    case 'confirmed': return t('confirmed', lang)
+    86→    case 'converted': return t('converted', lang)
+    87→    case 'cancelled': return t('cancelled', lang)
+    88→    case 'expired': return t('expired', lang)
+    89→    default: return status
+    90→  }
+    91→}
+    92→
+    93→function getReservationStatusColor(status: string): string {
+    94→  switch (status) {
+    95→    case 'pending': return 'bg-amber-100 text-amber-800 border-amber-200'
+    96→    case 'confirmed': return 'bg-sky-100 text-sky-800 border-sky-200'
+    97→    case 'converted': return 'bg-emerald-100 text-emerald-800 border-emerald-200'
+    98→    case 'cancelled': return 'bg-red-100 text-red-800 border-red-200'
+    99→    case 'expired': return 'bg-gray-100 text-gray-600 border-gray-200'
+   100→    default: return 'bg-gray-100 text-gray-600 border-gray-200'
+   101→  }
+   102→}
+   103→
+   104→function getDepositStatusLabel(status: string, lang: Language): string {
+   105→  switch (status) {
+   106→    case 'unpaid': return t('unpaid', lang)
+   107→    case 'partial': return t('partial', lang)
+   108→    case 'paid': return t('paid', lang)
+   109→    case 'refunded': return t('refunded', lang)
+   110→    default: return status
+   111→  }
+   112→}
+   113→
+   114→function getDepositStatusColor(status: string): string {
+   115→  switch (status) {
+   116→    case 'unpaid': return 'bg-red-100 text-red-800 border-red-200'
+   117→    case 'partial': return 'bg-amber-100 text-amber-800 border-amber-200'
+   118→    case 'paid': return 'bg-emerald-100 text-emerald-800 border-emerald-200'
+   119→    case 'refunded': return 'bg-gray-100 text-gray-600 border-gray-200'
+   120→    default: return 'bg-gray-100 text-gray-600 border-gray-200'
+   121→  }
+   122→}
+   123→
+   124→function getPaymentMethodLabel(method: string, lang: Language): string {
+   125→  switch (method) {
+   126→    case 'cash': return t('cash', lang)
+   127→    case 'bank_transfer': return t('bankTransfer', lang)
+   128→    case 'cheque': return t('cheque', lang)
+   129→    default: return method
+   130→  }
+   131→}
+   132→
+   133→// ─── Prospect Name Helper ──────────────────────────────────────────────────────
+   134→
+   135→function getProspectNameByLang(r: ReservationData, lang: Language): string {
+   136→  if (lang === 'ar' && r.prospectNameAr) return r.prospectNameAr
+   137→  if (lang === 'bn' && r.prospectNameBn) return r.prospectNameBn
+   138→  if (lang === 'ur' && r.prospectNameUr) return r.prospectNameUr
+   139→  return r.prospectName
+   140→}
+   141→
+   142→// ─── Expiry Warning ────────────────────────────────────────────────────────────
+   143→
+   144→function getDaysUntilExpiry(expiryDate: string | null): number | null {
+   145→  if (!expiryDate) return null
+   146→  const now = new Date()
+   147→  now.setHours(0, 0, 0, 0)
+   148→  const expiry = new Date(expiryDate)
+   149→  expiry.setHours(0, 0, 0, 0)
+   150→  return Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+   151→}
+   152→
+   153→// ─── Component ─────────────────────────────────────────────────────────────────
+   154→
+   155→export default function Reservations() {
+   156→  const { language, authUser } = useAppStore()
+   157→  const [reservations, setReservations] = useState<ReservationData[]>([])
+   158→  const [properties, setProperties] = useState<PropertyData[]>([])
+   159→  const [loading, setLoading] = useState(true)
+   160→  const [search, setSearch] = useState('')
+   161→  const [statusFilter, setStatusFilter] = useState('all')
+   162→
+   163→  // Add/Edit dialog
+   164→  const [dialogOpen, setDialogOpen] = useState(false)
+   165→  const [editing, setEditing] = useState<ReservationData | null>(null)
+   166→  const [form, setForm] = useState<ReservationFormState>(emptyForm)
+   167→  const [saving, setSaving] = useState(false)
+   168→
+   169→  // Convert dialog
+   170→  const [convertDialogOpen, setConvertDialogOpen] = useState(false)
+   171→  const [convertTarget, setConvertTarget] = useState<ReservationData | null>(null)
+   172→  const [convertForm, setConvertForm] = useState<ConvertFormState>(emptyConvertForm)
+   173→  const [converting, setConverting] = useState(false)
+   174→
+   175→  // RBAC
+   176→  const role = authUser?.role || ''
+   177→  const canCreate = true
+   178→  const canModify = isOwnerOrAdmin(role)
+   179→  const canSeeFinancials = isOwnerOrAdmin(role)
+   180→
+   181→  // ─── Data Fetching ───────────────────────────────────────────────────────────
+   182→
+   183→  const fetchReservations = useCallback(() => {
+   184→    try {
+   185→      const store = useDataStore.getState()
+   186→      const allReservations = store.reservations
+   187→      // Enrich with property data
+   188→      const enriched = allReservations.map(r => ({
+   189→        ...r,
+   190→        property: store.properties.find(p => p.id === r.propertyId) || undefined,
+   191→      }))
+   192→      setReservations(enriched)
+   193→      setProperties(store.properties.filter(p => !p.archived))
+   194→    } catch (e) {
+   195→      console.error(e)
+   196→    } finally {
+   197→      setLoading(false)
+   198→    }
+   199→  }, [])
+   200→
+   201→  useEffect(() => { fetchReservations() }, [fetchReservations])
+   202→
+   203→  // ─── Double-booking Detection ────────────────────────────────────────────────
+   204→
+   205→  const confirmedUnitMap = useMemo(() => {
+   206→    const map = new Map<string, string>() // key: "propertyId:unitNumber" -> reservationId
+   207→    reservations.forEach(r => {
+   208→      if (r.status === 'confirmed' && r.unitNumber) {
+   209→        const key = `${r.propertyId}:${r.unitNumber.toLowerCase()}`
+   210→        if (!map.has(key)) {
+   211→          map.set(key, r.id)
+   212→        }
+   213→      }
+   214→    })
+   215→    return map
+   216→  }, [reservations])
+   217→
+   218→  function isUnitReserved(propertyId: string, unitNumber: string | null, excludeId?: string): boolean {
+   219→    if (!unitNumber) return false
+   220→    const key = `${propertyId}:${unitNumber.toLowerCase()}`
+   221→    const resId = confirmedUnitMap.get(key)
+   222→    return resId !== undefined && resId !== excludeId
+   223→  }
+   224→
+   225→  // ─── Filtered Data ──────────────────────────────────────────────────────────
+   226→
+   227→  const filtered = useMemo(() => {
+   228→    return reservations.filter(r => {
+   229→      const name = getProspectNameByLang(r, language).toLowerCase()
+   230→      const matchesSearch =
+   231→        name.includes(search.toLowerCase()) ||
+   232→        (r.prospectNameAr && r.prospectNameAr.includes(search)) ||
+   233→        (r.prospectNameBn && r.prospectNameBn.includes(search)) ||
+   234→        (r.prospectNameUr && r.prospectNameUr.includes(search)) ||
+   235→        r.prospectPhone.includes(search) ||
+   236→        (r.unitNumber && r.unitNumber.toLowerCase().includes(search.toLowerCase()))
+   237→      const matchesStatus = statusFilter === 'all' || r.status === statusFilter
+   238→      return matchesSearch && matchesStatus
+   239→    })
+   240→  }, [reservations, search, statusFilter, language])
+   241→
+   242→  const activeCount = reservations.filter(r => r.status === 'pending' || r.status === 'confirmed').length
+   243→
+   244→  // ─── Dialog Handlers ────────────────────────────────────────────────────────
+   245→
+   246→  const openNew = () => {
+   247→    setEditing(null)
+   248→    setForm({ ...emptyForm, propertyId: properties[0]?.id || '' })
+   249→    setDialogOpen(true)
+   250→  }
+   251→
+   252→  const openEdit = (r: ReservationData) => {
+   253→    setEditing(r)
+   254→    setForm({
+   255→      prospectName: r.prospectName,
+   256→      prospectNameAr: r.prospectNameAr || '',
+   257→      prospectNameBn: r.prospectNameBn || '',
+   258→      prospectNameUr: r.prospectNameUr || '',
+   259→      prospectPhone: r.prospectPhone,
+   260→      prospectWhatsapp: r.prospectWhatsapp || '',
+   261→      prospectEmail: r.prospectEmail || '',
+   262→      propertyId: r.propertyId,
+   263→      unitNumber: r.unitNumber || '',
+   264→      depositAmount: String(r.depositAmount),
+   265→      depositPaymentMethod: r.depositPaymentMethod || '',
+   266→      depositReference: r.depositReference || '',
+   267→      expectedMoveInDate: r.expectedMoveInDate ? new Date(r.expectedMoveInDate).toISOString().split('T')[0] : '',
+   268→      expiryDate: r.expiryDate ? new Date(r.expiryDate).toISOString().split('T')[0] : '',
+   269→      notes: r.notes || '',
+   270→    })
+   271→    setDialogOpen(true)
+   272→  }
+   273→
+   274→  const openConvert = (r: ReservationData) => {
+   275→    setConvertTarget(r)
+   276→    setConvertForm({
+   277→      depositAppliedTo: 'security_deposit',
+   278→      rentAmount: '0',
+   279→      paymentMethod: r.depositPaymentMethod || '',
+   280→      leaseStart: r.expectedMoveInDate ? new Date(r.expectedMoveInDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+   281→      leaseEnd: '',
+   282→      contractDuration: '12',
+   283→    })
+   284→    setConvertDialogOpen(true)
+   285→  }
+   286→
+   287→  // ─── Save (Add/Edit) ────────────────────────────────────────────────────────
+   288→
+   289→  const handleSave = async () => {
+   290→    if (!form.prospectName || !form.prospectPhone || !form.propertyId) return
+   291→    setSaving(true)
+   292→    try {
+   293→      const store = useDataStore.getState()
+   294→      const body: any = {
+   295→        ...form,
+   296→        depositAmount: Number(form.depositAmount) || 0,
+   297→        reservationDate: new Date().toISOString(),
+   298→        status: editing ? undefined : 'pending',
+   299→        depositStatus: editing ? undefined : (Number(form.depositAmount) > 0 ? 'paid' : 'unpaid'),
+   300→      }
+   301→      if (editing) {
+   302→        await store.updateReservation(editing.id, body)
+   303→      } else {
+   304→        await store.addReservation(body)
+   305→      }
+   306→      setDialogOpen(false)
+   307→      fetchReservations()
+   308→    } catch (error: any) {
+   309→      alert(error.message || 'Failed to save reservation')
+   310→    } finally {
+   311→      setSaving(false)
+   312→    }
+   313→  }
+   314→
+   315→  // ─── Confirm Reservation ────────────────────────────────────────────────────
+   316→
+   317→  const handleConfirm = async (id: string) => {
+   318→    try {
+   319→      await useDataStore.getState().updateReservation(id, {
+   320→        status: 'confirmed',
+   321→        depositStatus: 'paid',
+   322→      })
+   323→      fetchReservations()
+   324→    } catch (error: any) {
+   325→      alert(error.message || 'Failed to confirm reservation')
+   326→    }
+   327→  }
+   328→
+   329→  // ─── Cancel Reservation ─────────────────────────────────────────────────────
+   330→
+   331→  const handleCancel = async (id: string) => {
+   332→    try {
+   333→      await useDataStore.getState().cancelReservation(id)
+   334→      fetchReservations()
+   335→    } catch (error: any) {
+   336→      alert(error.message || 'Failed to cancel reservation')
+   337→    }
+   338→  }
+   339→
+   340→  // ─── Delete Reservation ─────────────────────────────────────────────────────
+   341→
+   342→  const handleDelete = async (id: string) => {
+   343→    if (!confirm(t('deleteReservation', language))) return
+   344→    try {
+   345→      await useDataStore.getState().deleteReservation(id)
+   346→      fetchReservations()
+   347→    } catch (error: any) {
+   348→      alert(error.message || 'Failed to delete reservation')
+   349→    }
+   350→  }
+   351→
+   352→  // ─── Convert to Tenant ──────────────────────────────────────────────────────
+   353→
+   354→  const handleConvert = async () => {
+   355→    if (!convertTarget) return
+   356→    setConverting(true)
+   357→    try {
+   358→      await useDataStore.getState().convertReservation(convertTarget.id, {
+   359→        depositAppliedTo: convertForm.depositAppliedTo,
+   360→        rentAmount: Number(convertForm.rentAmount) || 0,
+   361→        paymentMethod: convertForm.paymentMethod || undefined,
+   362→        leaseStart: convertForm.leaseStart || undefined,
+   363→        leaseEnd: convertForm.leaseEnd || undefined,
+   364→        contractDuration: convertForm.contractDuration ? Number(convertForm.contractDuration) : undefined,
+   365→      })
+   366→      setConvertDialogOpen(false)
+   367→      fetchReservations()
+   368→    } catch (error: any) {
+   369→      alert(error.message || 'Failed to convert reservation')
+   370→    } finally {
+   371→      setConverting(false)
+   372→    }
+   373→  }
+   374→
+   375→  // ─── Update Form Helper ─────────────────────────────────────────────────────
+   376→
+   377→  const updateForm = (field: keyof ReservationFormState, value: string) => {
+   378→    setForm(prev => ({ ...prev, [field]: value }))
+   379→  }
+   380→
+   381→  const updateConvertForm = (field: keyof ConvertFormState, value: string) => {
+   382→    setConvertForm(prev => {
+   383→      const next = { ...prev, [field]: value }
+   384→      // Auto-calculate lease end from start + duration
+   385→      if ((field === 'leaseStart' || field === 'contractDuration') && next.leaseStart && next.contractDuration) {
+   386→        const start = new Date(next.leaseStart)
+   387→        const duration = Number(next.contractDuration) || 12
+   388→        start.setMonth(start.getMonth() + duration)
+   389→        next.leaseEnd = start.toISOString().split('T')[0]
+   390→      }
+   391→      return next
+   392→    })
+   393→  }
+   394→
+   395→  // ─── Loading State ──────────────────────────────────────────────────────────
+   396→
+   397→  if (loading) {
+   398→    return (
+   399→      <div className="flex items-center justify-center h-96">
+   400→        <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+   401→      </div>
+   402→    )
+   403→  }
+   404→
+   405→  // ─── Render ─────────────────────────────────────────────────────────────────
+   406→
+   407→  return (
+   408→    <div className="space-y-6">
+   409→      {/* ── Page Header ── */}
+   410→      <div className="flex items-center justify-between flex-wrap gap-4">
+   411→        <div>
+   412→          <h1 className="text-2xl font-bold">{t('reservations', language)}</h1>
+   413→          <p className="text-muted-foreground text-sm mt-1">
+   414→            {activeCount} {t('reservationsCount', language)}
+   415→          </p>
+   416→        </div>
+   417→        <Button onClick={openNew} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+   418→          <Plus className="w-4 h-4 mr-2" />
+   419→          {t('addReservation', language)}
+   420→        </Button>
+   421→      </div>
+   422→
+   423→      {/* ── Filter Bar ── */}
+   424→      <div className="flex gap-3 flex-wrap">
+   425→        <div className="relative flex-1 min-w-[200px]">
+   426→          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+   427→          <Input
+   428→            value={search}
+   429→            onChange={e => setSearch(e.target.value)}
+   430→            placeholder={t('searchReservations', language)}
+   431→            className="pl-9"
+   432→          />
+   433→        </div>
+   434→        <Select value={statusFilter} onValueChange={setStatusFilter}>
+   435→          <SelectTrigger className="w-[180px]">
+   436→            <SelectValue />
+   437→          </SelectTrigger>
+   438→          <SelectContent>
+   439→            <SelectItem value="all">{t('allStatus', language)}</SelectItem>
+   440→            {reservationStatusOptions.map(s => (
+   441→              <SelectItem key={s} value={s}>{getReservationStatusLabel(s, language)}</SelectItem>
+   442→            ))}
+   443→          </SelectContent>
+   444→        </Select>
+   445→      </div>
+   446→
+   447→      {/* ── Reservations Table ── */}
+   448→      <Card>
+   449→        <CardContent className="p-0">
+   450→          <div className="overflow-x-auto">
+   451→            <Table>
+   452→              <TableHeader>
+   453→                <TableRow>
+   454→                  <TableHead>{t('prospectName', language)}</TableHead>
+   455→                  <TableHead>{t('propertyUnit', language)}</TableHead>
+   456→                  <TableHead>{t('reservationDate', language)}</TableHead>
+   457→                  <TableHead>{t('expectedMoveInDate', language)}</TableHead>
+   458→                  <TableHead>{t('depositAmount', language)}</TableHead>
+   459→                  <TableHead>{t('depositStatus', language)}</TableHead>
+   460→                  <TableHead>{t('status', language)}</TableHead>
+   461→                  <TableHead className="text-right">{t('actions', language)}</TableHead>
+   462→                </TableRow>
+   463→              </TableHeader>
+   464→              <TableBody>
+   465→                {filtered.map(r => {
+   466→                  const displayName = getProspectNameByLang(r, language)
+   467→                  const propertyName = r.property ? getNameByLang(r.property, language) : '—'
+   468→                  const daysToExpiry = getDaysUntilExpiry(r.expiryDate)
+   469→                  const showExpiryWarning = daysToExpiry !== null && daysToExpiry >= 0 && daysToExpiry <= 7 && (r.status === 'pending' || r.status === 'confirmed')
+   470→                  const unitIsReserved = isUnitReserved(r.propertyId, r.unitNumber, r.id)
+   471→
+   472→                  return (
+   473→                    <TableRow key={r.id} className="hover:bg-muted/30">
+   474→                      {/* Prospect Name */}
+   475→                      <TableCell>
+   476→                        <div className="flex items-center gap-3">
+   477→                          <Avatar className="w-9 h-9">
+   478→                            <AvatarFallback className={cn2(
+   479→                              'text-xs font-semibold',
+   480→                              r.status === 'pending' ? 'bg-amber-100 text-amber-700' :
+   481→                              r.status === 'confirmed' ? 'bg-sky-100 text-sky-700' :
+   482→                              r.status === 'converted' ? 'bg-emerald-100 text-emerald-700' :
+   483→                              'bg-gray-100 text-gray-600'
+   484→                            )}>
+   485→                              {displayName.charAt(0).toUpperCase()}
+   486→                            </AvatarFallback>
+   487→                          </Avatar>
+   488→                          <div>
+   489→                            <p className="font-medium text-sm">{displayName}</p>
+   490→                            <p className="text-xs text-muted-foreground">{r.prospectPhone}</p>
+   491→                          </div>
+   492→                        </div>
+   493→                      </TableCell>
+   494→
+   495→                      {/* Property / Unit */}
+   496→                      <TableCell>
+   497→                        <div>
+   498→                          <p className="text-sm">{propertyName}</p>
+   499→                          <div className="flex items-center gap-1.5 mt-0.5">
+   500→                            {r.unitNumber && (
+   501→                              <span className="text-xs text-muted-foreground">{r.unitNumber}</span>
+   502→                            )}
+   503→                            {unitIsReserved && (
+   504→                              <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700 px-1 py-0">
+   505→                                {t('unitReserved', language)}
+   506→                              </Badge>
+   507→                            )}
+   508→                          </div>
+   509→                        </div>
+   510→                      </TableCell>
+   511→
+   512→                      {/* Reservation Date */}
+   513→                      <TableCell className="text-sm">
+   514→                        {formatDate(r.reservationDate)}
+   515→                      </TableCell>
+   516→
+   517→                      {/* Expected Move-in */}
+   518→                      <TableCell className="text-sm">
+   519→                        {r.expectedMoveInDate ? formatDate(r.expectedMoveInDate) : '—'}
+   520→                      </TableCell>
+   521→
+   522→                      {/* Deposit Amount */}
+   523→                      <TableCell>
+   524→                        {canSeeFinancials ? (
+   525→                          <span className="font-semibold text-sm">{formatAED(r.depositAmount)}</span>
+   526→                        ) : (
+   527→                          <Lock className="w-4 h-4 text-muted-foreground" />
+   528→                        )}
+   529→                      </TableCell>
+   530→
+   531→                      {/* Deposit Status */}
+   532→                      <TableCell>
+   533→                        <Badge className={cn2('text-xs', getDepositStatusColor(r.depositStatus))}>
+   534→                          {getDepositStatusLabel(r.depositStatus, language)}
+   535→                        </Badge>
+   536→                      </TableCell>
+   537→
+   538→                      {/* Reservation Status + Expiry Warning */}
+   539→                      <TableCell>
+   540→                        <div className="flex flex-col gap-1">
+   541→                          <Badge className={cn2('text-xs', getReservationStatusColor(r.status))}>
+   542→                            {getReservationStatusLabel(r.status, language)}
+   543→                          </Badge>
+   544→                          {showExpiryWarning && (
+   545→                            <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700 px-1 py-0 w-fit">
+   546→                              <AlertTriangle className="w-3 h-3 mr-0.5" />
+   547→                              {t('expiryWarning', language)} ({daysToExpiry}d)
+   548→                            </Badge>
+   549→                          )}
+   550→                        </div>
+   551→                      </TableCell>
+   552→
+   553→                      {/* Actions */}
+   554→                      <TableCell className="text-right">
+   555→                        <div className="flex items-center justify-end gap-1">
+   556→                          {r.status === 'pending' && canModify && (
+   557→                            <button
+   558→                              onClick={() => handleConfirm(r.id)}
+   559→                              className="p-1.5 rounded hover:bg-sky-50 text-sky-600"
+   560→                              title={t('confirmReservation', language)}
+   561→                            >
+   562→                              <CheckCircle2 className="w-4 h-4" />
+   563→                            </button>
+   564→                          )}
+   565→                          {r.status === 'confirmed' && canModify && (
+   566→                            <button
+   567→                              onClick={() => openConvert(r)}
+   568→                              className="p-1.5 rounded hover:bg-emerald-50 text-emerald-600"
+   569→                              title={t('convertToTenant', language)}
+   570→                            >
+   571→                              <ArrowRightLeft className="w-4 h-4" />
+   572→                            </button>
+   573→                          )}
+   574→                          {(r.status === 'confirmed') && canModify && (
+   575→                            <button
+   576→                              onClick={() => handleCancel(r.id)}
+   577→                              className="p-1.5 rounded hover:bg-red-50 text-red-500"
+   578→                              title={t('cancelReservation', language)}
+   579→                            >
+   580→                              <XCircle className="w-4 h-4" />
+   581→                            </button>
+   582→                          )}
+   583→                          {canModify && (
+   584→                            <button
+   585→                              onClick={() => openEdit(r)}
+   586→                              className="p-1.5 rounded hover:bg-muted text-muted-foreground"
+   587→                            >
+   588→                              <Pencil className="w-3.5 h-3.5" />
+   589→                            </button>
+   590→                          )}
+   591→                          {canModify && (
+   592→                            <button
+   593→                              onClick={() => handleDelete(r.id)}
+   594→                              className="p-1.5 rounded hover:bg-red-50 text-muted-foreground hover:text-red-500"
+   595→                            >
+   596→                              <Trash2 className="w-3.5 h-3.5" />
+   597→                            </button>
+   598→                          )}
+   599→                        </div>
+   600→                      </TableCell>
+   601→                    </TableRow>
+   602→                  )
+   603→                })}
+   604→              </TableBody>
+   605→            </Table>
+   606→          </div>
+   607→          {filtered.length === 0 && (
+   608→            <div className="text-center py-8 text-muted-foreground">
+   609→              {t('noReservationsFound', language)}
+   610→            </div>
+   611→          )}
+   612→        </CardContent>
+   613→      </Card>
+   614→
+   615→      {/* ── ADD / EDIT RESERVATION DIALOG ── */}
+   616→      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+   617→        <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden">
+   618→          <DialogHeader>
+   619→            <DialogTitle>
+   620→              {editing ? t('editReservation', language) : t('addReservation', language)}
+   621→            </DialogTitle>
+   622→          </DialogHeader>
+   623→
+   624→          <ScrollArea className="max-h-[70vh] pr-2">
+   625→            <div className="space-y-6 pb-4">
+   626→              {/* Prospect Name - 4 Languages */}
+   627→              <div>
+   628→                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+   629→                  <UserCheck className="w-4 h-4 text-emerald-600" />
+   630→                  {t('prospectName', language)}
+   631→                </h3>
+   632→                <div className="grid grid-cols-2 gap-4">
+   633→                  <div>
+   634→                    <Label>{t('nameEnglish', language)} *</Label>
+   635→                    <Input value={form.prospectName} onChange={e => updateForm('prospectName', e.target.value)} placeholder="John Doe" />
+   636→                  </div>
+   637→                  <div>
+   638→                    <Label>{t('nameArabic', language)}</Label>
+   639→                    <Input value={form.prospectNameAr} onChange={e => updateForm('prospectNameAr', e.target.value)} dir="rtl" placeholder="جون دو" />
+   640→                  </div>
+   641→                  <div>
+   642→                    <Label>{t('nameBengali', language)}</Label>
+   643→                    <Input value={form.prospectNameBn} onChange={e => updateForm('prospectNameBn', e.target.value)} placeholder="জন ডো" />
+   644→                  </div>
+   645→                  <div>
+   646→                    <Label>{t('nameUrdu', language)}</Label>
+   647→                    <Input value={form.prospectNameUr} onChange={e => updateForm('prospectNameUr', e.target.value)} dir="rtl" placeholder="جون ڈو" />
+   648→                  </div>
+   649→                </div>
+   650→              </div>
+   651→
+   652→              <Separator />
+   653→
+   654→              {/* Contact Information */}
+   655→              <div>
+   656→                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+   657→                  <Phone className="w-4 h-4 text-emerald-600" />
+   658→                  {t('contactInfo', language)}
+   659→                </h3>
+   660→                <div className="grid grid-cols-3 gap-4">
+   661→                  <div>
+   662→                    <Label>{t('phone', language)} *</Label>
+   663→                    <Input value={form.prospectPhone} onChange={e => updateForm('prospectPhone', e.target.value)} placeholder="+971501234567" />
+   664→                  </div>
+   665→                  <div>
+   666→                    <Label>{t('whatsapp', language)}</Label>
+   667→                    <Input value={form.prospectWhatsapp} onChange={e => updateForm('prospectWhatsapp', e.target.value)} placeholder="+971501234567" />
+   668→                  </div>
+   669→                  <div>
+   670→                    <Label>{t('email', language)}</Label>
+   671→                    <Input value={form.prospectEmail} onChange={e => updateForm('prospectEmail', e.target.value)} type="email" placeholder="prospect@email.com" />
+   672→                  </div>
+   673→                </div>
+   674→              </div>
+   675→
+   676→              <Separator />
+   677→
+   678→              {/* Property & Unit */}
+   679→              <div>
+   680→                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+   681→                  <Building className="w-4 h-4 text-emerald-600" />
+   682→                  {t('leaseInfo', language)}
+   683→                </h3>
+   684→                <div className="grid grid-cols-2 gap-4">
+   685→                  <div>
+   686→                    <Label>{t('propertyName', language)} *</Label>
+   687→                    <Select value={form.propertyId} onValueChange={v => updateForm('propertyId', v)}>
+   688→                      <SelectTrigger>
+   689→                        <SelectValue placeholder={t('selectProperty', language)} />
+   690→                      </SelectTrigger>
+   691→                      <SelectContent>
+   692→                        {properties.map(p => (
+   693→                          <SelectItem key={p.id} value={p.id}>{getNameByLang(p, language)}</SelectItem>
+   694→                        ))}
+   695→                      </SelectContent>
+   696→                    </Select>
+   697→                  </div>
+   698→                  <div>
+   699→                    <Label>{t('unitNumber', language)}</Label>
+   700→                    <Input value={form.unitNumber} onChange={e => updateForm('unitNumber', e.target.value)} placeholder="Apt 201" />
+   701→                    {isUnitReserved(form.propertyId, form.unitNumber, editing?.id) && (
+   702→                      <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+   703→                        <AlertTriangle className="w-3 h-3" />
+   704→                        {t('unitReserved', language)}
+   705→                      </p>
+   706→                    )}
+   707→                  </div>
+   708→                </div>
+   709→              </div>
+   710→
+   711→              <Separator />
+   712→
+   713→              {/* Deposit Information */}
+   714→              <div>
+   715→                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+   716→                  <DollarSign className="w-4 h-4 text-emerald-600" />
+   717→                  {t('financialInfo', language)}
+   718→                </h3>
+   719→                <div className="grid grid-cols-3 gap-4">
+   720→                  <div>
+   721→                    <Label>{t('depositAmount', language)}</Label>
+   722→                    <Input type="number" value={form.depositAmount} onChange={e => updateForm('depositAmount', e.target.value)} placeholder="0" />
+   723→                  </div>
+   724→                  <div>
+   725→                    <Label>{t('depositPaymentMethod', language)}</Label>
+   726→                    <Select value={form.depositPaymentMethod} onValueChange={v => updateForm('depositPaymentMethod', v)}>
+   727→                      <SelectTrigger>
+   728→                        <SelectValue placeholder={t('paymentMethod', language)} />
+   729→                      </SelectTrigger>
+   730→                      <SelectContent>
+   731→                        {paymentMethods.map(m => (
+   732→                          <SelectItem key={m} value={m}>{getPaymentMethodLabel(m, language)}</SelectItem>
+   733→                        ))}
+   734→                      </SelectContent>
+   735→                    </Select>
+   736→                  </div>
+   737→                  <div>
+   738→                    <Label>{t('depositReference', language)}</Label>
+   739→                    <Input value={form.depositReference} onChange={e => updateForm('depositReference', e.target.value)} placeholder={t('reference', language)} />
+   740→                  </div>
+   741→                </div>
+   742→              </div>
+   743→
+   744→              <Separator />
+   745→
+   746→              {/* Dates */}
+   747→              <div>
+   748→                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+   749→                  <Calendar className="w-4 h-4 text-emerald-600" />
+   750→                  {t('date', language)}
+   751→                </h3>
+   752→                <div className="grid grid-cols-2 gap-4">
+   753→                  <div>
+   754→                    <Label>{t('expectedMoveInDate', language)}</Label>
+   755→                    <Input type="date" value={form.expectedMoveInDate} onChange={e => updateForm('expectedMoveInDate', e.target.value)} />
+   756→                  </div>
+   757→                  <div>
+   758→                    <Label>{t('expiryDate', language)}</Label>
+   759→                    <Input type="date" value={form.expiryDate} onChange={e => updateForm('expiryDate', e.target.value)} />
+   760→                  </div>
+   761→                </div>
+   762→              </div>
+   763→
+   764→              <Separator />
+   765→
+   766→              {/* Notes */}
+   767→              <div>
+   768→                <Label>{t('notes', language)}</Label>
+   769→                <Textarea value={form.notes} onChange={e => updateForm('notes', e.target.value)} placeholder={t('notes', language)} rows={3} />
+   770→              </div>
+   771→            </div>
+   772→          </ScrollArea>
+   773→
+   774→          <DialogFooter>
+   775→            <Button variant="outline" onClick={() => setDialogOpen(false)}>{t('cancel', language)}</Button>
+   776→            <Button
+   777→              onClick={handleSave}
+   778→              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+   779→              disabled={!form.prospectName || !form.prospectPhone || !form.propertyId || saving}
+   780→            >
+   781→              {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+   782→              {t('save', language)}
+   783→            </Button>
+   784→          </DialogFooter>
+   785→        </DialogContent>
+   786→      </Dialog>
+   787→
+   788→      {/* ── CONVERT TO TENANT DIALOG ── */}
+   789→      <Dialog open={convertDialogOpen} onOpenChange={setConvertDialogOpen}>
+   790→        <DialogContent className="max-w-lg max-h-[90vh] overflow-hidden">
+   791→          <DialogHeader>
+   792→            <DialogTitle className="flex items-center gap-2">
+   793→              <ArrowRightLeft className="w-5 h-5 text-emerald-600" />
+   794→              {t('convertToTenant', language)}
+   795→            </DialogTitle>
+   796→          </DialogHeader>
+   797→
+   798→          {convertTarget && (
+   799→            <ScrollArea className="max-h-[70vh] pr-1">
+   800→              <div className="space-y-5 pb-4">
+   801→                {/* Reservation Summary */}
+   802→                <Card className="bg-muted/30">
+   803→                  <CardContent className="p-4 space-y-2">
+   804→                    <div className="flex items-center gap-2">
+   805→                      <Avatar className="w-8 h-8">
+   806→                        <AvatarFallback className="bg-emerald-100 text-emerald-700 text-xs font-semibold">
+   807→                          {getProspectNameByLang(convertTarget, language).charAt(0).toUpperCase()}
+   808→                        </AvatarFallback>
+   809→                      </Avatar>
+   810→                      <div>
+   811→                        <p className="font-medium text-sm">{getProspectNameByLang(convertTarget, language)}</p>
+   812→                        <p className="text-xs text-muted-foreground">{convertTarget.prospectPhone}</p>
+   813→                      </div>
+   814→                    </div>
+   815→                    <Separator />
+   816→                    <div className="grid grid-cols-2 gap-2 text-sm">
+   817→                      <div>
+   818→                        <span className="text-muted-foreground">{t('property', language)}: </span>
+   819→                        <span className="font-medium">
+   820→                          {convertTarget.property ? getNameByLang(convertTarget.property, language) : '—'}
+   821→                        </span>
+   822→                      </div>
+   823→                      <div>
+   824→                        <span className="text-muted-foreground">{t('unitNumber', language)}: </span>
+   825→                        <span className="font-medium">{convertTarget.unitNumber || '—'}</span>
+   826→                      </div>
+   827→                      <div>
+   828→                        <span className="text-muted-foreground">{t('depositAmount', language)}: </span>
+   829→                        <span className="font-medium">
+   830→                          {canSeeFinancials ? formatAED(convertTarget.depositAmount) : '•••'}
+   831→                        </span>
+   832→                      </div>
+   833→                      <div>
+   834→                        <span className="text-muted-foreground">{t('reservationDate', language)}: </span>
+   835→                        <span className="font-medium">{formatDate(convertTarget.reservationDate)}</span>
+   836→                      </div>
+   837→                    </div>
+   838→                  </CardContent>
+   839→                </Card>
+   840→
+   841→                <Separator />
+   842→
+   843→                {/* Deposit Application */}
+   844→                <div>
+   845→                  <Label className="mb-2 block">{t('depositAppliedTo', language)}</Label>
+   846→                  <Select value={convertForm.depositAppliedTo} onValueChange={v => updateConvertForm('depositAppliedTo', v)}>
+   847→                    <SelectTrigger>
+   848→                      <SelectValue />
+   849→                    </SelectTrigger>
+   850→                    <SelectContent>
+   851→                      <SelectItem value="security_deposit">{t('securityDeposit', language)}</SelectItem>
+   852→                      <SelectItem value="first_rent">{t('firstRent', language)}</SelectItem>
+   853→                      <SelectItem value="advance_rent">{t('advanceRent', language)}</SelectItem>
+   854→                      <SelectItem value="other">{t('other', language)}</SelectItem>
+   855→                    </SelectContent>
+   856→                  </Select>
+   857→                </div>
+   858→
+   859→                {/* Rent & Payment */}
+   860→                <div className="grid grid-cols-2 gap-4">
+   861→                  <div>
+   862→                    <Label>{t('monthlyRent', language)}</Label>
+   863→                    <Input type="number" value={convertForm.rentAmount} onChange={e => updateConvertForm('rentAmount', e.target.value)} placeholder="0" />
+   864→                  </div>
+   865→                  <div>
+   866→                    <Label>{t('paymentMethod', language)}</Label>
+   867→                    <Select value={convertForm.paymentMethod} onValueChange={v => updateConvertForm('paymentMethod', v)}>
+   868→                      <SelectTrigger>
+   869→                        <SelectValue placeholder={t('paymentMethod', language)} />
+   870→                      </SelectTrigger>
+   871→                      <SelectContent>
+   872→                        {paymentMethods.map(m => (
+   873→                          <SelectItem key={m} value={m}>{getPaymentMethodLabel(m, language)}</SelectItem>
+   874→                        ))}
+   875→                      </SelectContent>
+   876→                    </Select>
+   877→                  </div>
+   878→                </div>
+   879→
+   880→                {/* Lease Dates */}
+   881→                <div className="grid grid-cols-2 gap-4">
+   882→                  <div>
+   883→                    <Label>{t('leaseStart', language)}</Label>
+   884→                    <Input type="date" value={convertForm.leaseStart} onChange={e => updateConvertForm('leaseStart', e.target.value)} />
+   885→                  </div>
+   886→                  <div>
+   887→                    <Label>{t('leaseEnd', language)}</Label>
+   888→                    <Input type="date" value={convertForm.leaseEnd} onChange={e => updateConvertForm('leaseEnd', e.target.value)} />
+   889→                  </div>
+   890→                </div>
+   891→
+   892→                {/* Contract Duration */}
+   893→                <div>
+   894→                  <Label>{t('contractDuration', language)}</Label>
+   895→                  <Input type="number" value={convertForm.contractDuration} onChange={e => updateConvertForm('contractDuration', e.target.value)} placeholder="12" />
+   896→                </div>
+   897→              </div>
+   898→            </ScrollArea>
+   899→          )}
+   900→
+   901→          <DialogFooter>
+   902→            <Button variant="outline" onClick={() => setConvertDialogOpen(false)}>{t('cancel', language)}</Button>
+   903→            <Button
+   904→              onClick={handleConvert}
+   905→              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+   906→              disabled={!convertForm.rentAmount || converting}
+   907→            >
+   908→              {converting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+   909→              <ArrowRightLeft className="w-4 h-4 mr-2" />
+   910→              {t('convertToTenant', language)}
+   911→            </Button>
+   912→          </DialogFooter>
+   913→        </DialogContent>
+   914→      </Dialog>
+   915→    </div>
+   916→  )
+   917→}
+   918→

@@ -89,3 +89,30 @@ Stage Summary:
 - Root cause: Admin password reset not clearing rate limit/lockout entries (RateLimitEntry table)
 - Fixed files: reset-password route, users route, users/[id] route, signup route, login component
 - All changes deployed to production via GitHub push → Vercel auto-deploy
+---
+Task ID: adjustments-reservations-1
+Agent: Main Agent
+Task: Add Adjustments tab, Reservation Payment Date, Emirates ID, fix financial reporting
+
+Work Log:
+- Explored full codebase: rent-collection.tsx, reservations.tsx, daily-expenses-report.tsx, reports.tsx, API routes, Prisma schema, types, i18n
+- Identified that reservation deposits were NOT included in daily/monthly financial reports
+- Added "Adjustments" tab to Rent Collection with table view and filtering (property, unit, type, search)
+- Added depositPaymentDate and emiratesId fields to Reservation Prisma model
+- Updated API routes (POST/PUT) for reservations to handle new fields
+- Updated ReservationData type interface
+- Updated reservations.tsx frontend: date input for payment date, text input for Emirates ID, table columns
+- Fixed daily-expenses-report.tsx to include reservation deposits as income
+- Added refund handling for cancelled reservations with negative income entries
+- Added source field to DailyIncomeItem for rent vs reservation distinction
+- Added i18n keys for all new labels in EN/AR/BN/UR
+- Build verified, pushed to GitHub, Vercel auto-deployed successfully
+- Prisma migrate deploy runs as part of Vercel build process
+
+Stage Summary:
+- Adjustments tab: complete with table view, filters, stats card
+- Reservation Payment Date: schema + API + frontend implemented
+- Emirates ID: schema + API + frontend implemented
+- Financial reporting: reservation deposits now included in daily reports
+- Refund handling: cancelled/refunded reservations shown as negative income
+- All changes deployed to production

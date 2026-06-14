@@ -1,0 +1,495 @@
+  1001→      {/* Bill Invoice Dialog */}
+  1002→      <Dialog open={billDialogOpen} onOpenChange={setBillDialogOpen}>
+  1003→        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+  1004→          <DialogHeader>
+  1005→            <DialogTitle>{t('viewBill', language)}</DialogTitle>
+  1006→          </DialogHeader>
+  1007→          {billTenant && (
+  1008→            <BillInvoice
+  1009→              tenant={billTenant}
+  1010→              property={billTenant.property || undefined}
+  1011→              month={selectedMonth}
+  1012→              year={selectedYear}
+  1013→              paymentStatus={getTenantPaymentStatus(billTenant)}
+  1014→              paidAmount={(billTenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear).reduce((sum, p) => sum + p.amount, 0)}
+  1015→              language={language}
+  1016→            />
+  1017→          )}
+  1018→        </DialogContent>
+  1019→      </Dialog>
+  1020→
+  1021→      {/* WhatsApp Language Selection Dialog */}
+  1022→      <Dialog open={whatsappLangDialogOpen} onOpenChange={setWhatsappLangDialogOpen}>
+  1023→        <DialogContent className="sm:max-w-md">
+  1024→          <DialogHeader>
+  1025→            <DialogTitle className="flex items-center gap-2">
+  1026→              <MessageCircle className="w-5 h-5 text-green-600" />
+  1027→              {t('selectReminderLanguage', language)}
+  1028→            </DialogTitle>
+  1029→          </DialogHeader>
+  1030→          <div className="space-y-3 py-4">
+  1031→            <p className="text-sm text-muted-foreground">{t('reminderLanguageDesc', language)}</p>
+  1032→            <div className="space-y-2">
+  1033→              <Button
+  1034→                className="w-full justify-start bg-green-600 hover:bg-green-700 text-white"
+  1035→                onClick={() => {
+  1036→                  if (whatsappRemindAll) {
+  1037→                    sendAllRemindersWithLang('ar')
+  1038→                  } else if (whatsappTargetTenant) {
+  1039→                    window.open(getWhatsAppLink(whatsappTargetTenant.whatsapp || whatsappTargetTenant.phone, getNameByLang(whatsappTargetTenant, language), whatsappTargetTenant.rentAmount, selectedMonth, selectedYear, 'ar'), '_blank')
+  1040→                  }
+  1041→                  setWhatsappLangDialogOpen(false)
+  1042→                }}
+  1043→              >
+  1044→                {t('sendArabic', language)}
+  1045→              </Button>
+  1046→              <Button
+  1047→                className="w-full justify-start bg-blue-600 hover:bg-blue-700 text-white"
+  1048→                onClick={() => {
+  1049→                  if (whatsappRemindAll) {
+  1050→                    sendAllRemindersWithLang('en')
+  1051→                  } else if (whatsappTargetTenant) {
+  1052→                    window.open(getWhatsAppLink(whatsappTargetTenant.whatsapp || whatsappTargetTenant.phone, getNameByLang(whatsappTargetTenant, language), whatsappTargetTenant.rentAmount, selectedMonth, selectedYear, 'en'), '_blank')
+  1053→                  }
+  1054→                  setWhatsappLangDialogOpen(false)
+  1055→                }}
+  1056→              >
+  1057→                {t('sendEnglish', language)}
+  1058→              </Button>
+  1059→              <Button
+  1060→                className="w-full justify-start bg-teal-600 hover:bg-teal-700 text-white"
+  1061→                onClick={() => {
+  1062→                  if (whatsappRemindAll) {
+  1063→                    sendAllRemindersWithLang('ur')
+  1064→                  } else if (whatsappTargetTenant) {
+  1065→                    window.open(getWhatsAppLink(whatsappTargetTenant.whatsapp || whatsappTargetTenant.phone, getNameByLang(whatsappTargetTenant, language), whatsappTargetTenant.rentAmount, selectedMonth, selectedYear, 'ur'), '_blank')
+  1066→                  }
+  1067→                  setWhatsappLangDialogOpen(false)
+  1068→                }}
+  1069→              >
+  1070→                {t('sendUrdu', language)}
+  1071→              </Button>
+  1072→              <Button
+  1073→                className="w-full justify-start bg-orange-500 hover:bg-orange-600 text-white"
+  1074→                onClick={() => {
+  1075→                  if (whatsappRemindAll) {
+  1076→                    sendAllRemindersWithLang('hi')
+  1077→                  } else if (whatsappTargetTenant) {
+  1078→                    window.open(getWhatsAppLink(whatsappTargetTenant.whatsapp || whatsappTargetTenant.phone, getNameByLang(whatsappTargetTenant, language), whatsappTargetTenant.rentAmount, selectedMonth, selectedYear, 'hi'), '_blank')
+  1079→                  }
+  1080→                  setWhatsappLangDialogOpen(false)
+  1081→                }}
+  1082→              >
+  1083→                {t('sendHindi', language)}
+  1084→              </Button>
+  1085→              <Button
+  1086→                className="w-full justify-start bg-purple-600 hover:bg-purple-700 text-white"
+  1087→                onClick={() => {
+  1088→                  if (whatsappRemindAll) {
+  1089→                    sendAllRemindersWithLang('bn')
+  1090→                  } else if (whatsappTargetTenant) {
+  1091→                    window.open(getWhatsAppLink(whatsappTargetTenant.whatsapp || whatsappTargetTenant.phone, getNameByLang(whatsappTargetTenant, language), whatsappTargetTenant.rentAmount, selectedMonth, selectedYear, 'bn'), '_blank')
+  1092→                  }
+  1093→                  setWhatsappLangDialogOpen(false)
+  1094→                }}
+  1095→              >
+  1096→                {t('sendBengali', language)}
+  1097→              </Button>
+  1098→            </div>
+  1099→          </div>
+  1100→        </DialogContent>
+  1101→      </Dialog>
+  1102→
+  1103→      {/* Invoice Search Results Dialog */}
+  1104→      <Dialog open={invoiceSearchOpen} onOpenChange={setInvoiceSearchOpen}>
+  1105→        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+  1106→          <DialogHeader>
+  1107→            <DialogTitle className="flex items-center gap-2">
+  1108→              <Search className="w-5 h-5 text-emerald-600" />
+  1109→              {t('searchInvoice', language) || 'Invoice Search'} — {invoiceSearch}
+  1110→            </DialogTitle>
+  1111→          </DialogHeader>
+  1112→          <div className="space-y-3 py-2">
+  1113→            {invoiceSearchResults && invoiceSearchResults.length === 0 && (
+  1114→              <div className="text-center py-8">
+  1115→                <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-3">
+  1116→                  <Search className="w-6 h-6 text-gray-400" />
+  1117→                </div>
+  1118→                <p className="text-muted-foreground font-medium">
+  1119→                  {t('noInvoiceFound', language) || `No invoice found for "${invoiceSearch}"`}
+  1120→                </p>
+  1121→                <p className="text-xs text-muted-foreground mt-1">
+  1122→                  {t('tryDifferentSearch', language) || 'Try searching with a different invoice number (e.g. INV-202606-101)'}
+  1123→                </p>
+  1124→              </div>
+  1125→            )}
+  1126→            {invoiceSearchResults && invoiceSearchResults.map((result: any, idx: number) => (
+  1127→              <div key={idx} className="border rounded-lg p-3 hover:bg-gray-50 transition-colors">
+  1128→                <div className="flex items-start justify-between mb-2">
+  1129→                  <div>
+  1130→                    <div className="flex items-center gap-2">
+  1131→                      <Badge variant={result.type === 'tenant_invoice' ? 'default' : 'secondary'} className={result.type === 'tenant_invoice' ? 'bg-emerald text-white' : ''}>
+  1132→                        {result.type === 'tenant_invoice' ? t('invoice', language) || 'Invoice' : t('expenses', language) || 'Expense'}
+  1133→                      </Badge>
+  1134→                      <span className="font-mono font-bold text-sm">{result.invoiceNumber}</span>
+  1135→                    </div>
+  1136→                    <p className="text-sm text-gray-700 mt-1">{result.description}</p>
+  1137→                  </div>
+  1138→                  <div className="text-right">
+  1139→                    {canSeeRevenue && <p className="font-bold text-sm">{formatAED(result.amount)}</p>}
+  1140→                    <Badge className={cn2('text-xs', getPaymentStatusColor(result.paymentStatus))}>
+  1141→                      {result.paymentStatus === 'paid' && (t('paid', language) || 'Paid')}
+  1142→                      {result.paymentStatus === 'partial' && (t('partial', language) || 'Partial')}
+  1143→                      {result.paymentStatus === 'overdue' && (t('overdue', language) || 'Overdue')}
+  1144→                      {result.paymentStatus === 'unpaid' && (t('unpaid', language) || 'Unpaid')}
+  1145→                      {result.paymentStatus === 'due-soon' && (t('dueSoon', language) || 'Due Soon')}
+  1146→                    </Badge>
+  1147→                  </div>
+  1148→                </div>
+  1149→                <div className="flex items-center gap-4 text-xs text-muted-foreground">
+  1150→                  {result.tenantName && <span>{result.tenantName}</span>}
+  1151→                  {result.propertyName && <span>{result.propertyName}</span>}
+  1152→                  {result.unitNumber && <span>{t('unitNumber', language)}: {result.unitNumber}</span>}
+  1153→                  {result.vendor && <span>{t('vendor', language)}: {result.vendor}</span>}
+  1154→                  {result.building && <span>{result.building}</span>}
+  1155→                </div>
+  1156→                {result.paidAmount !== undefined && canSeeRevenue && (
+  1157→                  <div className="flex gap-4 mt-2 text-xs">
+  1158→                    <span className="text-emerald-600">{t('paid', language)}: {formatAED(result.paidAmount)}</span>
+  1159→                    {result.remaining > 0 && <span className="text-red-600">{t('remaining', language)}: {formatAED(result.remaining)}</span>}
+  1160→                  </div>
+  1161→                )}
+  1162→              </div>
+  1163→            ))}
+  1164→          </div>
+  1165→        </DialogContent>
+  1166→      </Dialog>
+  1167→
+  1168→      {/* Edit Payment Dialog */}
+  1169→      <Dialog open={editPaymentDialog} onOpenChange={setEditPaymentDialog}>
+  1170→        <DialogContent className="sm:max-w-lg">
+  1171→          <DialogHeader>
+  1172→            <DialogTitle className="flex items-center gap-2">
+  1173→              <Pencil className="w-5 h-5 text-blue-600" />
+  1174→              {language === 'ar' ? 'تعديل الدفعة' : language === 'bn' ? 'পেমেন্ট সম্পাদনা' : language === 'ur' ? 'ادائیگی میں ترمیم' : 'Edit Payment'}
+  1175→            </DialogTitle>
+  1176→          </DialogHeader>
+  1177→          <div className="space-y-4 py-2">
+  1178→            <div>
+  1179→              <Label>{t('amount', language)}</Label>
+  1180→              <Input type="number" value={editForm.amount} onChange={e => setEditForm({ ...editForm, amount: Number(e.target.value) })} />
+  1181→            </div>
+  1182→            <div>
+  1183→              <Label>{t('paymentDate', language)}</Label>
+  1184→              <Input type="date" value={editForm.date} onChange={e => setEditForm({ ...editForm, date: e.target.value })} />
+  1185→            </div>
+  1186→            <div>
+  1187→              <Label>{t('paymentMethod', language)}</Label>
+  1188→              <Select value={editForm.method} onValueChange={v => setEditForm({ ...editForm, method: v })}>
+  1189→                <SelectTrigger><SelectValue /></SelectTrigger>
+  1190→                <SelectContent>
+  1191→                  <SelectItem value="cash">{t('cash', language)}</SelectItem>
+  1192→                  <SelectItem value="transfer">{t('bankTransfer', language)}</SelectItem>
+  1193→                  <SelectItem value="cheque">{t('cheque', language)}</SelectItem>
+  1194→                </SelectContent>
+  1195→              </Select>
+  1196→            </div>
+  1197→            <div>
+  1198→              <Label>{t('reference', language)}</Label>
+  1199→              <Input value={editForm.reference} onChange={e => setEditForm({ ...editForm, reference: e.target.value })} />
+  1200→            </div>
+  1201→            <div>
+  1202→              <Label>{t('notes', language)}</Label>
+  1203→              <Input value={editForm.notes} onChange={e => setEditForm({ ...editForm, notes: e.target.value })} />
+  1204→            </div>
+  1205→            {selectedPayment?.allocationType && (
+  1206→              <div className="flex items-center gap-2">
+  1207→                <Label>{t('allocationType', language)}</Label>
+  1208→                <Badge variant="outline" className="text-xs px-2 py-0.5 border-emerald-300 text-emerald-700">
+  1209→                  {selectedPayment.allocationType === 'CURRENT_RENT' && t('currentRent', language)}
+  1210→                  {selectedPayment.allocationType === 'HISTORICAL_DEBT' && t('historicalDebt', language)}
+  1211→                  {selectedPayment.allocationType === 'ADVANCE_PAYMENT' && t('advancePayment', language)}
+  1212→                </Badge>
+  1213→              </div>
+  1214→            )}
+  1215→          </div>
+  1216→          {paymentError && (
+  1217→            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+  1218→              <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+  1219→              <p className="text-sm text-red-700">{paymentError}</p>
+  1220→            </div>
+  1221→          )}
+  1222→          <DialogFooter>
+  1223→            <Button variant="outline" onClick={() => { setEditPaymentDialog(false); setPaymentError('') }}>{t('cancel', language)}</Button>
+  1224→            <Button onClick={handleEditPayment} disabled={editForm.amount <= 0 || paymentActionLoading} className="bg-blue-600 hover:bg-blue-700 text-white">
+  1225→              {paymentActionLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Pencil className="w-4 h-4 mr-2" />}
+  1226→              {t('save', language)}
+  1227→            </Button>
+  1228→          </DialogFooter>
+  1229→        </DialogContent>
+  1230→      </Dialog>
+  1231→
+  1232→      {/* Delete Payment Dialog */}
+  1233→      <Dialog open={deletePaymentDialog} onOpenChange={setDeletePaymentDialog}>
+  1234→        <DialogContent className="sm:max-w-md">
+  1235→          <DialogHeader>
+  1236→            <DialogTitle className="flex items-center gap-2 text-red-600">
+  1237→              <Trash2 className="w-5 h-5" />
+  1238→              {language === 'ar' ? 'حذف الدفعة' : language === 'bn' ? 'পেমেন্ট মুছুন' : language === 'ur' ? 'ادائیگی حذف کریں' : 'Delete Payment'}
+  1239→            </DialogTitle>
+  1240→          </DialogHeader>
+  1241→          <div className="py-4">
+  1242→            <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+  1243→              <div className="flex items-start gap-3">
+  1244→                <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+  1245→                <div>
+  1246→                  <p className="text-sm text-red-800 font-medium">
+  1247→                    {language === 'ar' ? 'هل أنت متأكد من حذف هذه الدفعة؟' : language === 'bn' ? 'আপনি কি এই পেমেন্টটি মুছে ফেলতে চান?' : language === 'ur' ? 'کیا آپ یہ ادائیگی حذف کرنا چاہتے ہیں؟' : 'Are you sure you want to delete this payment?'}
+  1248→                  </p>
+  1249→                  {selectedPayment && canSeeRevenue && (
+  1250→                    <p className="text-sm text-red-600 mt-1">
+  1251→                      {formatAED(selectedPayment.amount)} — {selectedPayment.date ? new Date(selectedPayment.date).toLocaleDateString() : ''}
+  1252→                    </p>
+  1253→                  )}
+  1254→                  <p className="text-xs text-red-500 mt-1">
+  1255→                    {language === 'ar' ? 'سيتم تحديث حالة الدفع والإيرادات تلقائياً' : language === 'bn' ? 'পেমেন্ট স্ট্যাটাস এবং রেভিনিউ স্বয়ংক্রিয়ভাবে আপডেট হবে' : language === 'ur' ? 'ادائیگی کی حیثیت اور آمدنی خودکار طور پر اپ ڈیٹ ہوگی' : 'Payment status and revenue will be automatically recalculated.'}
+  1256→                  </p>
+  1257→                </div>
+  1258→              </div>
+  1259→            </div>
+  1260→            <div className="mt-4">
+  1261→              <Label>
+  1262→                {language === 'ar' ? 'سبب الحذف (اختياري)' : language === 'bn' ? 'মুছে ফেলার কারণ (ঐচ্ছিক)' : language === 'ur' ? 'حذف کرنے کی وجہ (اختیاری)' : 'Reason for deletion (optional)'}
+  1263→              </Label>
+  1264→              <Input
+  1265→                value={deleteReason}
+  1266→                onChange={e => setDeleteReason(e.target.value)}
+  1267→                placeholder={language === 'ar' ? 'أدخل سبب الحذف...' : language === 'bn' ? 'মুছে ফেলার কারণ লিখুন...' : language === 'ur' ? 'حذف کرنے کی وجہ درج کریں...' : 'Enter reason for deletion...'}
+  1268→                className="mt-1"
+  1269→              />
+  1270→            </div>
+  1271→          </div>
+  1272→          {paymentError && (
+  1273→            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+  1274→              <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+  1275→              <p className="text-sm text-red-700">{paymentError}</p>
+  1276→            </div>
+  1277→          )}
+  1278→          <DialogFooter>
+  1279→            <Button variant="outline" onClick={() => { setDeletePaymentDialog(false); setPaymentError('') }}>{t('cancel', language)}</Button>
+  1280→            <Button onClick={handleDeletePayment} disabled={paymentActionLoading} variant="destructive">
+  1281→              {paymentActionLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
+  1282→              {language === 'ar' ? 'حذف الدفعة' : language === 'bn' ? 'পেমেন্ট মুছুন' : language === 'ur' ? 'ادائیگی حذف کریں' : 'Delete Payment'}
+  1283→            </Button>
+  1284→          </DialogFooter>
+  1285→        </DialogContent>
+  1286→      </Dialog>
+  1287→
+  1288→      {/* Create Adjustment Dialog */}
+  1289→      <Dialog open={adjustmentDialogOpen} onOpenChange={setAdjustmentDialogOpen}>
+  1290→        <DialogContent className="sm:max-w-lg">
+  1291→          <DialogHeader>
+  1292→            <DialogTitle className="flex items-center gap-2">
+  1293→              <MinusCircle className="w-5 h-5 text-amber-600" />
+  1294→              {t('createAdjustment', language)} - {adjustmentTenant && getNameByLang(adjustmentTenant, language)}
+  1295→            </DialogTitle>
+  1296→          </DialogHeader>
+  1297→          <div className="space-y-4 py-2">
+  1298→            <div>
+  1299→              <Label>{t('adjustmentAmount', language)}</Label>
+  1300→              <Input type="number" value={adjustmentForm.amount} onChange={e => setAdjustmentForm({ ...adjustmentForm, amount: Number(e.target.value) })} />
+  1301→            </div>
+  1302→            <div>
+  1303→              <Label>{t('adjustmentType', language)}</Label>
+  1304→              <Select value={adjustmentForm.adjustmentType} onValueChange={v => setAdjustmentForm({ ...adjustmentForm, adjustmentType: v })}>
+  1305→                <SelectTrigger><SelectValue /></SelectTrigger>
+  1306→                <SelectContent>
+  1307→                  <SelectItem value="maintenance_delay">{t('maintenance_delay', language)}</SelectItem>
+  1308→                  <SelectItem value="flood_damage">{t('flood_damage', language)}</SelectItem>
+  1309→                  <SelectItem value="utility_failure">{t('utility_failure', language)}</SelectItem>
+  1310→                  <SelectItem value="goodwill">{t('goodwill', language)}</SelectItem>
+  1311→                  <SelectItem value="contract_amendment">{t('contract_amendment', language)}</SelectItem>
+  1312→                  <SelectItem value="owner_discount">{t('owner_discount', language)}</SelectItem>
+  1313→                  <SelectItem value="other">{t('other', language)}</SelectItem>
+  1314→                </SelectContent>
+  1315→              </Select>
+  1316→            </div>
+  1317→            <div>
+  1318→              <Label>{t('adjustmentReason', language)}</Label>
+  1319→              <Input value={adjustmentForm.reason} onChange={e => setAdjustmentForm({ ...adjustmentForm, reason: e.target.value })} placeholder={language === 'ar' ? 'أدخل السبب...' : language === 'bn' ? 'কারণ লিখুন...' : language === 'ur' ? 'وجہ درج کریں...' : 'Enter reason...'} />
+  1320→            </div>
+  1321→            <div>
+  1322→              <Label>{t('notes', language)}</Label>
+  1323→              <Input value={adjustmentForm.notes} onChange={e => setAdjustmentForm({ ...adjustmentForm, notes: e.target.value })} />
+  1324→            </div>
+  1325→            <div className="grid grid-cols-2 gap-4">
+  1326→              <div>
+  1327→                <Label>{t('effectiveMonth', language)}</Label>
+  1328→                <Select value={String(adjustmentForm.effectiveMonth)} onValueChange={v => setAdjustmentForm({ ...adjustmentForm, effectiveMonth: Number(v) })}>
+  1329→                  <SelectTrigger><SelectValue /></SelectTrigger>
+  1330→                  <SelectContent>
+  1331→                    {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+  1332→                      <SelectItem key={m} value={String(m)}>{getMonthName(m, language)}</SelectItem>
+  1333→                    ))}
+  1334→                  </SelectContent>
+  1335→                </Select>
+  1336→              </div>
+  1337→              <div>
+  1338→                <Label>{t('effectiveYear', language)}</Label>
+  1339→                <Select value={String(adjustmentForm.effectiveYear)} onValueChange={v => setAdjustmentForm({ ...adjustmentForm, effectiveYear: Number(v) })}>
+  1340→                  <SelectTrigger><SelectValue /></SelectTrigger>
+  1341→                  <SelectContent>
+  1342→                    <SelectItem value="2024">2024</SelectItem>
+  1343→                    <SelectItem value="2025">2025</SelectItem>
+  1344→                    <SelectItem value="2026">2026</SelectItem>
+  1345→                    <SelectItem value="2027">2027</SelectItem>
+  1346→                  </SelectContent>
+  1347→                </Select>
+  1348→              </div>
+  1349→            </div>
+  1350→            <div>
+  1351→              <Label>{t('durationMonths', language)}</Label>
+  1352→              <Input type="number" min={1} max={12} value={adjustmentForm.durationMonths} onChange={e => setAdjustmentForm({ ...adjustmentForm, durationMonths: Number(e.target.value) || 1 })} />
+  1353→            </div>
+  1354→          </div>
+  1355→          {adjustmentError && (
+  1356→            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+  1357→              <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+  1358→              <p className="text-sm text-red-700">{adjustmentError}</p>
+  1359→            </div>
+  1360→          )}
+  1361→          <DialogFooter>
+  1362→            <Button variant="outline" onClick={() => setAdjustmentDialogOpen(false)}>{t('cancel', language)}</Button>
+  1363→            <Button onClick={handleCreateAdjustment} disabled={adjustmentForm.amount <= 0 || !adjustmentForm.reason || adjustmentLoading} className="bg-amber-600 hover:bg-amber-700 text-white">
+  1364→              {adjustmentLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <MinusCircle className="w-4 h-4 mr-2" />}
+  1365→              {t('createAdjustment', language)}
+  1366→            </Button>
+  1367→          </DialogFooter>
+  1368→        </DialogContent>
+  1369→      </Dialog>
+  1370→
+  1371→      {/* Cancel Adjustment Dialog */}
+  1372→      <Dialog open={cancelAdjustmentDialogOpen} onOpenChange={setCancelAdjustmentDialogOpen}>
+  1373→        <DialogContent className="sm:max-w-md">
+  1374→          <DialogHeader>
+  1375→            <DialogTitle className="flex items-center gap-2 text-amber-600">
+  1376→              <MinusCircle className="w-5 h-5" />
+  1377→              {t('cancelAdjustment', language)}
+  1378→            </DialogTitle>
+  1379→          </DialogHeader>
+  1380→          <div className="py-4">
+  1381→            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+  1382→              <div className="flex items-start gap-3">
+  1383→                <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+  1384→                <div>
+  1385→                  <p className="text-sm text-amber-800 font-medium">
+  1386→                    {language === 'ar' ? 'هل أنت متأكد من إلغاء هذا التعديل؟' : language === 'bn' ? 'আপনি কি এই সমন্বয়টি বাতিল করতে চান?' : language === 'ur' ? 'کیا آپ یہ ایڈجسٹمنٹ منسوخ کرنا چاہتے ہیں؟' : 'Are you sure you want to cancel this adjustment?'}
+  1387→                  </p>
+  1388→                  {cancelAdjustmentTarget && canSeeRevenue && (
+  1389→                    <p className="text-sm text-amber-600 mt-1">
+  1390→                      {formatAED(cancelAdjustmentTarget.amount)} — {t(cancelAdjustmentTarget.adjustmentType as any, language) || cancelAdjustmentTarget.adjustmentType}
+  1391→                    </p>
+  1392→                  )}
+  1393→                  <p className="text-xs text-amber-500 mt-1">
+  1394→                    {language === 'ar' ? 'سيتم تحديث حالة الدفع تلقائياً' : language === 'bn' ? 'পেমেন্ট স্ট্যাটাস স্বয়ংক্রিয়ভাবে আপডেট হবে' : language === 'ur' ? 'ادائیگی کی حیثیت خودکار طور پر اپ ڈیٹ ہوگی' : 'Payment status will be automatically recalculated.'}
+  1395→                  </p>
+  1396→                </div>
+  1397→              </div>
+  1398→            </div>
+  1399→            <div className="mt-4">
+  1400→              <Label>{t('cancellationReason', language)}</Label>
+  1401→              <Input
+  1402→                value={cancelAdjustmentReason}
+  1403→                onChange={e => setCancelAdjustmentReason(e.target.value)}
+  1404→                placeholder={language === 'ar' ? 'أدخل سبب الإلغاء...' : language === 'bn' ? 'বাতিলের কারণ লিখুন...' : language === 'ur' ? 'منسوخ کرنے کی وجہ درج کریں...' : 'Enter cancellation reason...'}
+  1405→                className="mt-1"
+  1406→              />
+  1407→            </div>
+  1408→          </div>
+  1409→          {adjustmentError && (
+  1410→            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+  1411→              <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+  1412→              <p className="text-sm text-red-700">{adjustmentError}</p>
+  1413→            </div>
+  1414→          )}
+  1415→          <DialogFooter>
+  1416→            <Button variant="outline" onClick={() => { setCancelAdjustmentDialogOpen(false); setAdjustmentError('') }}>{t('cancel', language)}</Button>
+  1417→            <Button onClick={handleCancelAdjustment} disabled={adjustmentLoading} variant="destructive">
+  1418→              {adjustmentLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <X className="w-4 h-4 mr-2" />}
+  1419→              {t('cancelAdjustment', language)}
+  1420→            </Button>
+  1421→          </DialogFooter>
+  1422→        </DialogContent>
+  1423→      </Dialog>
+  1424→
+  1425→      {/* Edit Adjustment Dialog */}
+  1426→      <Dialog open={editAdjustmentDialogOpen} onOpenChange={setEditAdjustmentDialogOpen}>
+  1427→        <DialogContent className="sm:max-w-md">
+  1428→          <DialogHeader>
+  1429→            <DialogTitle className="flex items-center gap-2 text-amber-600">
+  1430→              <Pencil className="w-5 h-5" />
+  1431→              {t('editAdjustment', language)}
+  1432→            </DialogTitle>
+  1433→          </DialogHeader>
+  1434→          <div className="space-y-4 py-2">
+  1435→            <div>
+  1436→              <Label>{t('adjustmentAmount', language)}</Label>
+  1437→              <Input type="number" min={1} value={editAdjustmentForm.amount} onChange={e => setEditAdjustmentForm({ ...editAdjustmentForm, amount: Number(e.target.value) || 0 })} />
+  1438→            </div>
+  1439→            <div>
+  1440→              <Label>{t('adjustmentType', language)}</Label>
+  1441→              <Select value={editAdjustmentForm.adjustmentType} onValueChange={v => setEditAdjustmentForm({ ...editAdjustmentForm, adjustmentType: v })}>
+  1442→                <SelectTrigger><SelectValue /></SelectTrigger>
+  1443→                <SelectContent>
+  1444→                  <SelectItem value="maintenance_delay">{t('maintenance_delay', language)}</SelectItem>
+  1445→                  <SelectItem value="flood_damage">{t('flood_damage', language)}</SelectItem>
+  1446→                  <SelectItem value="utility_failure">{t('utility_failure', language)}</SelectItem>
+  1447→                  <SelectItem value="goodwill">{t('goodwill', language)}</SelectItem>
+  1448→                  <SelectItem value="contract_amendment">{t('contract_amendment', language)}</SelectItem>
+  1449→                  <SelectItem value="owner_discount">{t('owner_discount', language)}</SelectItem>
+  1450→                  <SelectItem value="other">{t('other', language)}</SelectItem>
+  1451→                </SelectContent>
+  1452→              </Select>
+  1453→            </div>
+  1454→            <div>
+  1455→              <Label>{t('adjustmentReason', language)}</Label>
+  1456→              <Input value={editAdjustmentForm.reason} onChange={e => setEditAdjustmentForm({ ...editAdjustmentForm, reason: e.target.value })} />
+  1457→            </div>
+  1458→            <div>
+  1459→              <Label>{t('notes', language)}</Label>
+  1460→              <Input value={editAdjustmentForm.notes} onChange={e => setEditAdjustmentForm({ ...editAdjustmentForm, notes: e.target.value })} />
+  1461→            </div>
+  1462→            <div className="grid grid-cols-2 gap-4">
+  1463→              <div>
+  1464→                <Label>{t('effectiveMonth', language)}</Label>
+  1465→                <Input type="number" min={1} max={12} value={editAdjustmentForm.effectiveMonth} onChange={e => setEditAdjustmentForm({ ...editAdjustmentForm, effectiveMonth: Number(e.target.value) || 1 })} />
+  1466→              </div>
+  1467→              <div>
+  1468→                <Label>{t('effectiveYear', language)}</Label>
+  1469→                <Input type="number" min={2020} max={2030} value={editAdjustmentForm.effectiveYear} onChange={e => setEditAdjustmentForm({ ...editAdjustmentForm, effectiveYear: Number(e.target.value) || 2026 })} />
+  1470→              </div>
+  1471→            </div>
+  1472→            <div>
+  1473→              <Label>{t('durationMonths', language)}</Label>
+  1474→              <Input type="number" min={1} max={12} value={editAdjustmentForm.durationMonths} onChange={e => setEditAdjustmentForm({ ...editAdjustmentForm, durationMonths: Number(e.target.value) || 1 })} />
+  1475→            </div>
+  1476→          </div>
+  1477→          {adjustmentError && (
+  1478→            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+  1479→              <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+  1480→              <p className="text-sm text-red-700">{adjustmentError}</p>
+  1481→            </div>
+  1482→          )}
+  1483→          <DialogFooter>
+  1484→            <Button variant="outline" onClick={() => { setEditAdjustmentDialogOpen(false); setAdjustmentError('') }}>{t('cancel', language)}</Button>
+  1485→            <Button onClick={handleEditAdjustment} disabled={editAdjustmentForm.amount <= 0 || !editAdjustmentForm.reason || adjustmentLoading} className="bg-amber-600 hover:bg-amber-700 text-white">
+  1486→              {adjustmentLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Pencil className="w-4 h-4 mr-2" />}
+  1487→              {t('save', language)}
+  1488→            </Button>
+  1489→          </DialogFooter>
+  1490→        </DialogContent>
+  1491→      </Dialog>
+  1492→    </div>
+  1493→  )
+  1494→}
+  1495→

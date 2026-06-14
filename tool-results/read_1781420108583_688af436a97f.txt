@@ -1,0 +1,502 @@
+   635→              type="date"
+   636→              value={paymentDateFilter}
+   637→              onChange={e => setPaymentDateFilter(e.target.value)}
+   638→              className="border-0 outline-none text-sm bg-transparent w-[130px] cursor-pointer"
+   639→              title={t('paymentDate', language)}
+   640→            />
+   641→            {paymentDateFilter && (
+   642→              <button onClick={() => setPaymentDateFilter('')} className="text-gray-400 hover:text-gray-600" title={t('clearFilter', language)}>
+   643→                <X className="w-3.5 h-3.5" />
+   644→              </button>
+   645→            )}
+   646→          </div>
+   647→        )}
+   648→        <div className="flex items-center gap-2 bg-white rounded-lg border px-2 py-1 ml-auto">
+   649→          <Search className="w-4 h-4 text-gray-400" />
+   650→          <input
+   651→            type="text"
+   652→            placeholder={t('searchTenant', language) || 'Search Tenant / Property'}
+   653→            value={tenantSearch}
+   654→            onChange={e => setTenantSearch(e.target.value)}
+   655→            className="border-0 outline-none text-sm w-36 lg:w-52 bg-transparent"
+   656→          />
+   657→          {tenantSearch && (
+   658→            <button onClick={() => setTenantSearch('')} className="text-gray-400 hover:text-gray-600">
+   659→              <X className="w-3 h-3" />
+   660→            </button>
+   661→          )}
+   662→        </div>
+   663→      </div>
+   664→
+   665→      {/* Tenant Payment Grid */}
+   666→      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger-children">
+   667→        {filteredTenants.map(tenant => {
+   668→          const status = getTenantPaymentStatus(tenant)
+   669→          const paid = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear).reduce((sum, p) => sum + p.amount, 0)
+   670→          const tenantAdjustments = getTenantAdjustments(tenant)
+   671→          const totalAdjustments = tenantAdjustments.reduce((sum, a) => sum + a.amount, 0)
+   672→          // Calculate true remaining balance including opening balance and credit balance
+   673→          const openingBalance = Number(tenant.openingBalance) || 0
+   674→          const creditBalance = Number(tenant.creditBalance) || 0
+   675→          const currentCharges = tenant.rentAmount - totalAdjustments
+   676→          const totalDue = openingBalance + currentCharges - creditBalance
+   677→          const remaining = totalDue - paid
+   678→          const tenantPayments = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear)
+   679→          const isExpanded = expandedTenant === tenant.id
+   680→
+   681→          return (
+   682→            <Card key={tenant.id} className={cn2('card-hover', (status === 'overdue' || status === 'unpaid') && 'ring-1 ring-red-300')}>
+   683→              <CardContent className="p-4">
+   684→                <div className="space-y-1.5">
+   685→                  <div className="flex items-start justify-between gap-2">
+   686→                    <div className="min-w-0 flex-1">
+   687→                      <h3 className="font-semibold text-sm truncate">
+   688→                        {getNameByLang(tenant, language)}
+   689→                      </h3>
+   690→                      <p className="text-xs text-muted-foreground truncate">
+   691→                        {tenant.property ? getNameByLang(tenant.property, language) : ''} - {tenant.unitNumber || '—'}
+   692→                      </p>
+   693→                    </div>
+   694→                    <Badge className={cn2('text-xs shrink-0', getPaymentStatusColor(status))}>
+   695→                      {status === 'paid' && t('paid', language)}
+   696→                      {status === 'partial' && t('partial', language)}
+   697→                      {status === 'overdue' && t('overdue', language)}
+   698→                      {status === 'unpaid' && t('unpaid', language)}
+   699→                      {status === 'due-soon' && t('dueSoon', language)}
+   700→                    </Badge>
+   701→                  </div>
+   702→                  {/* Secondary badges row */}
+   703→                  {(tenant.legalCase || tenant.status === 'notice' || (tenant.openingBalance || 0) > 0) && (
+   704→                    <div className="flex flex-wrap gap-1.5">
+   705→                      {tenant.legalCase && (
+   706→                        <Badge className="text-[10px] bg-red-100 text-red-700 border border-red-200 hover:bg-red-100 px-1.5 py-0 shrink-0">
+   707→                          <AlertTriangle className="w-3 h-3 mr-0.5" />
+   708→                          LEGAL
+   709→                        </Badge>
+   710→                      )}
+   711→                      {tenant.status === 'notice' && (
+   712→                        <Badge className="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-100 px-1.5 py-0 shrink-0">
+   713→                          {t('noticePeriod', language)}
+   714→                        </Badge>
+   715→                      )}
+   716→                      {(tenant.openingBalance || 0) > 0 && (
+   717→                        <Badge className="text-[10px] bg-amber-100 text-amber-700 border border-amber-200 hover:bg-amber-100 px-1.5 py-0 shrink-0">
+   718→                          {t('outstanding', language)}: {formatAED(tenant.openingBalance)}
+   719→                        </Badge>
+   720→                      )}
+   721→                    </div>
+   722→                  )}
+   723→                </div>
+   724→
+   725→                {canSeeRevenue && (
+   726→                  <div className="flex items-center justify-between mt-3">
+   727→                    <div>
+   728→                      <p className="text-xs text-muted-foreground">{t('currentCharges', language)}</p>
+   729→                      <p className="font-bold text-sm">{formatAED(currentCharges)}</p>
+   730→                    </div>
+   731→                    <div className="text-right">
+   732→                      <p className="text-xs text-muted-foreground">{t('remainingBalance', language)}</p>
+   733→                      <p className={cn2('font-bold text-sm', remaining > 0 ? 'text-red-600' : remaining === 0 ? 'text-emerald-600' : 'text-blue-600')}>
+   734→                        {formatAED(Math.max(0, remaining))}
+   735→                      </p>
+   736→                    </div>
+   737→                  </div>
+   738→                )}
+   739→
+   740→                {/* Financial breakdown */}
+   741→                {canSeeRevenue && (openingBalance > 0 || creditBalance > 0 || paid > 0 || totalAdjustments > 0) && (
+   742→                  <div className="mt-2 bg-muted/30 rounded-lg p-2 text-xs space-y-1">
+   743→                    {openingBalance > 0 && (
+   744→                      <div className="flex justify-between">
+   745→                        <span className="text-muted-foreground">{t('openingBalance', language)}</span>
+   746→                        <span className="font-medium text-amber-700">+{formatAED(openingBalance)}</span>
+   747→                      </div>
+   748→                    )}
+   749→                    <div className="flex justify-between">
+   750→                      <span className="text-muted-foreground">{t('currentCharges', language)}</span>
+   751→                      <span className="font-medium">+{formatAED(currentCharges)}</span>
+   752→                    </div>
+   753→                    {totalAdjustments > 0 && (
+   754→                      <div className="flex justify-between">
+   755→                        <span className="text-muted-foreground">{t('approvedAdjustments', language)}</span>
+   756→                        <span className="font-medium text-amber-600">-{formatAED(totalAdjustments)}</span>
+   757→                      </div>
+   758→                    )}
+   759→                    {creditBalance > 0 && (
+   760→                      <div className="flex justify-between">
+   761→                        <span className="text-muted-foreground">{t('creditBalance', language)}</span>
+   762→                        <span className="font-medium text-blue-600">-{formatAED(creditBalance)}</span>
+   763→                      </div>
+   764→                    )}
+   765→                    <div className="flex justify-between border-t pt-1">
+   766→                      <span className="text-muted-foreground font-medium">{t('totalDue', language)}</span>
+   767→                      <span className="font-semibold">{formatAED(Math.max(0, totalDue))}</span>
+   768→                    </div>
+   769→                    {paid > 0 && (
+   770→                      <div className="flex justify-between">
+   771→                        <span className="text-muted-foreground">{t('paymentsReceived', language)}</span>
+   772→                        <span className="font-medium text-emerald-600">-{formatAED(paid)}</span>
+   773→                      </div>
+   774→                    )}
+   775→                    <div className="flex justify-between border-t pt-1">
+   776→                      <span className="text-muted-foreground font-medium">{t('remainingBalance', language)}</span>
+   777→                      <span className={cn2('font-bold', remaining <= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatAED(Math.max(0, remaining))}</span>
+   778→                    </div>
+   779→                  </div>
+   780→                )}
+   781→
+   782→                <div className="flex gap-2 mt-3">
+   783→                  {status !== 'paid' && (
+   784→                    <Button
+   785→                      size="sm"
+   786→                      onClick={() => openPayDialog(tenant)}
+   787→                      className="flex-1 bg-emerald hover:bg-emerald/90 text-white h-8 text-xs"
+   788→                    >
+   789→                      <Check className="w-3 h-3 mr-1" />
+   790→                      {t('markPaid', language)}
+   791→                    </Button>
+   792→                  )}
+   793→                  {canSeeRevenue && (
+   794→                    <button
+   795→                      onClick={() => openAdjustmentDialog(tenant)}
+   796→                      className="flex items-center justify-center gap-1 px-3 py-1 rounded-md text-xs border border-amber-300 text-amber-700 hover:bg-amber-50"
+   797→                      title={t('createAdjustment', language)}
+   798→                    >
+   799→                      <MinusCircle className="w-3 h-3" />
+   800→                    </button>
+   801→                  )}
+   802→                  {status !== 'paid' && (
+   803→                    <button
+   804→                      onClick={() => openWhatsAppLangDialog(tenant)}
+   805→                      className="flex items-center justify-center gap-1 px-3 py-1 rounded-md text-xs border border-green-300 text-green-700 hover:bg-green-50"
+   806→                      title={t('sendWhatsAppReminder', language)}
+   807→                    >
+   808→                      <MessageCircle className="w-3 h-3" />
+   809→                    </button>
+   810→                  )}
+   811→                  <button
+   812→                    onClick={() => { setBillTenant(tenant); setBillDialogOpen(true) }}
+   813→                    className="flex items-center justify-center gap-1 px-3 py-1 rounded-md text-xs border border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+   814→                    title={t('viewBill', language)}
+   815→                  >
+   816→                    <FileText className="w-3 h-3" />
+   817→                  </button>
+   818→                </div>
+   819→
+   820→                {/* Payment History Toggle */}
+   821→                {(tenantPayments.length > 0 || tenantAdjustments.length > 0) && (
+   822→                  <div className="mt-3 border-t pt-2">
+   823→                    <button
+   824→                      onClick={() => setExpandedTenant(isExpanded ? null : tenant.id)}
+   825→                      className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors w-full"
+   826→                    >
+   827→                      {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+   828→                      {tenantPayments.length + tenantAdjustments.length} {tenantPayments.length + tenantAdjustments.length === 1 ? (language === 'ar' ? 'عنصر' : language === 'bn' ? 'আইটেম' : language === 'ur' ? 'آئٹم' : 'item') : (language === 'ar' ? 'عناصر' : language === 'bn' ? 'আইটেমসমূহ' : language === 'ur' ? 'آئٹمز' : 'items')}
+   829→                      {canSeeRevenue && (
+   830→                        <span className="ml-auto font-medium text-emerald-600">
+   831→                          {formatAED(paid)}
+   832→                          {totalAdjustments > 0 && <span className="text-amber-600 ml-1">(-{formatAED(totalAdjustments)})</span>}
+   833→                        </span>
+   834→                      )}
+   835→                    </button>
+   836→
+   837→                    {isExpanded && (
+   838→                      <div className="mt-2 space-y-2">
+   839→                        {/* Adjustments displayed first with amber styling */}
+   840→                        {tenantAdjustments.filter(a => a.status === 'approved').map(adjustment => (
+   841→                          <div key={adjustment.id} className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs">
+   842→                            <div className="flex-1 min-w-0">
+   843→                              <div className="flex items-center gap-2">
+   844→                                {canSeeRevenue && <span className="font-semibold text-amber-700">-{formatAED(adjustment.amount)}</span>}
+   845→                                <Badge variant="outline" className="text-[10px] px-1 py-0 border-amber-300 text-amber-700">
+   846→                                  {t(adjustment.adjustmentType as any, language) || adjustment.adjustmentType}
+   847→                                </Badge>
+   848→                              </div>
+   849→                              <p className="text-amber-600 mt-0.5 truncate text-[11px]">{adjustment.reason}</p>
+   850→                              {adjustment.durationMonths > 1 && (
+   851→                                <p className="text-amber-500 mt-0.5 text-[10px]">
+   852→                                  {getMonthName(adjustment.effectiveMonth, language)} {adjustment.effectiveYear} — {adjustment.durationMonths} {t('months', language)}
+   853→                                </p>
+   854→                              )}
+   855→                            </div>
+   856→                            {canSeeRevenue && (
+   857→                              <div className="flex items-center gap-1 ml-2">
+   858→                                <button
+   859→                                  onClick={(e) => { e.stopPropagation(); openEditAdjustmentDialog(adjustment) }}
+   860→                                  className="p-1 hover:bg-white rounded transition-colors"
+   861→                                  title={t('editAdjustment', language)}
+   862→                                >
+   863→                                  <Pencil className="w-3 h-3 text-blue-600" />
+   864→                                </button>
+   865→                                <button
+   866→                                  onClick={(e) => { e.stopPropagation(); setCancelAdjustmentTarget(adjustment); setCancelAdjustmentReason(''); setCancelAdjustmentDialogOpen(true) }}
+   867→                                  className="p-1 hover:bg-white rounded transition-colors"
+   868→                                  title={t('cancelAdjustment', language)}
+   869→                                >
+   870→                                  <X className="w-3 h-3 text-red-500" />
+   871→                                </button>
+   872→                              </div>
+   873→                            )}
+   874→                          </div>
+   875→                        ))}
+   876→                        {tenantPayments.map(payment => (
+   877→                          <div key={payment.id} className="flex items-center justify-between bg-muted/50 rounded-lg px-3 py-2 text-xs">
+   878→                            <div className="flex-1 min-w-0">
+   879→                              <div className="flex items-center gap-2">
+   880→                                {canSeeRevenue && <span className="font-semibold">{formatAED(payment.amount)}</span>}
+   881→                                <span className="text-muted-foreground">
+   882→                                  {payment.date ? new Date(payment.date).toLocaleDateString(language === 'ar' ? 'ar-AE' : 'en-AE', { day: 'numeric', month: 'short' }) : ''}
+   883→                                </span>
+   884→                                {payment.method && (
+   885→                                  <Badge variant="outline" className="text-[10px] px-1 py-0">
+   886→                                    {payment.method}
+   887→                                  </Badge>
+   888→                                )}
+   889→                                {payment.isLate && (
+   890→                                  <Badge variant="outline" className="text-[10px] px-1 py-0 border-red-300 text-red-600">
+   891→                                    {language === 'ar' ? 'متأخر' : language === 'bn' ? 'বিলম্বিত' : language === 'ur' ? 'دیر' : 'Late'}
+   892→                                  </Badge>
+   893→                                )}
+   894→                                {payment.allocationType && payment.allocationType !== 'CURRENT_RENT' && (
+   895→                                  <Badge variant="outline" className="text-[10px] px-1 py-0 border-blue-300 text-blue-600">
+   896→                                    {payment.allocationType === 'HISTORICAL_DEBT' && t('historicalDebt', language)}
+   897→                                    {payment.allocationType === 'ADVANCE_PAYMENT' && t('advancePayment', language)}
+   898→                                  </Badge>
+   899→                                )}
+   900→                              </div>
+   901→                              {payment.reference && (
+   902→                                <p className="text-muted-foreground mt-0.5 truncate">
+   903→                                  Ref: {payment.reference}
+   904→                                </p>
+   905→                              )}
+   906→                            </div>
+   907→                            {canSeeRevenue && (
+   908→                              <div className="flex items-center gap-1 shrink-0 ml-2">
+   909→                                <button
+   910→                                  onClick={(e) => { e.stopPropagation(); openEditPaymentDialog(payment) }}
+   911→                                  className="p-1 hover:bg-white rounded transition-colors"
+   912→                                  title={language === 'ar' ? 'تعديل الدفعة' : language === 'bn' ? 'পেমেন্ট সম্পাদনা' : language === 'ur' ? 'ادائیگی میں ترمیم' : 'Edit payment'}
+   913→                                >
+   914→                                  <Pencil className="w-3 h-3 text-blue-600" />
+   915→                                </button>
+   916→                                <button
+   917→                                  onClick={(e) => { e.stopPropagation(); openDeletePaymentDialog(payment) }}
+   918→                                  className="p-1 hover:bg-white rounded transition-colors"
+   919→                                  title={language === 'ar' ? 'حذف الدفعة' : language === 'bn' ? 'পেমেন্ট মুছুন' : language === 'ur' ? 'ادائیگی حذف کریں' : 'Delete payment'}
+   920→                                >
+   921→                                  <Trash2 className="w-3 h-3 text-red-600" />
+   922→                                </button>
+   923→                              </div>
+   924→                            )}
+   925→                          </div>
+   926→                        ))}
+   927→                      </div>
+   928→                    )}
+   929→                  </div>
+   930→                )}
+   931→              </CardContent>
+   932→            </Card>
+   933→          )
+   934→        })}
+   935→      </div>
+   936→
+   937→      {filteredTenants.length === 0 && (
+   938→        <div className="text-center py-12 text-muted-foreground">
+   939→          {t('noTenantsMatchFilter', language)}
+   940→        </div>
+   941→      )}
+   942→
+   943→      {/* Pay Dialog */}
+   944→      <Dialog open={payDialogOpen} onOpenChange={setPayDialogOpen}>
+   945→        <DialogContent>
+   946→          <DialogHeader>
+   947→            <DialogTitle>
+   948→              {t('recordPayment', language)} - {payingTenant && getNameByLang(payingTenant, language)}
+   949→            </DialogTitle>
+   950→          </DialogHeader>
+   951→          <div className="space-y-4">
+   952→            <div>
+   953→              <Label>{t('amount', language)}</Label>
+   954→              <Input type="number" value={payForm.amount} onChange={e => setPayForm({ ...payForm, amount: Number(e.target.value) })} />
+   955→            </div>
+   956→            <div>
+   957→              <Label>{t('paymentDate', language)}</Label>
+   958→              <Input type="date" value={payForm.paymentDate} onChange={e => setPayForm({ ...payForm, paymentDate: e.target.value })} />
+   959→            </div>
+   960→            <div>
+   961→              <Label>{t('paymentMethod', language)}</Label>
+   962→              <Select value={payForm.method} onValueChange={v => setPayForm({ ...payForm, method: v })}>
+   963→                <SelectTrigger><SelectValue /></SelectTrigger>
+   964→                <SelectContent>
+   965→                  <SelectItem value="cash">{t('cash', language)}</SelectItem>
+   966→                  <SelectItem value="transfer">{t('bankTransfer', language)}</SelectItem>
+   967→                  <SelectItem value="cheque">{t('cheque', language)}</SelectItem>
+   968→                </SelectContent>
+   969→              </Select>
+   970→            </div>
+   971→            <div>
+   972→              <Label>{t('allocationType', language)}</Label>
+   973→              <Select value={payAllocationType} onValueChange={setPayAllocationType}>
+   974→                <SelectTrigger><SelectValue /></SelectTrigger>
+   975→                <SelectContent>
+   976→                  <SelectItem value="CURRENT_RENT">{t('currentRent', language)}</SelectItem>
+   977→                  <SelectItem value="HISTORICAL_DEBT">{t('historicalDebt', language)}</SelectItem>
+   978→                  <SelectItem value="ADVANCE_PAYMENT">{t('advancePayment', language)}</SelectItem>
+   979→                </SelectContent>
+   980→              </Select>
+   981→            </div>
+   982→            <div>
+   983→              <Label>{t('reference', language)}</Label>
+   984→              <Input value={payForm.reference} onChange={e => setPayForm({ ...payForm, reference: e.target.value })} />
+   985→            </div>
+   986→            <div>
+   987→              <Label>{t('notes', language)}</Label>
+   988→              <Input value={payForm.notes} onChange={e => setPayForm({ ...payForm, notes: e.target.value })} />
+   989→            </div>
+   990→          </div>
+   991→          <DialogFooter>
+   992→            <Button variant="outline" onClick={() => setPayDialogOpen(false)}>{t('cancel', language)}</Button>
+   993→            <Button onClick={handlePay} className="bg-emerald hover:bg-emerald/90 text-white" disabled={payForm.amount <= 0 || payLoading}>
+   994→              {payLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Check className="w-4 h-4 mr-2" />}
+   995→              {payLoading ? t('processingPayment', language) : t('confirmPayment', language)}
+   996→            </Button>
+   997→          </DialogFooter>
+   998→        </DialogContent>
+   999→      </Dialog>
+  1000→
+  1001→      {/* Bill Invoice Dialog */}
+  1002→      <Dialog open={billDialogOpen} onOpenChange={setBillDialogOpen}>
+  1003→        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+  1004→          <DialogHeader>
+  1005→            <DialogTitle>{t('viewBill', language)}</DialogTitle>
+  1006→          </DialogHeader>
+  1007→          {billTenant && (
+  1008→            <BillInvoice
+  1009→              tenant={billTenant}
+  1010→              property={billTenant.property || undefined}
+  1011→              month={selectedMonth}
+  1012→              year={selectedYear}
+  1013→              paymentStatus={getTenantPaymentStatus(billTenant)}
+  1014→              paidAmount={(billTenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear).reduce((sum, p) => sum + p.amount, 0)}
+  1015→              language={language}
+  1016→            />
+  1017→          )}
+  1018→        </DialogContent>
+  1019→      </Dialog>
+  1020→
+  1021→      {/* WhatsApp Language Selection Dialog */}
+  1022→      <Dialog open={whatsappLangDialogOpen} onOpenChange={setWhatsappLangDialogOpen}>
+  1023→        <DialogContent className="sm:max-w-md">
+  1024→          <DialogHeader>
+  1025→            <DialogTitle className="flex items-center gap-2">
+  1026→              <MessageCircle className="w-5 h-5 text-green-600" />
+  1027→              {t('selectReminderLanguage', language)}
+  1028→            </DialogTitle>
+  1029→          </DialogHeader>
+  1030→          <div className="space-y-3 py-4">
+  1031→            <p className="text-sm text-muted-foreground">{t('reminderLanguageDesc', language)}</p>
+  1032→            <div className="space-y-2">
+  1033→              <Button
+  1034→                className="w-full justify-start bg-green-600 hover:bg-green-700 text-white"
+  1035→                onClick={() => {
+  1036→                  if (whatsappRemindAll) {
+  1037→                    sendAllRemindersWithLang('ar')
+  1038→                  } else if (whatsappTargetTenant) {
+  1039→                    window.open(getWhatsAppLink(whatsappTargetTenant.whatsapp || whatsappTargetTenant.phone, getNameByLang(whatsappTargetTenant, language), whatsappTargetTenant.rentAmount, selectedMonth, selectedYear, 'ar'), '_blank')
+  1040→                  }
+  1041→                  setWhatsappLangDialogOpen(false)
+  1042→                }}
+  1043→              >
+  1044→                {t('sendArabic', language)}
+  1045→              </Button>
+  1046→              <Button
+  1047→                className="w-full justify-start bg-blue-600 hover:bg-blue-700 text-white"
+  1048→                onClick={() => {
+  1049→                  if (whatsappRemindAll) {
+  1050→                    sendAllRemindersWithLang('en')
+  1051→                  } else if (whatsappTargetTenant) {
+  1052→                    window.open(getWhatsAppLink(whatsappTargetTenant.whatsapp || whatsappTargetTenant.phone, getNameByLang(whatsappTargetTenant, language), whatsappTargetTenant.rentAmount, selectedMonth, selectedYear, 'en'), '_blank')
+  1053→                  }
+  1054→                  setWhatsappLangDialogOpen(false)
+  1055→                }}
+  1056→              >
+  1057→                {t('sendEnglish', language)}
+  1058→              </Button>
+  1059→              <Button
+  1060→                className="w-full justify-start bg-teal-600 hover:bg-teal-700 text-white"
+  1061→                onClick={() => {
+  1062→                  if (whatsappRemindAll) {
+  1063→                    sendAllRemindersWithLang('ur')
+  1064→                  } else if (whatsappTargetTenant) {
+  1065→                    window.open(getWhatsAppLink(whatsappTargetTenant.whatsapp || whatsappTargetTenant.phone, getNameByLang(whatsappTargetTenant, language), whatsappTargetTenant.rentAmount, selectedMonth, selectedYear, 'ur'), '_blank')
+  1066→                  }
+  1067→                  setWhatsappLangDialogOpen(false)
+  1068→                }}
+  1069→              >
+  1070→                {t('sendUrdu', language)}
+  1071→              </Button>
+  1072→              <Button
+  1073→                className="w-full justify-start bg-orange-500 hover:bg-orange-600 text-white"
+  1074→                onClick={() => {
+  1075→                  if (whatsappRemindAll) {
+  1076→                    sendAllRemindersWithLang('hi')
+  1077→                  } else if (whatsappTargetTenant) {
+  1078→                    window.open(getWhatsAppLink(whatsappTargetTenant.whatsapp || whatsappTargetTenant.phone, getNameByLang(whatsappTargetTenant, language), whatsappTargetTenant.rentAmount, selectedMonth, selectedYear, 'hi'), '_blank')
+  1079→                  }
+  1080→                  setWhatsappLangDialogOpen(false)
+  1081→                }}
+  1082→              >
+  1083→                {t('sendHindi', language)}
+  1084→              </Button>
+  1085→              <Button
+  1086→                className="w-full justify-start bg-purple-600 hover:bg-purple-700 text-white"
+  1087→                onClick={() => {
+  1088→                  if (whatsappRemindAll) {
+  1089→                    sendAllRemindersWithLang('bn')
+  1090→                  } else if (whatsappTargetTenant) {
+  1091→                    window.open(getWhatsAppLink(whatsappTargetTenant.whatsapp || whatsappTargetTenant.phone, getNameByLang(whatsappTargetTenant, language), whatsappTargetTenant.rentAmount, selectedMonth, selectedYear, 'bn'), '_blank')
+  1092→                  }
+  1093→                  setWhatsappLangDialogOpen(false)
+  1094→                }}
+  1095→              >
+  1096→                {t('sendBengali', language)}
+  1097→              </Button>
+  1098→            </div>
+  1099→          </div>
+  1100→        </DialogContent>
+  1101→      </Dialog>
+  1102→
+  1103→      {/* Invoice Search Results Dialog */}
+  1104→      <Dialog open={invoiceSearchOpen} onOpenChange={setInvoiceSearchOpen}>
+  1105→        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+  1106→          <DialogHeader>
+  1107→            <DialogTitle className="flex items-center gap-2">
+  1108→              <Search className="w-5 h-5 text-emerald-600" />
+  1109→              {t('searchInvoice', language) || 'Invoice Search'} — {invoiceSearch}
+  1110→            </DialogTitle>
+  1111→          </DialogHeader>
+  1112→          <div className="space-y-3 py-2">
+  1113→            {invoiceSearchResults && invoiceSearchResults.length === 0 && (
+  1114→              <div className="text-center py-8">
+  1115→                <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-3">
+  1116→                  <Search className="w-6 h-6 text-gray-400" />
+  1117→                </div>
+  1118→                <p className="text-muted-foreground font-medium">
+  1119→                  {t('noInvoiceFound', language) || `No invoice found for "${invoiceSearch}"`}
+  1120→                </p>
+  1121→                <p className="text-xs text-muted-foreground mt-1">
+  1122→                  {t('tryDifferentSearch', language) || 'Try searching with a different invoice number (e.g. INV-202606-101)'}
+  1123→                </p>
+  1124→              </div>
+  1125→            )}
+  1126→            {invoiceSearchResults && invoiceSearchResults.map((result: any, idx: number) => (
+  1127→              <div key={idx} className="border rounded-lg p-3 hover:bg-gray-50 transition-colors">
+  1128→                <div className="flex items-start justify-between mb-2">
+  1129→                  <div>
+  1130→                    <div className="flex items-center gap-2">
+  1131→                      <Badge variant={result.type === 'tenant_invoice' ? 'default' : 'secondary'} className={result.type === 'tenant_invoice' ? 'bg-emerald text-white' : ''}>
+  1132→                        {result.type === 'tenant_invoice' ? t('invoice', language) || 'Invoice' : t('expenses', language) || 'Expense'}
+  1133→                      </Badge>
+  1134→                      <span className="font-mono font-bold text-sm">{result.invoiceNumber}</span>
+
+[showing lines 635-1134 of 1495; use offset=1135 with limit to continue reading]
