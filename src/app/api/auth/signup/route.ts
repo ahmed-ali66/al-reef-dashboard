@@ -34,7 +34,9 @@ export async function POST(request: Request) {
       return errorResponse(firstError.message)
     }
 
-    const { companyName, adminName, adminEmail, password } = result.data
+    const { companyName, adminName, password } = result.data
+    // FIX: Normalize email to lowercase to match the login flow
+    const adminEmail = result.data.adminEmail.trim().toLowerCase()
 
     // Check email uniqueness globally
     const existingUser = await prisma.user.findUnique({

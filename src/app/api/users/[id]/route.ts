@@ -37,7 +37,9 @@ export async function PUT(
     }
 
     const body = await request.json()
-    const { email, name, nameAr, nameBn, nameUr, role, isActive } = body
+    // FIX: Normalize email to lowercase if being changed, to match the login flow
+    const email = body.email ? (body.email as string).trim().toLowerCase() : body.email
+    const { name, nameAr, nameBn, nameUr, role, isActive } = body
 
     // Validate role if being changed
     if (role !== undefined) {

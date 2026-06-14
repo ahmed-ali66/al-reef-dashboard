@@ -74,7 +74,12 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { email, password, name, nameAr, nameBn, nameUr, role } = body
+    const { password, name, nameAr, nameBn, nameUr, role } = body
+    // FIX: Normalize email to lowercase to match the login flow
+    // The authorize() function in auth.ts lowercases the email for lookup,
+    // so if a user is created with mixed-case email (e.g., "Accountant@AlReef.ae"),
+    // they can never log in because the lookup uses the lowercase version.
+    const email = (body.email || '').trim().toLowerCase()
 
     if (!email || !password || !name) {
       return errorResponse('Email, password, and name are required')
@@ -97,13 +102,19 @@ export async function POST(request: Request) {
       return errorResponse('Password must contain at least one number')
     }
 
-    // Check if email is already taken
+    // Check if email is already taken (using lowercase for consistency)
     const existingUser = await prisma.user.findUnique({
       where: { email },
     })
 
     if (existingUser) {
       return errorResponse('Email is already in use')
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(email)) {
+      return errorResponse('Invalid email format')
     }
 
     const hashedPassword = await bcrypt.hash(password, 12)

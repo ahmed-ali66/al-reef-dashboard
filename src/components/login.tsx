@@ -40,8 +40,44 @@ export default function LoginPage() {
       })
 
       if (result?.error) {
-        // Map NextAuth error codes to user-friendly messages
+        // After a CredentialsSignin failure, check if the account is locked out
+        // so we can show a specific error message instead of a generic one.
+        // This helps users understand they need to wait or contact an admin,
+        // rather than keep retrying (which would extend the lockout).
         if (result.error === 'CredentialsSignin') {
+          try {
+            const diagRes = await fetch('/api/auth/diagnose', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email: email.trim() }),
+            })
+            if (diagRes.ok) {
+              const diagData = await diagRes.json()
+              if (diagData.data?.isLockedOut) {
+                const mins = diagData.data.lockoutMinutesRemaining || 15
+                setError(
+                  language === 'ar' ? `الحساب مقفل بسبب محاولات فاشلة متعددة. حاول مرة أخرى بعد ${mins} دقيقة أو تواصل مع المسؤول.`
+                  : language === 'bn' ? `একাধিক ব্যর্থ প্রচেষ্টার কারণে অ্যাকাউন্ট লক করা হয়েছে। ${mins} মিনিট পরে আবার চেষ্টা করুন বা অ্যাডমিনের সাথে যোগাযোগ করুন।`
+                  : language === 'ur' ? `متعدد ناکام کوششوں کی وجہ سے اکاؤنٹ مقفل ہے۔ ${mins} منٹ بعد دوبارہ کوشش کریں یا ایڈمن سے رابطہ کریں۔`
+                  : `Account locked due to multiple failed attempts. Try again in ${mins} minutes or contact your administrator.`
+                )
+                setErrorType('lockout')
+                return
+              }
+              if (diagData.data?.isActive === false || diagData.data?.isDeleted) {
+                setError(
+                  language === 'ar' ? 'هذا الحساب غير نشط. تواصل مع المسؤول.'
+                  : language === 'bn' ? 'এই অ্যাকাউন্টটি নিষ্ক্রিয়। অ্যাডমিনের সাথে যোগাযোগ করুন।'
+                  : language === 'ur' ? 'یہ اکاؤنٹ غیر فعال ہے۔ ایڈمن سے رابطہ کریں۔'
+                  : 'This account is inactive. Contact your administrator.'
+                )
+                setErrorType('inactive')
+                return
+              }
+            }
+          } catch {
+            // Diagnosis failed — fall through to generic error
+          }
           setError(t('loginError', language))
         } else {
           setError(result.error)

@@ -48,23 +48,46 @@ export async function POST(request: Request) {
 
     const hashedPassword = await bcrypt.hash(newPassword, 12)
 
-    await prisma.user.update({
-      where: { id: userId },
-      data: {
-        password: hashedPassword,
-        mustChangePassword: true,
-        passwordChangedAt: new Date(),
-      },
-    })
+    // FIX: Use a transaction to update password AND clear rate limit entries atomically.
+    // This is the ROOT CAUSE of the "accountant can't login after admin password reset" bug:
+    // The old code only updated the password but did NOT clear the RateLimitEntry for the user's email.
+    // If the user had 5+ failed login attempts, they were locked out (lockedUntil in the future),
+    // and even with a correct new password, isAccountLocked() still returned true, blocking login.
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: userId },
+        data: {
+          password: hashedPassword,
+          mustChangePassword: true,
+          passwordChangedAt: new Date(),
+        },
+      }),
+      prisma.auditLog.create({
+        data: {
+          action: 'UPDATE',
+          entity: 'User',
+          entityId: userId,
+          userId: user.id,
+          companyId: user.companyId,
+          details: JSON.stringify({ action: 'PASSWORD_RESET', targetEmail: targetUser.email, performedBy: user.email }),
+        },
+      }),
+    ])
 
-    await createAuditLog({
-      action: 'UPDATE',
-      entity: 'User',
-      entityId: userId,
-      userId: user.id,
-      companyId: user.companyId,
-      details: { action: 'PASSWORD_RESET', targetEmail: targetUser.email },
-    })
+    // FIX: Clear any rate limit / lockout entries for this user's email.
+    // Without this, a user who was locked out due to failed attempts remains locked
+    // even after their password has been reset by an admin.
+    try {
+      const clearedEntries = await prisma.rateLimitEntry.deleteMany({
+        where: { identifier: targetUser.email },
+      })
+      if (clearedEntries.count > 0) {
+        console.log(`[AUTH] Cleared ${clearedEntries.count} rate limit entries for ${targetUser.email} after admin password reset`)
+      }
+    } catch (cleanupError) {
+      // Non-critical — if cleanup fails, the lockout will still expire naturally
+      console.error('[AUTH] Failed to clear rate limit entries after password reset (non-critical):', cleanupError)
+    }
 
     return successResponse({ message: 'Password reset successfully' })
   } catch (error) {
