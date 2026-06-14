@@ -116,3 +116,22 @@ Stage Summary:
 - Financial reporting: reservation deposits now included in daily reports
 - Refund handling: cancelled/refunded reservations shown as negative income
 - All changes deployed to production
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix Historical Debt double-counting in balance calculations
+
+Work Log:
+- Examined all financial calculation files: finance.ts, financial-utils.ts, payment APIs, dashboard, rent-collection, invoice PDF, invoice search, properties component
+- Identified root cause: When HISTORICAL_DEBT payment is recorded, payment API reduces tenant.openingBalance AND creates a Payment record. All balance calculations then double-count: once via reduced openingBalance, once via paymentsReceived including the HISTORICAL_DEBT payment
+- Traced the bug: Opening Balance 2300 + Rent 2300 = 4600. After 2000 HISTORICAL_DEBT payment: openingBalance=300, paid=2000, remaining=300+2300-2000=600 (should be 2600)
+- Applied fix: Exclude HISTORICAL_DEBT payments from paymentsReceived across ALL calculation points
+- Added reversal logic for payment DELETE and payment EDIT (allocation type changes)
+- Updated financial-utils.ts with CRITICAL documentation about the payment allocation convention
+- Pushed to production via GitHub → Vercel auto-deploy
+
+Stage Summary:
+- Root cause: HISTORICAL_DEBT payments counted twice (reduced openingBalance + paymentsReceived)
+- Fix: Exclude HISTORICAL_DEBT from all paymentsReceived calculations
+- Files modified: rent-collection.tsx (5 fixes), dashboard/route.ts, invoices/pdf/route.ts, invoices/search/route.ts, properties.tsx, payments/[id]/route.ts (DELETE + PUT reversal logic), financial-utils.ts (documentation)
+- Deployed to production: commit b4e1d5e
