@@ -152,7 +152,7 @@ export default function DailyExpensesReport() {
             time: (r as any).depositPaymentDate
               ? new Date((r as any).depositPaymentDate).toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit' })
               : new Date(r.reservationDate).toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit' }),
-            method: 'reservation_deposit',
+            method: (r as any).depositPaymentMethod || 'cash',
             isLate: false,
             notes: r.notes || null,
             source: 'reservation' as const,
@@ -176,7 +176,7 @@ export default function DailyExpensesReport() {
           unitNumber: r.unitNumber || null,
           amount: -r.depositAmount, // negative amount for refund
           time: updatedDate,
-          method: 'reservation_refund',
+          method: (r as any).depositPaymentMethod || 'cash',
           isLate: false,
           notes: `Refund: ${r.notes || ''}`,
           source: 'reservation' as const,
@@ -605,7 +605,9 @@ export default function DailyExpensesReport() {
       // ─── PAYMENT METHOD TOTALS ───
       const methodTotals: Record<string, number> = {}
       for (const p of incomeItems) {
-        const method = (p.method || 'other').toLowerCase()
+        // Normalize method names: 'bank_transfer' and 'transfer' → 'transfer'
+        let method = (p.method || 'other').toLowerCase()
+        if (method === 'bank_transfer') method = 'transfer'
         methodTotals[method] = (methodTotals[method] || 0) + p.amount
       }
       const totalCash = methodTotals['cash'] || 0
@@ -790,7 +792,9 @@ export default function DailyExpensesReport() {
       // Payment method breakdown
       const methodBreakdown: Record<string, { total: number; count: number }> = {}
       for (const p of incomeItems) {
-        const method = p.method || 'Unknown'
+        // Normalize method names: 'bank_transfer' and 'transfer' → 'Bank Transfer'
+        let method = p.method || 'Unknown'
+        if (method.toLowerCase() === 'bank_transfer') method = 'Transfer'
         if (!methodBreakdown[method]) methodBreakdown[method] = { total: 0, count: 0 }
         methodBreakdown[method].total += p.amount
         methodBreakdown[method].count++
@@ -1281,10 +1285,16 @@ export default function DailyExpensesReport() {
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">{item.time}</TableCell>
                       <TableCell>
-                        {item.method === 'reservation_deposit' ? (
-                          <Badge variant="secondary" className="text-xs font-normal bg-sky-100 text-sky-700">Deposit</Badge>
-                        ) : item.method === 'reservation_refund' ? (
-                          <Badge variant="secondary" className="text-xs font-normal bg-red-100 text-red-700">Refund</Badge>
+                        {item.source === 'reservation' && item.amount < 0 ? (
+                          <div className="flex items-center gap-1">
+                            <Badge variant="secondary" className="text-xs font-normal bg-red-100 text-red-700">Refund</Badge>
+                            <Badge variant="secondary" className="text-xs font-normal inline-block max-w-[60px] truncate">{item.method}</Badge>
+                          </div>
+                        ) : item.source === 'reservation' ? (
+                          <div className="flex items-center gap-1">
+                            <Badge variant="secondary" className="text-xs font-normal bg-sky-100 text-sky-700">Deposit</Badge>
+                            <Badge variant="secondary" className="text-xs font-normal inline-block max-w-[60px] truncate">{item.method}</Badge>
+                          </div>
                         ) : item.method ? (
                           <Badge variant="secondary" className="text-xs font-normal inline-block max-w-[80px] truncate">{item.method}</Badge>
                         ) : (

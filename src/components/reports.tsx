@@ -216,10 +216,10 @@ export default function Reports() {
 
       // ── Credit Table: Income by Tenant ──
       // Get monthly payments for the credit table
-      const { payments: allPayments, tenants: allTenants, properties: allProperties } = store
+      const { payments: allPayments, tenants: allTenants, properties: allProperties, reservations: allReservations } = store
       const monthPayments = allPayments.filter(p => p.month === selectedMonth && p.year === selectedYear)
 
-      // Build income items for the month
+      // Build income items for the month (rent payments)
       const monthlyIncomeItems = monthPayments.map(p => {
         const tenant = allTenants.find(t => t.id === p.tenantId)
         const property = tenant ? allProperties.find(pr => pr.id === tenant.propertyId) : null
@@ -230,8 +230,40 @@ export default function Reports() {
           amount: p.amount,
           method: p.method,
           isLate: p.isLate || false,
+          source: 'rent' as const,
         }
-      }).sort((a, b) => a.tenantName.localeCompare(b.tenantName))
+      })
+
+      // Add reservation deposits as income items for the selected month
+      const activeReservations = (allReservations || []).filter((r: any) =>
+        r.status !== 'cancelled' && !r.deletedAt && (r.depositStatus === 'paid' || r.depositStatus === 'partial')
+      )
+      for (const r of activeReservations) {
+        const paymentDateStr = r.depositPaymentDate
+          ? new Date(r.depositPaymentDate).toISOString().split('T')[0]
+          : r.reservationDate
+            ? new Date(r.reservationDate).toISOString().split('T')[0]
+            : ''
+        if (paymentDateStr) {
+          const paymentMonth = parseInt(paymentDateStr.split('-')[1], 10)
+          const paymentYear = parseInt(paymentDateStr.split('-')[0], 10)
+          if (paymentMonth === selectedMonth && paymentYear === selectedYear) {
+            const property = allProperties.find((p: any) => p.id === r.propertyId)
+            monthlyIncomeItems.push({
+              tenantName: r.prospectName || 'Reservation',
+              propertyName: property ? getNameByLang(property, lang) : '',
+              unitNumber: r.unitNumber || null,
+              amount: r.depositAmount,
+              method: r.depositPaymentMethod || 'cash',
+              isLate: false,
+              source: 'reservation' as const,
+            })
+          }
+        }
+      }
+
+      // Sort all income items by tenant name
+      monthlyIncomeItems.sort((a, b) => a.tenantName.localeCompare(b.tenantName))
 
       pdf.addPage()
       let creditY = 18
@@ -339,7 +371,9 @@ export default function Reports() {
       // ── Payment Method Totals ──
       const monthMethodTotals: Record<string, number> = {}
       for (const p of monthlyIncomeItems) {
-        const method = (p.method || 'other').toLowerCase()
+        // Normalize method names: 'bank_transfer' and 'transfer' → 'transfer'
+        let method = (p.method || 'other').toLowerCase()
+        if (method === 'bank_transfer') method = 'transfer'
         monthMethodTotals[method] = (monthMethodTotals[method] || 0) + p.amount
       }
       const mTotalCash = monthMethodTotals['cash'] || 0
@@ -549,7 +583,7 @@ export default function Reports() {
     try {
       setExporting(true)
       const store = useDataStore.getState()
-      const { properties, tenants, payments, expenses, maintenanceItems, company } = store
+      const { properties, tenants, payments, expenses, maintenanceItems, company, reservations } = store
       const reportData = store.getReportData(selectedMonth, selectedYear)
 
       const wb = XLSX.utils.book_new()
@@ -747,6 +781,37 @@ export default function Reports() {
       const wsMaintenance = XLSX.utils.aoa_to_sheet([maintenanceHeader, ...maintenanceRows])
       wsMaintenance['!cols'] = [{ wch: 36 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 18 }, { wch: 22 }, { wch: 18 }, { wch: 16 }, { wch: 40 }, { wch: 14 }, { wch: 14 }]
       XLSX.utils.book_append_sheet(wb, wsMaintenance, 'Maintenance')
+
+      // ── Sheet 7: Reservations ──
+      const reservationHeader = [
+        'Prospect Name', 'Property', 'Unit', 'Deposit Amount (AED)', 'Payment Method',
+        'Payment Date', 'Status', 'Deposit Status', 'Emirates ID', 'Notes',
+      ]
+      const reservationRows = (reservations || [])
+        .filter((r: any) => !r.deletedAt)
+        .map((r: any) => {
+          const prop = properties.find((p: any) => p.id === r.propertyId)
+          const paymentDate = r.depositPaymentDate
+            ? formatDate(r.depositPaymentDate)
+            : r.reservationDate
+              ? formatDate(r.reservationDate)
+              : ''
+          return [
+            r.prospectName || '',
+            prop?.name || '',
+            r.unitNumber || '',
+            r.depositAmount || 0,
+            r.depositPaymentMethod || '',
+            paymentDate,
+            r.status || '',
+            r.depositStatus || '',
+            r.emiratesId || '',
+            r.notes || '',
+          ]
+        })
+      const wsReservations = XLSX.utils.aoa_to_sheet([reservationHeader, ...reservationRows])
+      wsReservations['!cols'] = [{ wch: 24 }, { wch: 18 }, { wch: 10 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 22 }, { wch: 30 }]
+      XLSX.utils.book_append_sheet(wb, wsReservations, 'Reservations')
 
       // Generate and download
       const fileName = `Al_Reef_Report_${getMonthName(selectedMonth, 'en')}_${selectedYear}.xlsx`
