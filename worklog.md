@@ -66,3 +66,26 @@ Stage Summary:
 - Summary API totalOutstanding: Changed from cycle.outstandingAmount (only selected month cycles) to bill.currentOutstanding (matches dashboard and exports)
 - Service type breakdown: Changed from cycle-level to bill.currentOutstanding
 - Production deployed at https://al-reef-al-junoobi.vercel.app
+---
+Task ID: login-fix-1
+Agent: Main Agent
+Task: Investigate and fix Accountant account login failure after admin password reset
+
+Work Log:
+- Examined full authentication system: auth.ts (NextAuth v5 + Credentials + bcryptjs), login.tsx, user management, password reset routes
+- Traced login flow: signIn('credentials') → authorize() → email lowercase → isAccountLocked() → bcrypt.compare() → JWT session
+- Identified ROOT CAUSE: /api/users/reset-password updates the password in DB but does NOT clear RateLimitEntry
+- When a user had 5+ failed attempts (locked out), admin password reset left the lockout intact
+- Even with correct new password, isAccountLocked() returned true, blocking login
+- Self-service reset (/api/auth/reset-password) correctly clears rate limits, but admin reset did not
+- Also identified secondary bug: email not normalized to lowercase on user creation/update, causing potential case-mismatch login failures
+- Fixed admin password reset to clear rate limit entries after updating password
+- Moved password update + audit log into a Prisma transaction for atomicity
+- Added email normalization (trim + lowercase) to user creation, update, and signup endpoints
+- Improved login component to show specific lockout/inactive messages instead of generic wrong credentials error
+- Pushed to GitHub, Vercel auto-deployed successfully
+
+Stage Summary:
+- Root cause: Admin password reset not clearing rate limit/lockout entries (RateLimitEntry table)
+- Fixed files: reset-password route, users route, users/[id] route, signup route, login component
+- All changes deployed to production via GitHub push → Vercel auto-deploy
