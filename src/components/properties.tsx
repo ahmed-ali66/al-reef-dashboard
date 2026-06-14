@@ -147,7 +147,8 @@ export default function Properties() {
           const currentMonth = now.getMonth() + 1
           const currentYear = now.getFullYear()
           const collectedAmount = activeTenantList.reduce((s, tenant) => {
-            const paid = (tenant.payments || []).filter(p => p.month === currentMonth && p.year === currentYear).reduce((sum, p) => sum + p.amount, 0)
+            // CRITICAL: Exclude HISTORICAL_DEBT payments — they're already reflected in reduced openingBalance
+            const paid = (tenant.payments || []).filter(p => p.month === currentMonth && p.year === currentYear && p.allocationType !== 'HISTORICAL_DEBT').reduce((sum, p) => sum + p.amount, 0)
             return s + Math.min(paid, tenant.rentAmount)
           }, 0)
           const outstandingAmount = Math.max(0, totalRent - collectedAmount)

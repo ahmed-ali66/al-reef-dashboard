@@ -128,16 +128,20 @@ export async function GET() {
 
     // ─── 4. Overdue & partial tenants — lightweight query (IDs + rent only) ───
     // Find tenants who have paid this month (just tenantId)
+    // CRITICAL: Exclude HISTORICAL_DEBT payments — they're already reflected in the
+    // reduced tenant.openingBalance. Including them would double-count the payment
+    // (once via reduced openingBalance, once via paymentsReceived).
     const paidTenantIds = await prisma.payment.findMany({
       where: {
         companyId,
         month: currentMonth,
         year: currentYear,
+        allocationType: { not: 'HISTORICAL_DEBT' },
       },
       select: { tenantId: true, amount: true },
     })
 
-    // Build a map of tenantId -> total paid this month
+    // Build a map of tenantId -> total paid this month (excluding HISTORICAL_DEBT)
     const paidMap = new Map<string, number>()
     for (const p of paidTenantIds) {
       paidMap.set(p.tenantId, (paidMap.get(p.tenantId) || 0) + Number(p.amount))

@@ -88,7 +88,7 @@ export async function GET(request: Request) {
         // Exact match
         if (invoiceNumber.toLowerCase() === query.toLowerCase() ||
             (query.length >= 3 && invoiceNumber.toLowerCase().includes(query.toLowerCase()))) {
-          const payments = tenant.payments.filter(p => p.month === m && p.year === y)
+          const payments = tenant.payments.filter(p => p.month === m && p.year === y && p.allocationType !== 'HISTORICAL_DEBT')
           const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount), 0)
           const rentAmount = Number(tenant.rentAmount)
 
@@ -117,6 +117,7 @@ export async function GET(request: Request) {
             propertyName: tenant.property?.name || null,
             unitNumber: tenant.unitNumber,
             paidAmount: canSeeFinancials ? totalPaid : 0,
+            // CRITICAL: totalPaid already excludes HISTORICAL_DEBT (reflected in reduced openingBalance)
             remaining: canSeeFinancials ? Math.max(0, (Number(tenant.openingBalance) || 0) + rentAmount - (Number(tenant.creditBalance) || 0) - totalPaid) : 0,
           })
 

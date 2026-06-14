@@ -157,7 +157,10 @@ export default function RentCollection() {
   }
 
   const getTenantPaymentStatus = (tenant: TenantData): 'paid' | 'partial' | 'overdue' | 'unpaid' | 'due-soon' => {
-    const payments = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear)
+    // CRITICAL: Exclude HISTORICAL_DEBT payments from totalPaid because those payments
+    // are already reflected in the reduced tenant.openingBalance. Including them here
+    // would double-count the payment (once via reduced openingBalance, once via paymentsReceived).
+    const payments = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear && p.allocationType !== 'HISTORICAL_DEBT')
     const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0)
     const tenantAdjustments = getTenantAdjustments(tenant)
     const totalAdjustments = tenantAdjustments.reduce((sum, a) => sum + a.amount, 0)
@@ -247,7 +250,8 @@ export default function RentCollection() {
     overdue: activeTenants.filter(t => getTenantPaymentStatus(t) === 'overdue').length,
     expectedRevenue: activeTenants.reduce((s, t) => s + t.rentAmount, 0),
     collectedRevenue: activeTenants.reduce((s, t) => {
-      const paid = (t.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear).reduce((sum, p) => sum + p.amount, 0)
+      // CRITICAL: Exclude HISTORICAL_DEBT payments — they're already reflected in reduced openingBalance
+      const paid = (t.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear && p.allocationType !== 'HISTORICAL_DEBT').reduce((sum, p) => sum + p.amount, 0)
       const creditApplied = Math.min(t.creditBalance || 0, Math.max(0, t.rentAmount - paid))
       return s + paid + creditApplied
     }, 0),
@@ -316,7 +320,8 @@ export default function RentCollection() {
 
   const openPayDialog = (tenant: TenantData) => {
     setPayingTenant(tenant)
-    const paid = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear).reduce((sum, p) => sum + p.amount, 0)
+    // CRITICAL: Exclude HISTORICAL_DEBT payments — they're already reflected in reduced openingBalance
+    const paid = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear && p.allocationType !== 'HISTORICAL_DEBT').reduce((sum, p) => sum + p.amount, 0)
     const adjustments = getTenantAdjustments(tenant).reduce((sum, a) => sum + a.amount, 0)
     setPayForm({ amount: Math.max(0, tenant.rentAmount - paid - adjustments), method: 'cash', reference: '', notes: '', paymentDate: new Date().toISOString().split('T')[0] })
     setPayAllocationType('CURRENT_RENT')
@@ -877,7 +882,11 @@ export default function RentCollection() {
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger-children">
         {filteredTenants.map(tenant => {
           const status = getTenantPaymentStatus(tenant)
-          const paid = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear).reduce((sum, p) => sum + p.amount, 0)
+          // CRITICAL: Exclude HISTORICAL_DEBT payments from 'paid' because those payments
+          // are already reflected in the reduced tenant.openingBalance. Including them here
+          // would double-count: once via reduced openingBalance and once via paymentsReceived.
+          // Formula: remaining = (reduced)openingBalance + currentCharges - creditBalance - currentRentPayments
+          const paid = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear && p.allocationType !== 'HISTORICAL_DEBT').reduce((sum, p) => sum + p.amount, 0)
           const tenantAdjustments = getTenantAdjustments(tenant)
           const totalAdjustments = tenantAdjustments.reduce((sum, a) => sum + a.amount, 0)
           // Calculate true remaining balance including opening balance and credit balance
@@ -1223,7 +1232,7 @@ export default function RentCollection() {
               month={selectedMonth}
               year={selectedYear}
               paymentStatus={getTenantPaymentStatus(billTenant)}
-              paidAmount={(billTenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear).reduce((sum, p) => sum + p.amount, 0)}
+              paidAmount={(billTenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear && p.allocationType !== 'HISTORICAL_DEBT').reduce((sum, p) => sum + p.amount, 0)}
               language={language}
             />
           )}

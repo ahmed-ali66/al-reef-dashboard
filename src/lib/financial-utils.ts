@@ -8,6 +8,17 @@
  *   Current Charges = rentAmount + municipalityFee - adjustments
  *   Total Due       = Opening Balance + Current Charges - Credit Balance
  *   Remaining       = Total Due - Payments Received
+ *
+ * CRITICAL PAYMENT ALLOCATION CONVENTION:
+ *   - HISTORICAL_DEBT payments: These reduce tenant.openingBalance in the database.
+ *     They must be EXCLUDED from paymentsReceived to avoid double-counting.
+ *     (Once via reduced openingBalance, once via paymentsReceived = wrong.)
+ *   - CURRENT_RENT payments: These are included in paymentsReceived.
+ *   - ADVANCE_PAYMENT payments: Excess goes to tenant.creditBalance.
+ *     The portion covering current rent is included in paymentsReceived.
+ *
+ * When summing payments for the `paymentsReceived` parameter, callers MUST
+ * filter out payments where allocationType === 'HISTORICAL_DEBT'.
  */
 
 export interface FinancialCalcInput {

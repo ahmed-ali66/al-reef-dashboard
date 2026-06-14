@@ -40,11 +40,15 @@ export async function GET(request: Request) {
     if (!tenant) return errorResponse('Tenant not found', 404)
 
     // Fetch payments for this tenant/month/year
+    // CRITICAL: Exclude HISTORICAL_DEBT payments from paidAmount because those payments
+    // are already reflected in the reduced tenant.openingBalance. Including them would
+    // double-count the payment (once via reduced openingBalance, once via paymentsReceived).
     const payments = await prisma.payment.findMany({
       where: {
         tenantId: tenant.id,
         month,
         year,
+        allocationType: { not: 'HISTORICAL_DEBT' },
       },
       orderBy: { date: 'desc' },
     })
