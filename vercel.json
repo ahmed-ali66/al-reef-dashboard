@@ -10,7 +10,7 @@
     },
     {
       "path": "/api/backup/auto?cron_secret=967ce59955c50e059333bfb2f2d09a39af44cca5f0cb3cc2483de8bee9c08112",
-      "schedule": "0 22 * * *"
+      "schedule": "0 2 * * *"
     }
   ]
 }

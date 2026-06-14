@@ -46,6 +46,37 @@ export async function GET(request: Request) {
       }
     }
 
+    // Deduplication: skip auto-backup if a completed auto-backup already exists today
+    // This prevents duplicates when both the dedicated cron AND the daily-report fallback trigger run
+    if (isCron) {
+      const todayStart = new Date()
+      todayStart.setHours(0, 0, 0, 0)
+      const todayEnd = new Date()
+      todayEnd.setHours(23, 59, 59, 999)
+
+      const todayBackups = await prisma.backupRecord.findMany({
+        where: {
+          type: 'auto',
+          status: 'completed',
+          createdAt: { gte: todayStart, lte: todayEnd },
+        },
+        select: { companyId: true },
+      })
+
+      const alreadyBackedUp = new Set(todayBackups.map(b => b.companyId))
+      const remaining = companyIds.filter(id => !alreadyBackedUp.has(id))
+
+      if (remaining.length === 0) {
+        return successResponse({
+          message: 'Auto-backup already completed today — skipping duplicate',
+          skipped: companyIds.length,
+          timestamp: new Date().toISOString(),
+        })
+      }
+
+      companyIds = remaining
+    }
+
     const results: Array<{
       companyId: string
       companyName?: string
@@ -59,13 +90,13 @@ export async function GET(request: Request) {
 
     for (const companyId of companyIds) {
       try {
-        // Fetch all company data
-        const [company, properties, tenants, expenses, maintenance, users, auditLogs] = await Promise.all([
+        // Fetch all company data (including Reservations, RentAdjustments, RecurringBills)
+        const [company, properties, tenants, expenses, maintenance, users, auditLogs, reservations, rentAdjustments, recurringBills, billPayments] = await Promise.all([
           prisma.company.findUnique({ where: { id: companyId } }),
           prisma.property.findMany({ where: { companyId, deletedAt: null } }),
           prisma.tenant.findMany({
             where: { companyId, deletedAt: null },
-            include: { payments: true },
+            include: { payments: true, adjustments: true },
           }),
           prisma.expense.findMany({ where: { companyId, deletedAt: null } }),
           prisma.maintenance.findMany({ where: { companyId, deletedAt: null } }),
@@ -81,31 +112,37 @@ export async function GET(request: Request) {
             orderBy: { createdAt: 'desc' },
             take: 1000,
           }),
+          prisma.reservation.findMany({ where: { companyId, deletedAt: null } }),
+          prisma.rentAdjustment.findMany({ where: { tenant: { companyId } } }),
+          prisma.recurringBill.findMany({ where: { companyId, deletedAt: null } }),
+          prisma.billPayment.findMany({ where: { recurringBill: { companyId } } }),
         ])
 
         // Also fetch soft-deleted records
-        const [deletedProperties, deletedTenants, deletedExpenses, deletedMaintenance] = await Promise.all([
+        const [deletedProperties, deletedTenants, deletedExpenses, deletedMaintenance, deletedReservations, deletedRecurringBills] = await Promise.all([
           prisma.property.findMany({ where: { companyId, deletedAt: { not: null } } }),
           prisma.tenant.findMany({
             where: { companyId, deletedAt: { not: null } },
-            include: { payments: true },
+            include: { payments: true, adjustments: true },
           }),
           prisma.expense.findMany({ where: { companyId, deletedAt: { not: null } } }),
           prisma.maintenance.findMany({ where: { companyId, deletedAt: { not: null } } }),
+          prisma.reservation.findMany({ where: { companyId, deletedAt: { not: null } } }),
+          prisma.recurringBill.findMany({ where: { companyId, deletedAt: { not: null } } }),
         ])
 
         const backup = {
-          version: '1.1',
+          version: '1.2',
           exportedAt: new Date().toISOString(),
           type: isCron ? 'auto' : 'manual',
           company,
-          data: { properties, tenants, expenses, maintenance, users, auditLogs },
-          deleted: { properties: deletedProperties, tenants: deletedTenants, expenses: deletedExpenses, maintenance: deletedMaintenance },
+          data: { properties, tenants, expenses, maintenance, users, auditLogs, reservations, rentAdjustments, recurringBills, billPayments },
+          deleted: { properties: deletedProperties, tenants: deletedTenants, expenses: deletedExpenses, maintenance: deletedMaintenance, reservations: deletedReservations, recurringBills: deletedRecurringBills },
         }
 
         const backupJson = JSON.stringify(backup)
         const backupSize = Buffer.byteLength(backupJson, 'utf-8')
-        const recordCount = properties.length + tenants.length + expenses.length + maintenance.length + users.length
+        const recordCount = properties.length + tenants.length + expenses.length + maintenance.length + users.length + reservations.length + rentAdjustments.length + recurringBills.length
 
         // Compute SHA-256 data hash for integrity verification
         const dataHash = crypto.createHash('sha256').update(backupJson).digest('hex')
@@ -200,6 +237,9 @@ export async function GET(request: Request) {
             tenants: tenants.length,
             expenses: expenses.length,
             maintenance: maintenance.length,
+            reservations: reservations.length,
+            rentAdjustments: rentAdjustments.length,
+            recurringBills: recurringBills.length,
           },
         })
 

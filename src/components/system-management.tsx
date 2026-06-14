@@ -173,8 +173,9 @@ export default function SystemManagement() {
       const res = await fetch('/api/backup/history?limit=1')
       if (res.ok) {
         const data = await res.json()
-        const records = data.data?.data || data.data || []
-        if (Array.isArray(records) && records.length > 0) {
+        // API returns: successResponse(paginatedResponse(...)) → { data: [...records], pagination: {...} }
+        const records = Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : [])
+        if (records.length > 0) {
           setLastBackupRecord(records[0])
         }
       }
@@ -194,10 +195,11 @@ export default function SystemManagement() {
       const res = await fetch(`/api/backup/history?${params}`)
       if (res.ok) {
         const data = await res.json()
-        const paginated = data.data || data
-        setBackupRecords(paginated.data || [])
-        if (paginated.pagination) {
-          setHistoryPagination(paginated.pagination)
+        // API returns: successResponse(paginatedResponse(...)) → { data: [...records], pagination: {...} }
+        const records = Array.isArray(data.data) ? data.data : []
+        setBackupRecords(records)
+        if (data.pagination) {
+          setHistoryPagination(data.pagination)
         }
       }
     } catch (err) {

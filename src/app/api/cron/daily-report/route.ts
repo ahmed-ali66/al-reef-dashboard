@@ -120,6 +120,17 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    // Trigger auto-backup as a fallback — ensures daily backups even if
+    // the dedicated /api/backup/auto cron is not registered (Vercel Hobby = 2 cron limit)
+    // Fire-and-forget: backup failure should not affect the daily report response
+    try {
+      const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'
+      const backupUrl = `${baseUrl}/api/backup/auto?cron_secret=${encodeURIComponent(process.env.CRON_SECRET || '')}`
+      fetch(backupUrl, { headers: { 'x-vercel-cron': 'true' } }).catch(() => {})
+    } catch {
+      // Non-critical — ignore backup trigger failures
+    }
+
     return NextResponse.json({
       success: errors.length === 0,
       date: reportDate,
