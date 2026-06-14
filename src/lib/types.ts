@@ -245,6 +245,8 @@ export interface ReservationData {
   depositStatus: string
   depositPaymentMethod: string | null
   depositReference: string | null
+  depositPaymentDate: string | null
+  emiratesId: string | null
   status: string
   convertedTenantId: string | null
   depositAppliedTo: string | null

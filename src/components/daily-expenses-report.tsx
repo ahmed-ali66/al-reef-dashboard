@@ -5,7 +5,7 @@ import { useAppStore, isOwnerOrAdmin } from '@/lib/store'
 import { useDataStore } from '@/lib/data-store'
 import { formatAED, formatDate, getCategoryIcon } from '@/lib/utils'
 import { t, getExpenseCategoryLabel, getNameByLang, type Language } from '@/lib/i18n'
-import type { ExpenseData, PaymentData, TenantData, PropertyData } from '@/lib/types'
+import type { ExpenseData, PaymentData, TenantData, PropertyData, ReservationData } from '@/lib/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -75,6 +75,7 @@ interface DailyIncomeItem {
   method: string | null
   isLate: boolean
   notes: string | null
+  source: 'rent' | 'reservation'
 }
 
 interface DailyExpenseItem {
@@ -105,7 +106,7 @@ export default function DailyExpensesReport() {
   const canAccess = authUser && isOwnerOrAdmin(authUser.role)
 
   const computeDailyData = useCallback(() => {
-    const { payments, tenants, properties, expenses } = useDataStore.getState()
+    const { payments, tenants, properties, expenses, reservations } = useDataStore.getState()
 
     // Filter payments for the selected date
     const dayPayments = payments.filter(p => {
@@ -113,7 +114,7 @@ export default function DailyExpensesReport() {
       return paymentDate === selectedDate
     })
 
-    // Build income items
+    // Build income items from rent payments
     const income: DailyIncomeItem[] = dayPayments.map(p => {
       const tenant = tenants.find(t => t.id === p.tenantId)
       const property = tenant ? properties.find(pr => pr.id === tenant.propertyId) : null
@@ -126,8 +127,62 @@ export default function DailyExpensesReport() {
         method: p.method,
         isLate: p.isLate || false,
         notes: p.notes || null,
+        source: 'rent' as const,
       }
     })
+
+    // Add reservation deposits as income items
+    const activeReservations = (reservations || []).filter((r: ReservationData) =>
+      r.status !== 'cancelled' && !r.deletedAt
+    )
+    for (const r of activeReservations) {
+      // Include deposits that are paid or partial
+      if (r.depositStatus === 'paid' || r.depositStatus === 'partial') {
+        // Use depositPaymentDate if available, otherwise fall back to reservationDate
+        const paymentDateStr = (r as any).depositPaymentDate
+          ? new Date((r as any).depositPaymentDate).toISOString().split('T')[0]
+          : new Date(r.reservationDate).toISOString().split('T')[0]
+        if (paymentDateStr === selectedDate) {
+          const property = properties.find(p => p.id === r.propertyId)
+          income.push({
+            tenantName: r.prospectName || 'Reservation',
+            propertyName: property ? getNameByLang(property, lang) : '',
+            unitNumber: r.unitNumber || null,
+            amount: r.depositAmount,
+            time: (r as any).depositPaymentDate
+              ? new Date((r as any).depositPaymentDate).toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit' })
+              : new Date(r.reservationDate).toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit' }),
+            method: 'reservation_deposit',
+            isLate: false,
+            notes: r.notes || null,
+            source: 'reservation' as const,
+          })
+        }
+      }
+    }
+
+    // Handle refunded/cancelled reservations - show as negative income on the date they were updated
+    const cancelledReservations = (reservations || []).filter((r: ReservationData) =>
+      r.status === 'cancelled' && !r.deletedAt && r.depositStatus === 'refunded'
+    )
+    for (const r of cancelledReservations) {
+      const refundDate = new Date(r.createdAt).toISOString().split('T')[0]  // Use updatedAt if available
+      const updatedDate = (r as any).updatedAt ? new Date((r as any).updatedAt).toISOString().split('T')[0] : refundDate
+      if (updatedDate === selectedDate) {
+        const property = properties.find(p => p.id === r.propertyId)
+        income.push({
+          tenantName: r.prospectName || 'Refund',
+          propertyName: property ? getNameByLang(property, lang) : '',
+          unitNumber: r.unitNumber || null,
+          amount: -r.depositAmount, // negative amount for refund
+          time: updatedDate,
+          method: 'reservation_refund',
+          isLate: false,
+          notes: `Refund: ${r.notes || ''}`,
+          source: 'reservation' as const,
+        })
+      }
+    }
 
     // Filter expenses for the selected date
     const dayExpenses = expenses.filter(e => {
@@ -1201,10 +1256,15 @@ export default function DailyExpensesReport() {
                 </TableHeader>
                 <TableBody>
                   {[...incomeItems].sort((a, b) => a.time.localeCompare(b.time)).map((item, idx) => (
-                    <TableRow key={idx} className={`${item.isLate ? 'bg-red-50/50 border-l-3 border-l-red-400' : ''}`}>
+                    <TableRow key={idx} className={`${item.isLate ? 'bg-red-50/50 border-l-3 border-l-red-400' : ''} ${item.source === 'reservation' ? 'bg-sky-50/30' : ''}`}>
                       <TableCell className="font-mono text-xs text-muted-foreground">{idx + 1}</TableCell>
                       <TableCell>
-                        <p className="font-medium text-sm max-w-[120px] truncate">{item.tenantName}</p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="font-medium text-sm max-w-[120px] truncate">{item.tenantName}</p>
+                          {item.source === 'reservation' && (
+                            <Badge variant="outline" className="text-[10px] border-sky-400 text-sky-700 px-1 py-0 shrink-0">Reservation</Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <p className="text-sm text-muted-foreground max-w-[120px] truncate">{item.propertyName}</p>
@@ -1217,11 +1277,15 @@ export default function DailyExpensesReport() {
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        <p className="font-bold text-emerald">{formatAED(item.amount)}</p>
+                        <p className={item.amount < 0 ? 'font-bold text-red-600' : 'font-bold text-emerald'}>{formatAED(item.amount)}</p>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">{item.time}</TableCell>
                       <TableCell>
-                        {item.method ? (
+                        {item.method === 'reservation_deposit' ? (
+                          <Badge variant="secondary" className="text-xs font-normal bg-sky-100 text-sky-700">Deposit</Badge>
+                        ) : item.method === 'reservation_refund' ? (
+                          <Badge variant="secondary" className="text-xs font-normal bg-red-100 text-red-700">Refund</Badge>
+                        ) : item.method ? (
                           <Badge variant="secondary" className="text-xs font-normal inline-block max-w-[80px] truncate">{item.method}</Badge>
                         ) : (
                           <span className="text-xs text-muted-foreground">—</span>
@@ -1232,6 +1296,8 @@ export default function DailyExpensesReport() {
                           <Badge className="bg-red-100 text-red-700 border-red-200 text-xs inline-block max-w-[80px] truncate">Late</Badge>
                         ) : item.notes?.includes('Partial') ? (
                           <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-xs inline-block max-w-[80px] truncate">Partial</Badge>
+                        ) : item.amount < 0 ? (
+                          <Badge className="bg-red-100 text-red-700 border-red-200 text-xs inline-block max-w-[80px] truncate">Refund</Badge>
                         ) : (
                           <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs inline-block max-w-[80px] truncate">Paid</Badge>
                         )}

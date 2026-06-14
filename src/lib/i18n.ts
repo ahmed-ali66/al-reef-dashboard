@@ -403,6 +403,17 @@ export const translations = {
   totalEffectiveCollection: { en: 'Total Effective Collection', ar: 'إجمالي التحصيل الفعلي', bn: 'মোট কার্যকর আদায়', ur: 'کل موثر وصولی' },
   adjustmentCancelled: { en: 'Adjustment cancelled successfully', ar: 'تم إلغاء التعديل بنجاح', bn: 'সমন্বয় সফলভাবে বাতিল হয়েছে', ur: 'ایڈجسٹمنٹ کامیابی سے منسوخ ہو گیا' },
   cancellationReason: { en: 'Cancellation Reason', ar: 'سبب الإلغاء', bn: 'বাতিলের কারণ', ur: 'منسوخ کرنے کی وجہ' },
+  adjustmentsTab: { en: 'Adjustments', ar: 'التعديلات', bn: 'সমন্বয়', ur: 'ترتیبات' },
+  adjustmentTypeFilter: { en: 'Adjustment Type', ar: 'نوع التعديل', bn: 'সমন্বয়ের ধরন', ur: 'ترتیبات کی قسم' },
+  allAdjustmentTypes: { en: 'All Types', ar: 'جميع الأنواع', bn: 'সব ধরন', ur: 'تمام اقسام' },
+  reservationPaymentDate: { en: 'Payment Date', ar: 'تاريخ الدفع', bn: 'পেমেন্ট তারিখ', ur: 'ادائیگی کی تاریخ' },
+  emiratesIdNumber: { en: 'Emirates ID', ar: 'رقم الهوية الإماراتية', bn: 'আমিরাতি আইডি', ur: 'اماراتی شناختی کارڈ' },
+  createdBy: { en: 'Created By', ar: 'أنشئ بواسطة', bn: 'তৈরি করেছেন', ur: 'بنایا گیا بذریعہ' },
+  createdDate: { en: 'Created Date', ar: 'تاريخ الإنشاء', bn: 'তৈরির তারিখ', ur: 'تخلیق کی تاریخ' },
+  approved: { en: 'Approved', ar: 'معتمد', bn: 'অনুমোদিত', ur: 'منظور' },
+  allProperties: { en: 'All Properties', ar: 'جميع العقارات', bn: 'সব সম্পত্তি', ur: 'تمام املاک' },
+  duration: { en: 'Duration', ar: 'المدة', bn: 'মেয়াদ', ur: 'مدت' },
+  month: { en: 'mo', ar: 'شهر', bn: 'মাস', ur: 'ماہ' },
 
   // WhatsApp Language Selection
   selectReminderLanguage: { en: 'Select Reminder Language', ar: 'اختر لغة التذكير', bn: 'রিমাইন্ডারের ভাষা নির্বাচন করুন', ur: 'یاد دہانی کی زبان منتخب کریں' },

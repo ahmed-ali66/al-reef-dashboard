@@ -40,6 +40,8 @@ interface ReservationFormState {
   depositAmount: string
   depositPaymentMethod: string
   depositReference: string
+  depositPaymentDate: string
+  emiratesId: string
   expectedMoveInDate: string
   expiryDate: string
   notes: string
@@ -50,6 +52,7 @@ const emptyForm: ReservationFormState = {
   prospectPhone: '', prospectWhatsapp: '', prospectEmail: '',
   propertyId: '', unitNumber: '',
   depositAmount: '0', depositPaymentMethod: '', depositReference: '',
+  depositPaymentDate: new Date().toISOString().split('T')[0], emiratesId: '',
   expectedMoveInDate: '', expiryDate: '', notes: '',
 }
 
@@ -264,6 +267,8 @@ export default function Reservations() {
       depositAmount: String(r.depositAmount),
       depositPaymentMethod: r.depositPaymentMethod || '',
       depositReference: r.depositReference || '',
+      depositPaymentDate: r.depositPaymentDate ? new Date(r.depositPaymentDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+      emiratesId: (r as any).emiratesId || '',
       expectedMoveInDate: r.expectedMoveInDate ? new Date(r.expectedMoveInDate).toISOString().split('T')[0] : '',
       expiryDate: r.expiryDate ? new Date(r.expiryDate).toISOString().split('T')[0] : '',
       notes: r.notes || '',
@@ -294,6 +299,8 @@ export default function Reservations() {
       const body: any = {
         ...form,
         depositAmount: Number(form.depositAmount) || 0,
+        depositPaymentDate: form.depositPaymentDate || null,
+        emiratesId: form.emiratesId || null,
         reservationDate: new Date().toISOString(),
         status: editing ? undefined : 'pending',
         depositStatus: editing ? undefined : (Number(form.depositAmount) > 0 ? 'paid' : 'unpaid'),
@@ -452,6 +459,7 @@ export default function Reservations() {
               <TableHeader>
                 <TableRow>
                   <TableHead>{t('prospectName', language)}</TableHead>
+                  <TableHead>{t('emiratesIdNumber', language)}</TableHead>
                   <TableHead>{t('propertyUnit', language)}</TableHead>
                   <TableHead>{t('reservationDate', language)}</TableHead>
                   <TableHead>{t('expectedMoveInDate', language)}</TableHead>
@@ -488,8 +496,14 @@ export default function Reservations() {
                           <div>
                             <p className="font-medium text-sm">{displayName}</p>
                             <p className="text-xs text-muted-foreground">{r.prospectPhone}</p>
+                            {(r as any).emiratesId && <p className="text-xs text-muted-foreground">{(r as any).emiratesId}</p>}
                           </div>
                         </div>
+                      </TableCell>
+
+                      {/* Emirates ID */}
+                      <TableCell className="text-sm">
+                        {(r as any).emiratesId || '—'}
                       </TableCell>
 
                       {/* Property / Unit */}
@@ -509,9 +523,14 @@ export default function Reservations() {
                         </div>
                       </TableCell>
 
-                      {/* Reservation Date */}
+                      {/* Reservation / Payment Date */}
                       <TableCell className="text-sm">
-                        {formatDate(r.reservationDate)}
+                        <div>
+                          <p>{formatDate(r.reservationDate)}</p>
+                          {(r as any).depositPaymentDate && (
+                            <p className="text-xs text-emerald-600">{formatDate((r as any).depositPaymentDate)}</p>
+                          )}
+                        </div>
                       </TableCell>
 
                       {/* Expected Move-in */}
@@ -737,6 +756,16 @@ export default function Reservations() {
                   <div>
                     <Label>{t('depositReference', language)}</Label>
                     <Input value={form.depositReference} onChange={e => updateForm('depositReference', e.target.value)} placeholder={t('reference', language)} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4 mt-4">
+                  <div>
+                    <Label>{t('reservationPaymentDate', language)}</Label>
+                    <Input type="date" value={form.depositPaymentDate} onChange={e => updateForm('depositPaymentDate', e.target.value)} />
+                  </div>
+                  <div>
+                    <Label>{t('emiratesIdNumber', language)}</Label>
+                    <Input value={form.emiratesId} onChange={e => updateForm('emiratesId', e.target.value)} placeholder="784-XXXX-XXXXXXX-X" />
                   </div>
                 </div>
               </div>

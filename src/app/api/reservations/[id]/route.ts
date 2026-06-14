@@ -126,6 +126,8 @@ export async function PUT(
     if (body.depositReference !== undefined) data.depositReference = body.depositReference || null
     if (body.depositAppliedTo !== undefined) data.depositAppliedTo = body.depositAppliedTo || null
     if (body.depositAppliedAmount !== undefined) data.depositAppliedAmount = safeDecimal(body.depositAppliedAmount)
+    if (body.depositPaymentDate !== undefined) data.depositPaymentDate = body.depositPaymentDate ? new Date(body.depositPaymentDate) : null
+    if (body.emiratesId !== undefined) data.emiratesId = body.emiratesId || null
 
     // Use OCC-protected update
     const occVersion = parseOCCVersion(body)

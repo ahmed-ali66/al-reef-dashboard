@@ -13,7 +13,8 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
-import { Banknote, MessageCircle, Check, AlertTriangle, Clock, Loader2, ChevronLeft, ChevronRight, FileText, Search, Pencil, Trash2, ChevronDown, ChevronUp, X, Plus, MinusCircle, Calendar } from 'lucide-react'
+import { Banknote, MessageCircle, Check, AlertTriangle, Clock, Loader2, ChevronLeft, ChevronRight, FileText, Search, Pencil, Trash2, ChevronDown, ChevronUp, X, Plus, MinusCircle, Calendar, SlidersHorizontal } from 'lucide-react'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import BillInvoice from '@/components/bill-invoice'
 
 export default function RentCollection() {
@@ -22,7 +23,7 @@ export default function RentCollection() {
   const [loading, setLoading] = useState(true)
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1)
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
-  const [filter, setFilter] = useState<'all' | 'paid' | 'partial' | 'unpaid' | 'overdue'>('all')
+  const [filter, setFilter] = useState<'all' | 'paid' | 'partial' | 'unpaid' | 'overdue' | 'adjustments'>('all')
   const [payDialogOpen, setPayDialogOpen] = useState(false)
   const [payingTenant, setPayingTenant] = useState<TenantData | null>(null)
   const [payForm, setPayForm] = useState({ amount: 0, method: 'cash', reference: '', notes: '', paymentDate: new Date().toISOString().split('T')[0] })
@@ -90,6 +91,12 @@ export default function RentCollection() {
   })
   const [adjustmentLoading, setAdjustmentLoading] = useState(false)
   const [adjustmentError, setAdjustmentError] = useState('')
+
+  // Adjustments tab filter state
+  const [adjustmentTypeFilter, setAdjustmentTypeFilter] = useState<string>('all')
+  const [adjustmentPropertyFilter, setAdjustmentPropertyFilter] = useState<string>('all')
+  const [adjustmentUnitFilter, setAdjustmentUnitFilter] = useState<string>('all')
+  const [adjustmentSearch, setAdjustmentSearch] = useState('')
 
   const searchInvoice = async () => {
     if (!invoiceSearch.trim() || invoiceSearch.trim().length < 2) return
@@ -249,6 +256,63 @@ export default function RentCollection() {
       return s + adj
     }, 0),
   }
+
+  // Get all adjustments for the selected month/year (for Adjustments tab)
+  const allAdjustments = useDataStore.getState().adjustments.filter(a =>
+    isAdjustmentActiveInMonth(a, selectedMonth, selectedYear)
+  )
+
+  // Adjustment type options
+  const adjustmentTypeOptions = ['maintenance_delay', 'flood_damage', 'utility_failure', 'goodwill', 'contract_amendment', 'owner_discount', 'other']
+
+  // Helper to get adjustment type label
+  const getAdjustmentTypeLabel = (type: string): string => {
+    const translation = t(type as any, language)
+    // If translation returns the key itself, it means no translation was found
+    if (translation === type) {
+      return type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+    }
+    return translation
+  }
+
+  // Filter adjustments for the tab
+  const filteredAdjustments = allAdjustments.filter(a => {
+    // Search filter
+    if (adjustmentSearch.trim()) {
+      const searchLower = adjustmentSearch.trim().toLowerCase()
+      const tenant = tenants.find(t => t.id === a.tenantId)
+      const tenantName = tenant ? getNameByLang(tenant, language).toLowerCase() : ''
+      const property = tenant?.property || (tenant ? tenants.find(t => t.id === a.tenantId) : null)
+      const propData = useDataStore.getState().properties.find(p => p.id === a.propertyId)
+      const propertyName = propData ? getNameByLang(propData, language).toLowerCase() : ''
+      if (!tenantName.includes(searchLower) && !propertyName.includes(searchLower)) return false
+    }
+    // Property filter
+    if (adjustmentPropertyFilter !== 'all' && a.propertyId !== adjustmentPropertyFilter) return false
+    // Unit filter
+    if (adjustmentUnitFilter !== 'all') {
+      const tenant = tenants.find(t => t.id === a.tenantId)
+      if (!tenant || tenant.unitNumber !== adjustmentUnitFilter) return false
+    }
+    // Adjustment type filter
+    if (adjustmentTypeFilter !== 'all' && a.adjustmentType !== adjustmentTypeFilter) return false
+    return true
+  })
+
+  // Derive unique properties from adjustments
+  const adjustmentProperties = Array.from(
+    new Set(allAdjustments.map(a => a.propertyId))
+  ).map(id => useDataStore.getState().properties.find(p => p.id === id)).filter(Boolean) as PropertyData[]
+
+  // Derive unique units from filtered adjustments
+  const adjustmentUnits = Array.from(
+    new Set(
+      filteredAdjustments.map(a => {
+        const tenant = tenants.find(t => t.id === a.tenantId)
+        return tenant?.unitNumber
+      }).filter(Boolean) as string[]
+    )
+  ).sort()
 
   const openPayDialog = (tenant: TenantData) => {
     setPayingTenant(tenant)
@@ -547,7 +611,7 @@ export default function RentCollection() {
       </div>
 
       {/* Stats Row */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
         <Card className="card-hover">
           <CardContent className="p-4 text-center">
             <p className="text-xs text-muted-foreground">{t('activeTenants', language)}</p>
@@ -578,6 +642,16 @@ export default function RentCollection() {
             <p className="text-2xl font-bold text-red-600 overdue-pulse">{stats.overdue}</p>
           </CardContent>
         </Card>
+        <Card className="card-hover border-l-4 border-l-teal-500">
+          <CardContent className="p-4 text-center">
+            <p className="text-xs text-muted-foreground">{t('adjustmentsTab', language)}</p>
+            {canSeeRevenue ? (
+              <p className="text-2xl font-bold text-teal-600">{formatAED(stats.adjustmentsTotal)}</p>
+            ) : (
+              <p className="text-2xl font-bold text-teal-600">{allAdjustments.length}</p>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       {/* Collection progress */}
@@ -602,7 +676,7 @@ export default function RentCollection() {
 
       {/* Filter & Search */}
       <div className="flex gap-2 flex-wrap items-center">
-        {(['all', 'paid', 'partial', 'unpaid', 'overdue'] as const).map(f => (
+        {(['all', 'paid', 'partial', 'unpaid', 'overdue', 'adjustments'] as const).map(f => (
           <Button
             key={f}
             variant={filter === f ? 'default' : 'outline'}
@@ -615,54 +689,191 @@ export default function RentCollection() {
             {f === 'partial' && t('partiallyPaid', language)}
             {f === 'unpaid' && t('unpaid', language)}
             {f === 'overdue' && t('overdue', language)}
+            {f === 'adjustments' && t('adjustmentsTab', language)}
           </Button>
         ))}
-        <Select value={unitFilter} onValueChange={v => setUnitFilter(v)}>
-          <SelectTrigger className="w-[140px] h-9 text-sm">
-            <SelectValue placeholder={t('allUnits', language) || 'All Units'} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t('allUnits', language) || 'All Units'}</SelectItem>
-            {uniqueUnitNumbers.map(unit => (
-              <SelectItem key={unit} value={unit}>{unit}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {(filter === 'paid' || filter === 'partial') && (
-          <div className="flex items-center gap-1.5 bg-white rounded-lg border px-2 py-1">
-            <Calendar className="w-4 h-4 text-gray-400" />
-            <input
-              type="date"
-              value={paymentDateFilter}
-              onChange={e => setPaymentDateFilter(e.target.value)}
-              className="border-0 outline-none text-sm bg-transparent w-[130px] cursor-pointer"
-              title={t('paymentDate', language)}
-            />
-            {paymentDateFilter && (
-              <button onClick={() => setPaymentDateFilter('')} className="text-gray-400 hover:text-gray-600" title={t('clearFilter', language)}>
-                <X className="w-3.5 h-3.5" />
-              </button>
+        {filter !== 'adjustments' && (
+          <>
+            <Select value={unitFilter} onValueChange={v => setUnitFilter(v)}>
+              <SelectTrigger className="w-[140px] h-9 text-sm">
+                <SelectValue placeholder={t('allUnits', language) || 'All Units'} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('allUnits', language) || 'All Units'}</SelectItem>
+                {uniqueUnitNumbers.map(unit => (
+                  <SelectItem key={unit} value={unit}>{unit}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {(filter === 'paid' || filter === 'partial') && (
+              <div className="flex items-center gap-1.5 bg-white rounded-lg border px-2 py-1">
+                <Calendar className="w-4 h-4 text-gray-400" />
+                <input
+                  type="date"
+                  value={paymentDateFilter}
+                  onChange={e => setPaymentDateFilter(e.target.value)}
+                  className="border-0 outline-none text-sm bg-transparent w-[130px] cursor-pointer"
+                  title={t('paymentDate', language)}
+                />
+                {paymentDateFilter && (
+                  <button onClick={() => setPaymentDateFilter('')} className="text-gray-400 hover:text-gray-600" title={t('clearFilter', language)}>
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
             )}
-          </div>
+            <div className="flex items-center gap-2 bg-white rounded-lg border px-2 py-1 ml-auto">
+              <Search className="w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder={t('searchTenant', language) || 'Search Tenant / Property'}
+                value={tenantSearch}
+                onChange={e => setTenantSearch(e.target.value)}
+                className="border-0 outline-none text-sm w-36 lg:w-52 bg-transparent"
+              />
+              {tenantSearch && (
+                <button onClick={() => setTenantSearch('')} className="text-gray-400 hover:text-gray-600">
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          </>
         )}
-        <div className="flex items-center gap-2 bg-white rounded-lg border px-2 py-1 ml-auto">
-          <Search className="w-4 h-4 text-gray-400" />
-          <input
-            type="text"
-            placeholder={t('searchTenant', language) || 'Search Tenant / Property'}
-            value={tenantSearch}
-            onChange={e => setTenantSearch(e.target.value)}
-            className="border-0 outline-none text-sm w-36 lg:w-52 bg-transparent"
-          />
-          {tenantSearch && (
-            <button onClick={() => setTenantSearch('')} className="text-gray-400 hover:text-gray-600">
-              <X className="w-3 h-3" />
-            </button>
-          )}
-        </div>
+        {filter === 'adjustments' && (
+          <>
+            <Select value={adjustmentPropertyFilter} onValueChange={v => { setAdjustmentPropertyFilter(v); setAdjustmentUnitFilter('all') }}>
+              <SelectTrigger className="w-[160px] h-9 text-sm">
+                <SelectValue placeholder={t('propertyName', language)} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('allProperties', language) || 'All Properties'}</SelectItem>
+                {adjustmentProperties.map(p => (
+                  <SelectItem key={p.id} value={p.id}>{getNameByLang(p, language)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={adjustmentUnitFilter} onValueChange={setAdjustmentUnitFilter}>
+              <SelectTrigger className="w-[120px] h-9 text-sm">
+                <SelectValue placeholder={t('unitNumber', language)} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('allUnits', language) || 'All Units'}</SelectItem>
+                {adjustmentUnits.map(unit => (
+                  <SelectItem key={unit} value={unit}>{unit}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={adjustmentTypeFilter} onValueChange={setAdjustmentTypeFilter}>
+              <SelectTrigger className="w-[160px] h-9 text-sm">
+                <SelectValue placeholder={t('adjustmentTypeFilter', language)} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('allAdjustmentTypes', language)}</SelectItem>
+                {adjustmentTypeOptions.map(type => (
+                  <SelectItem key={type} value={type}>{getAdjustmentTypeLabel(type)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex items-center gap-2 bg-white rounded-lg border px-2 py-1 ml-auto">
+              <Search className="w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder={t('searchTenant', language) || 'Search Tenant / Property'}
+                value={adjustmentSearch}
+                onChange={e => setAdjustmentSearch(e.target.value)}
+                className="border-0 outline-none text-sm w-36 lg:w-52 bg-transparent"
+              />
+              {adjustmentSearch && (
+                <button onClick={() => setAdjustmentSearch('')} className="text-gray-400 hover:text-gray-600">
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Tenant Payment Grid */}
+      {/* Tenant Payment Grid (hidden when adjustments tab is selected) */}
+      {filter === 'adjustments' ? (
+        <Card>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t('tenantName', language) || 'Tenant'}</TableHead>
+                    <TableHead>{t('propertyName', language)}</TableHead>
+                    <TableHead>{t('unitNumber', language)}</TableHead>
+                    <TableHead>{t('adjustmentAmount', language)}</TableHead>
+                    <TableHead>{t('adjustmentType', language)}</TableHead>
+                    <TableHead>{t('adjustmentReason', language)}</TableHead>
+                    <TableHead>{t('duration', language) || 'Duration'}</TableHead>
+                    <TableHead>{t('createdBy', language)}</TableHead>
+                    <TableHead>{t('createdDate', language)}</TableHead>
+                    <TableHead>{t('status', language)}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredAdjustments.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                        {t('noData', language)}
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filteredAdjustments.map(adj => {
+                      const tenant = tenants.find(t => t.id === adj.tenantId)
+                      const propData = useDataStore.getState().properties.find(p => p.id === adj.propertyId)
+                      return (
+                        <TableRow key={adj.id} className="hover:bg-muted/30">
+                          <TableCell className="text-sm font-medium">
+                            {tenant ? getNameByLang(tenant, language) : '—'}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {propData ? getNameByLang(propData, language) : '—'}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {tenant?.unitNumber || '—'}
+                          </TableCell>
+                          <TableCell className="text-sm font-semibold">
+                            {canSeeRevenue ? formatAED(adj.amount) : '•••'}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="text-xs">
+                              {getAdjustmentTypeLabel(adj.adjustmentType)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-sm max-w-[200px] truncate" title={adj.reason}>
+                            {adj.reason}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {adj.durationMonths} {adj.durationMonths === 1 ? (t('month', language) || 'mo') : (t('months', language) || 'mos')}
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {adj.createdBy ? adj.createdBy.substring(0, 8) + '…' : '—'}
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {new Date(adj.createdAt).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell>
+                            <Badge className={cn2(
+                              'text-xs',
+                              adj.status === 'approved' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' :
+                              'bg-red-100 text-red-700 border-red-200'
+                            )}>
+                              {adj.status === 'approved' ? t('approved', language) : t('cancelled', language)}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger-children">
         {filteredTenants.map(tenant => {
           const status = getTenantPaymentStatus(tenant)
@@ -933,8 +1144,9 @@ export default function RentCollection() {
           )
         })}
       </div>
+      )}
 
-      {filteredTenants.length === 0 && (
+      {filteredTenants.length === 0 && filter !== 'adjustments' && (
         <div className="text-center py-12 text-muted-foreground">
           {t('noTenantsMatchFilter', language)}
         </div>

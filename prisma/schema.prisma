@@ -303,6 +303,8 @@ model Reservation {
   depositStatus       String    @default("unpaid") // unpaid, partial, paid, refunded
   depositPaymentMethod String?  // cash, bank_transfer, cheque
   depositReference    String?
+  depositPaymentDate  DateTime? // actual date deposit payment was received
+  emiratesId          String?   // Emirates ID number of the prospect
   status              String    @default("pending") // pending, confirmed, cancelled, converted, expired
   convertedTenantId   String?   // FK to Tenant after conversion
   depositAppliedTo    String?   // security_deposit, first_rent, advance, other

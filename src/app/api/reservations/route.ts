@@ -141,6 +141,8 @@ export async function POST(request: Request) {
         depositStatus: body.depositStatus || 'unpaid',
         depositPaymentMethod: body.depositPaymentMethod || null,
         depositReference: body.depositReference || null,
+        depositPaymentDate: body.depositPaymentDate ? new Date(body.depositPaymentDate) : null,
+        emiratesId: body.emiratesId || null,
         status: body.status || 'pending',
         notes: body.notes || null,
       },
