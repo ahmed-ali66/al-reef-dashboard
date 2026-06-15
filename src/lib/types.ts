@@ -62,10 +62,29 @@ export interface PropertyData {
   tenants: TenantData[]
 }
 
+export interface TenantGroupData {
+  id: string
+  companyId: string
+  propertyId: string
+  name: string
+  nameAr: string | null
+  nameBn: string | null
+  nameUr: string | null
+  billingMode: string // consolidated, individual
+  status: string // active, inactive
+  notes: string | null
+  deletedAt: string | null
+  createdAt: string
+  updatedAt: string
+  tenants?: TenantData[]
+  property?: PropertyData
+}
+
 export interface TenantData {
   id: string
   companyId: string
   propertyId: string
+  groupId: string | null
   unitId?: string | null
   name: string
   nameAr: string | null
@@ -113,6 +132,7 @@ export interface TenantData {
   payments?: PaymentData[]
   adjustments?: RentAdjustmentData[]
   scoreAuditLogs?: ScoreAuditLogData[]
+  group?: TenantGroupData
 }
 
 export interface ScoreAuditLogData {

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { PropertyData, TenantData, PaymentData, ExpenseData, MaintenanceData, ReservationData, RentAdjustmentData } from '@/lib/types'
+import type { PropertyData, TenantData, PaymentData, ExpenseData, MaintenanceData, ReservationData, RentAdjustmentData, TenantGroupData } from '@/lib/types'
 import { isFinanciallyActive } from '@/lib/utils'
 
 // Company info
@@ -51,6 +51,7 @@ interface DataState {
   maintenanceItems: MaintenanceData[]
   reservations: ReservationData[]
   adjustments: RentAdjustmentData[]
+  tenantGroups: TenantGroupData[]
   isSeeded: boolean
   isLoading: boolean
   isInitialized: boolean
@@ -99,6 +100,12 @@ interface DataState {
   addAdjustment: (data: Omit<RentAdjustmentData, 'id' | 'companyId' | 'createdAt' | 'updatedAt' | 'tenant' | 'property'>) => Promise<void>
   updateAdjustment: (id: string, data: Partial<RentAdjustmentData>) => Promise<void>
   cancelAdjustment: (id: string, reason?: string) => Promise<void>
+
+  // Tenant Groups CRUD
+  addTenantGroup: (data: { propertyId: string; name: string; nameAr?: string; nameBn?: string; nameUr?: string; billingMode?: string; notes?: string; tenantIds?: string[] }) => Promise<TenantGroupData>
+  updateTenantGroup: (id: string, data: Partial<TenantGroupData> & { tenantIds?: string[] }) => Promise<void>
+  deleteTenantGroup: (id: string) => Promise<void>
+  recordGroupPayment: (groupId: string, data: { amount: number; month: number; year: number; method: string; reference?: string; notes?: string; paymentDate: string; allocationType?: string; customAllocation?: { tenantId: string; amount: number }[] }) => Promise<any>
 
   // Expenses CRUD
   addExpense: (data: Omit<ExpenseData, 'id' | 'companyId' | 'createdAt'>) => Promise<void>
@@ -210,6 +217,7 @@ export const useDataStore = create<DataState>()(
     maintenanceItems: [],
     reservations: [],
     adjustments: [],
+    tenantGroups: [],
     isSeeded: false,
     isLoading: false,
     isInitialized: false,
@@ -222,7 +230,7 @@ export const useDataStore = create<DataState>()(
       try {
         // Fetch all data in parallel
         // Staff can now view payments (amounts masked) and users (still blocked via 403 catch)
-        const [companyData, propertiesData, tenantsData, paymentsData, expensesData, maintenanceData, usersData, resetData, reservationsData, adjustmentsData] = await Promise.all([
+        const [companyData, propertiesData, tenantsData, paymentsData, expensesData, maintenanceData, usersData, resetData, reservationsData, adjustmentsData, tenantGroupsData] = await Promise.all([
           apiCall('/api/company').catch(() => null),
           apiCall('/api/properties?includeArchived=true&limit=1000').catch(() => ({ data: [] })),
           apiCall('/api/tenants?limit=1000').catch(() => ({ data: [] })),
@@ -233,6 +241,7 @@ export const useDataStore = create<DataState>()(
           apiCall('/api/reset-requests').catch(() => []),
           apiCall('/api/reservations?limit=1000').catch(() => ({ data: [] })),
           apiCall('/api/adjustments?limit=1000').catch(() => ({ data: [] })),
+          apiCall('/api/tenant-groups').catch(() => []),
         ])
 
         // Helper to extract data from paginated or plain responses
@@ -254,6 +263,7 @@ export const useDataStore = create<DataState>()(
           resetRequests: extractData(resetData),
           reservations: extractData(reservationsData),
           adjustments: extractData(adjustmentsData),
+          tenantGroups: Array.isArray(tenantGroupsData) ? tenantGroupsData : (extractData(tenantGroupsData)),
           isSeeded: true, // If data was fetched, it's seeded
           isInitialized: true,
           isLoading: false,
@@ -267,7 +277,7 @@ export const useDataStore = create<DataState>()(
     // Refresh all data after mutations — forces re-fetch to ensure consistency
     refreshAllData: async () => {
       try {
-        const [propertiesData, tenantsData, paymentsData, expensesData, maintenanceData, reservationsData, adjustmentsData] = await Promise.all([
+        const [propertiesData, tenantsData, paymentsData, expensesData, maintenanceData, reservationsData, adjustmentsData, tenantGroupsData] = await Promise.all([
           apiCall('/api/properties?includeArchived=true&limit=1000').catch(() => ({ data: [] })),
           apiCall('/api/tenants?limit=1000').catch(() => ({ data: [] })),
           apiCall('/api/payments?limit=1000').catch(() => ({ data: [] })),
@@ -275,6 +285,7 @@ export const useDataStore = create<DataState>()(
           apiCall('/api/maintenance?limit=1000').catch(() => ({ data: [] })),
           apiCall('/api/reservations?limit=1000').catch(() => ({ data: [] })),
           apiCall('/api/adjustments?limit=1000').catch(() => ({ data: [] })),
+          apiCall('/api/tenant-groups').catch(() => []),
         ])
 
         const extractData = (resp: any): any[] => {
@@ -292,6 +303,7 @@ export const useDataStore = create<DataState>()(
           maintenanceItems: extractData(maintenanceData),
           reservations: extractData(reservationsData),
           adjustments: extractData(adjustmentsData),
+          tenantGroups: Array.isArray(tenantGroupsData) ? tenantGroupsData : (extractData(tenantGroupsData)),
         })
       } catch (error) {
         console.error('Failed to refresh data:', error)
@@ -533,6 +545,46 @@ export const useDataStore = create<DataState>()(
       await get().refreshAllData()
     },
 
+    // Tenant Groups CRUD
+    addTenantGroup: async (data) => {
+      const newGroup = await apiCall('/api/tenant-groups', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      })
+      set(s => ({ tenantGroups: [...s.tenantGroups, newGroup] }))
+      await get().refreshAllData()
+      return newGroup
+    },
+
+    updateTenantGroup: async (id, data) => {
+      const { tenantIds, ...groupData } = data as any
+      const updated = await apiCall(`/api/tenant-groups/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      })
+      set(s => ({
+        tenantGroups: s.tenantGroups.map(g => g.id === id ? { ...g, ...updated } : g),
+      }))
+      await get().refreshAllData()
+    },
+
+    deleteTenantGroup: async (id) => {
+      await apiCall(`/api/tenant-groups/${id}`, { method: 'DELETE' })
+      set(s => ({
+        tenantGroups: s.tenantGroups.filter(g => g.id !== id),
+      }))
+      await get().refreshAllData()
+    },
+
+    recordGroupPayment: async (groupId, data) => {
+      const result = await apiCall(`/api/tenant-groups/${groupId}/pay`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      })
+      await get().refreshAllData()
+      return result
+    },
+
     // Expenses CRUD
     addExpense: async (data) => {
       const newExpense = await apiCall('/api/expenses', {
@@ -644,6 +696,7 @@ export const useDataStore = create<DataState>()(
         maintenanceItems: [],
         reservations: [],
         adjustments: [],
+        tenantGroups: [],
         isSeeded: false,
         isLoading: false,
         isInitialized: false, // CRITICAL: Reset so next login triggers fetchAllData

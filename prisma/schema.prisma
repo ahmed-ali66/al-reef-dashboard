@@ -40,6 +40,7 @@ model Company {
   recurringBills RecurringBill[]
   billPayments   BillPayment[]
   billCycles     BillCycle[]
+  tenantGroups  TenantGroup[]
 
   @@map("companies")
 }
@@ -93,18 +94,45 @@ model Property {
   reservations Reservation[]
   adjustments  RentAdjustment[]
   recurringBills RecurringBill[]
+  tenantGroups TenantGroup[]
 
   @@index([companyId])
   @@index([archived])
   @@map("properties")
 }
 
+model TenantGroup {
+  id            String   @id @default(cuid())
+  companyId     String
+  company       Company  @relation(fields: [companyId], references: [id])
+  propertyId    String
+  property      Property @relation(fields: [propertyId], references: [id])
+  name          String   // e.g. "Restaurant Account"
+  nameAr        String?
+  nameBn        String?
+  nameUr        String?
+  billingMode   String   @default("consolidated") // consolidated, individual
+  status        String   @default("active") // active, inactive
+  notes         String?
+  deletedAt     DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  tenants       Tenant[]
+
+  @@index([companyId])
+  @@index([propertyId])
+  @@index([status])
+  @@map("tenant_groups")
+}
+
 model Tenant {
-  id               String   @id @default(cuid())
+  id               String      @id @default(cuid())
   companyId        String
-  company          Company  @relation(fields: [companyId], references: [id])
+  company          Company     @relation(fields: [companyId], references: [id])
   propertyId       String
-  property         Property @relation(fields: [propertyId], references: [id])
+  property         Property    @relation(fields: [propertyId], references: [id])
+  groupId          String?
+  group            TenantGroup? @relation(fields: [groupId], references: [id])
   name             String
   nameAr           String?
   nameBn           String?
@@ -158,6 +186,7 @@ model Tenant {
   @@index([propertyId])
   @@index([status])
   @@index([legalCase])
+  @@index([groupId])
   @@map("tenants")
 }
 

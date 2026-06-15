@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import type { TenantData, PropertyData, PaymentData, RentAdjustmentData } from '@/lib/types'
+import type { TenantData, PropertyData, PaymentData, RentAdjustmentData, TenantGroupData } from '@/lib/types'
 import { useAppStore, isOwnerOrAdmin } from '@/lib/store'
 import { useDataStore } from '@/lib/data-store'
 import { formatAED, getPaymentStatusColor, cn2, isFinanciallyActive } from '@/lib/utils'
@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
-import { Banknote, MessageCircle, Check, AlertTriangle, Clock, Loader2, ChevronLeft, ChevronRight, FileText, Search, Pencil, Trash2, ChevronDown, ChevronUp, X, Plus, MinusCircle, Calendar, SlidersHorizontal } from 'lucide-react'
+import { Banknote, MessageCircle, Check, AlertTriangle, Clock, Loader2, ChevronLeft, ChevronRight, FileText, Search, Pencil, Trash2, ChevronDown, ChevronUp, X, Plus, MinusCircle, Calendar, SlidersHorizontal, Link2, Users } from 'lucide-react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import BillInvoice from '@/components/bill-invoice'
 
@@ -97,6 +97,17 @@ export default function RentCollection() {
   const [adjustmentPropertyFilter, setAdjustmentPropertyFilter] = useState<string>('all')
   const [adjustmentUnitFilter, setAdjustmentUnitFilter] = useState<string>('all')
   const [adjustmentSearch, setAdjustmentSearch] = useState('')
+
+  // Group payment state
+  const [groupPayDialogOpen, setGroupPayDialogOpen] = useState(false)
+  const [payingGroup, setPayingGroup] = useState<TenantGroupData | null>(null)
+  const [groupPayForm, setGroupPayForm] = useState({ amount: 0, method: 'cash', reference: '', notes: '', paymentDate: new Date().toISOString().split('T')[0] })
+  const [groupPayAllocationType, setGroupPayAllocationType] = useState<string>('CURRENT_RENT')
+  const [groupPayLoading, setGroupPayLoading] = useState(false)
+  const [groupPayError, setGroupPayError] = useState('')
+  const [showGroupAllocation, setShowGroupAllocation] = useState(false)
+  // Expanded group breakdown state
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
 
   const searchInvoice = async () => {
     if (!invoiceSearch.trim() || invoiceSearch.trim().length < 2) return
@@ -341,6 +352,133 @@ export default function RentCollection() {
     })
     setAdjustmentError('')
     setAdjustmentDialogOpen(true)
+  }
+
+  // ─── Group Consolidation Logic ──────────────────────────────────
+
+  // Get tenant groups from data store
+  const tenantGroups = useDataStore.getState().tenantGroups
+
+  // Build a map of groupId -> group data with consolidated tenants
+  const getGroupedTenants = (): { groups: Map<string, TenantData[]>, ungrouped: TenantData[] } => {
+    const groups = new Map<string, TenantData[]>()
+    const ungrouped: TenantData[] = []
+
+    for (const tenant of filteredTenants) {
+      if (tenant.groupId) {
+        if (!groups.has(tenant.groupId)) {
+          groups.set(tenant.groupId, [])
+        }
+        groups.get(tenant.groupId)!.push(tenant)
+      } else {
+        ungrouped.push(tenant)
+      }
+    }
+    return { groups, ungrouped }
+  }
+
+  // Calculate consolidated balance for a group of tenants
+  const getGroupBalance = (groupTenants: TenantData[]) => {
+    let totalOpeningBalance = 0
+    let totalCurrentCharges = 0
+    let totalAdjustments = 0
+    let totalCreditBalance = 0
+    let totalPaymentsReceived = 0
+    let totalRentAmount = 0
+
+    for (const tenant of groupTenants) {
+      const openingBalance = Number(tenant.openingBalance) || 0
+      const creditBalance = Number(tenant.creditBalance) || 0
+      const tenantAdjustments = getTenantAdjustments(tenant)
+      const totalAdj = tenantAdjustments.reduce((sum, a) => sum + a.amount, 0)
+      const paid = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear && p.allocationType !== 'HISTORICAL_DEBT').reduce((sum, p) => sum + p.amount, 0)
+      const currentCharges = tenant.rentAmount - totalAdj
+
+      totalOpeningBalance += openingBalance
+      totalCurrentCharges += currentCharges
+      totalAdjustments += totalAdj
+      totalCreditBalance += creditBalance
+      totalPaymentsReceived += paid
+      totalRentAmount += tenant.rentAmount
+    }
+
+    const totalDue = totalOpeningBalance + totalCurrentCharges - totalCreditBalance
+    const remaining = totalDue - totalPaymentsReceived
+
+    return {
+      totalOpeningBalance,
+      totalCurrentCharges,
+      totalAdjustments,
+      totalCreditBalance,
+      totalPaymentsReceived,
+      totalRentAmount,
+      totalDue,
+      remaining,
+    }
+  }
+
+  // Get payment status for a group
+  const getGroupPaymentStatus = (groupTenants: TenantData[]): 'paid' | 'partial' | 'overdue' | 'unpaid' | 'due-soon' => {
+    // A group is "paid" only if ALL tenants are paid
+    const statuses = groupTenants.map(t => getTenantPaymentStatus(t))
+    if (statuses.every(s => s === 'paid')) return 'paid'
+    if (statuses.some(s => s === 'paid' || s === 'partial')) return 'partial'
+
+    // All unpaid — use calendar-based logic
+    const now = new Date()
+    const isSelectedCurrentMonth = selectedMonth === now.getMonth() + 1 && selectedYear === now.getFullYear()
+    if (isSelectedCurrentMonth) {
+      const dayOfMonth = now.getDate()
+      if (dayOfMonth <= 2) return 'due-soon'
+      if (dayOfMonth <= 4) return 'unpaid'
+      return 'overdue'
+    }
+    if (selectedYear < now.getFullYear() || (selectedYear === now.getFullYear() && selectedMonth < now.getMonth() + 1)) {
+      return 'overdue'
+    }
+    return 'due-soon'
+  }
+
+  // Open group payment dialog
+  const openGroupPayDialog = (group: TenantGroupData, groupTenants: TenantData[]) => {
+    setPayingGroup(group)
+    const balance = getGroupBalance(groupTenants)
+    setGroupPayForm({
+      amount: Math.max(0, balance.remaining),
+      method: 'cash',
+      reference: '',
+      notes: '',
+      paymentDate: new Date().toISOString().split('T')[0],
+    })
+    setGroupPayAllocationType('CURRENT_RENT')
+    setGroupPayError('')
+    setShowGroupAllocation(false)
+    setGroupPayDialogOpen(true)
+  }
+
+  // Handle group payment
+  const handleGroupPay = async () => {
+    if (!payingGroup || groupPayLoading) return
+    setGroupPayLoading(true)
+    setGroupPayError('')
+    try {
+      await useDataStore.getState().recordGroupPayment(payingGroup.id, {
+        amount: groupPayForm.amount,
+        month: selectedMonth,
+        year: selectedYear,
+        method: groupPayForm.method,
+        reference: groupPayForm.reference || undefined,
+        notes: groupPayForm.notes || undefined,
+        paymentDate: groupPayForm.paymentDate,
+        allocationType: groupPayAllocationType,
+      })
+      setGroupPayDialogOpen(false)
+      fetchData()
+    } catch (error: any) {
+      setGroupPayError(error?.message || 'Failed to record group payment')
+    } finally {
+      setGroupPayLoading(false)
+    }
   }
 
   const handleCreateAdjustment = async () => {
@@ -880,278 +1018,478 @@ export default function RentCollection() {
         </Card>
       ) : (
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger-children">
-        {filteredTenants.map(tenant => {
-          const status = getTenantPaymentStatus(tenant)
-          // CRITICAL: Exclude HISTORICAL_DEBT payments from 'paid' because those payments
-          // are already reflected in the reduced tenant.openingBalance. Including them here
-          // would double-count: once via reduced openingBalance and once via paymentsReceived.
-          // Formula: remaining = (reduced)openingBalance + currentCharges - creditBalance - currentRentPayments
-          const paid = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear && p.allocationType !== 'HISTORICAL_DEBT').reduce((sum, p) => sum + p.amount, 0)
-          const tenantAdjustments = getTenantAdjustments(tenant)
-          const totalAdjustments = tenantAdjustments.reduce((sum, a) => sum + a.amount, 0)
-          // Calculate true remaining balance including opening balance and credit balance
-          const openingBalance = Number(tenant.openingBalance) || 0
-          const creditBalance = Number(tenant.creditBalance) || 0
-          const currentCharges = tenant.rentAmount - totalAdjustments
-          const totalDue = openingBalance + currentCharges - creditBalance
-          const remaining = totalDue - paid
-          const tenantPayments = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear)
-          const isExpanded = expandedTenant === tenant.id
+        {(() => {
+          const { groups, ungrouped } = getGroupedTenants()
+          const elements: React.ReactNode[] = []
 
-          return (
-            <Card key={tenant.id} className={cn2('card-hover', (status === 'overdue' || status === 'unpaid') && 'ring-1 ring-red-300')}>
-              <CardContent className="p-4">
-                <div className="space-y-1.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <h3 className="font-semibold text-sm truncate">
-                        {getNameByLang(tenant, language)}
-                      </h3>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {tenant.property ? getNameByLang(tenant.property, language) : ''} - {tenant.unitNumber || '—'}
-                      </p>
+          // Render grouped tenants as consolidated cards
+          for (const [groupId, groupTenants] of groups) {
+            const groupData = tenantGroups.find(g => g.id === groupId)
+            const groupStatus = getGroupPaymentStatus(groupTenants)
+            const balance = getGroupBalance(groupTenants)
+            const isGroupExpanded = expandedGroup === groupId
+
+            elements.push(
+              <Card key={`group-${groupId}`} className={cn2('card-hover border-l-4 border-l-indigo-500', (groupStatus === 'overdue' || groupStatus === 'unpaid') && 'ring-1 ring-red-300')}>
+                <CardContent className="p-4">
+                  <div className="space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <Users className="w-4 h-4 text-indigo-500 shrink-0" />
+                          <h3 className="font-semibold text-sm truncate">
+                            {groupData ? getNameByLang(groupData, language) : getNameByLang(groupTenants[0], language)}
+                          </h3>
+                        </div>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {groupTenants[0].property ? getNameByLang(groupTenants[0].property, language) : ''} — {groupTenants.map(t => t.unitNumber || '?').join(', ')}
+                        </p>
+                      </div>
+                      <Badge className={cn2('text-xs shrink-0', getPaymentStatusColor(groupStatus))}>
+                        {groupStatus === 'paid' && t('paid', language)}
+                        {groupStatus === 'partial' && t('partial', language)}
+                        {groupStatus === 'overdue' && t('overdue', language)}
+                        {groupStatus === 'unpaid' && t('unpaid', language)}
+                        {groupStatus === 'due-soon' && t('dueSoon', language)}
+                      </Badge>
                     </div>
-                    <Badge className={cn2('text-xs shrink-0', getPaymentStatusColor(status))}>
-                      {status === 'paid' && t('paid', language)}
-                      {status === 'partial' && t('partial', language)}
-                      {status === 'overdue' && t('overdue', language)}
-                      {status === 'unpaid' && t('unpaid', language)}
-                      {status === 'due-soon' && t('dueSoon', language)}
+                    <Badge className="text-[10px] bg-indigo-100 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 px-1.5 py-0 shrink-0">
+                      <Link2 className="w-3 h-3 mr-0.5" />
+                      {groupTenants.length} {language === 'ar' ? 'وحدات مرتبطة' : language === 'bn' ? 'সংযুক্ত ইউনিট' : language === 'ur' ? 'منسلک یونٹس' : 'Linked Units'}
                     </Badge>
                   </div>
-                  {/* Secondary badges row */}
-                  {(tenant.legalCase || tenant.status === 'notice' || (tenant.openingBalance || 0) > 0) && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {tenant.legalCase && (
-                        <Badge className="text-[10px] bg-red-100 text-red-700 border border-red-200 hover:bg-red-100 px-1.5 py-0 shrink-0">
-                          <AlertTriangle className="w-3 h-3 mr-0.5" />
-                          LEGAL
-                        </Badge>
-                      )}
-                      {tenant.status === 'notice' && (
-                        <Badge className="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-100 px-1.5 py-0 shrink-0">
-                          {t('noticePeriod', language)}
-                        </Badge>
-                      )}
-                      {(tenant.openingBalance || 0) > 0 && (
-                        <Badge className="text-[10px] bg-amber-100 text-amber-700 border border-amber-200 hover:bg-amber-100 px-1.5 py-0 shrink-0">
-                          {t('outstanding', language)}: {formatAED(tenant.openingBalance)}
-                        </Badge>
-                      )}
-                    </div>
-                  )}
-                </div>
 
-                {canSeeRevenue && (
-                  <div className="flex items-center justify-between mt-3">
-                    <div>
-                      <p className="text-xs text-muted-foreground">{t('currentCharges', language)}</p>
-                      <p className="font-bold text-sm">{formatAED(currentCharges)}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs text-muted-foreground">{t('remainingBalance', language)}</p>
-                      <p className={cn2('font-bold text-sm', remaining > 0 ? 'text-red-600' : remaining === 0 ? 'text-emerald-600' : 'text-blue-600')}>
-                        {formatAED(Math.max(0, remaining))}
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Financial breakdown */}
-                {canSeeRevenue && (openingBalance > 0 || creditBalance > 0 || paid > 0 || totalAdjustments > 0) && (
-                  <div className="mt-2 bg-muted/30 rounded-lg p-2 text-xs space-y-1">
-                    {openingBalance > 0 && (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">{t('openingBalance', language)}</span>
-                        <span className="font-medium text-amber-700">+{formatAED(openingBalance)}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">{t('currentCharges', language)}</span>
-                      <span className="font-medium">+{formatAED(currentCharges)}</span>
-                    </div>
-                    {totalAdjustments > 0 && (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">{t('approvedAdjustments', language)}</span>
-                        <span className="font-medium text-amber-600">-{formatAED(totalAdjustments)}</span>
-                      </div>
-                    )}
-                    {creditBalance > 0 && (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">{t('creditBalance', language)}</span>
-                        <span className="font-medium text-blue-600">-{formatAED(creditBalance)}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between border-t pt-1">
-                      <span className="text-muted-foreground font-medium">{t('totalDue', language)}</span>
-                      <span className="font-semibold">{formatAED(Math.max(0, totalDue))}</span>
-                    </div>
-                    {paid > 0 && (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">{t('paymentsReceived', language)}</span>
-                        <span className="font-medium text-emerald-600">-{formatAED(paid)}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between border-t pt-1">
-                      <span className="text-muted-foreground font-medium">{t('remainingBalance', language)}</span>
-                      <span className={cn2('font-bold', remaining <= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatAED(Math.max(0, remaining))}</span>
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex gap-2 mt-3">
-                  {status !== 'paid' && (
-                    <Button
-                      size="sm"
-                      onClick={() => openPayDialog(tenant)}
-                      className="flex-1 bg-emerald hover:bg-emerald/90 text-white h-8 text-xs"
-                    >
-                      <Check className="w-3 h-3 mr-1" />
-                      {t('markPaid', language)}
-                    </Button>
-                  )}
                   {canSeeRevenue && (
-                    <button
-                      onClick={() => openAdjustmentDialog(tenant)}
-                      className="flex items-center justify-center gap-1 px-3 py-1 rounded-md text-xs border border-amber-300 text-amber-700 hover:bg-amber-50"
-                      title={t('createAdjustment', language)}
-                    >
-                      <MinusCircle className="w-3 h-3" />
-                    </button>
+                    <div className="flex items-center justify-between mt-3">
+                      <div>
+                        <p className="text-xs text-muted-foreground">{language === 'ar' ? 'إجمالي الرسوم' : language === 'bn' ? 'মোট চার্জ' : language === 'ur' ? 'کل چارجز' : 'Total Charges'}</p>
+                        <p className="font-bold text-sm">{formatAED(balance.totalCurrentCharges)}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-muted-foreground">{t('remainingBalance', language)}</p>
+                        <p className={cn2('font-bold text-sm', balance.remaining > 0 ? 'text-red-600' : balance.remaining === 0 ? 'text-emerald-600' : 'text-blue-600')}>
+                          {formatAED(Math.max(0, balance.remaining))}
+                        </p>
+                      </div>
+                    </div>
                   )}
-                  {status !== 'paid' && (
-                    <button
-                      onClick={() => openWhatsAppLangDialog(tenant)}
-                      className="flex items-center justify-center gap-1 px-3 py-1 rounded-md text-xs border border-green-300 text-green-700 hover:bg-green-50"
-                      title={t('sendWhatsAppReminder', language)}
-                    >
-                      <MessageCircle className="w-3 h-3" />
-                    </button>
-                  )}
-                  <button
-                    onClick={() => { setBillTenant(tenant); setBillDialogOpen(true) }}
-                    className="flex items-center justify-center gap-1 px-3 py-1 rounded-md text-xs border border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-                    title={t('viewBill', language)}
-                  >
-                    <FileText className="w-3 h-3" />
-                  </button>
-                </div>
 
-                {/* Payment History Toggle */}
-                {(tenantPayments.length > 0 || tenantAdjustments.length > 0) && (
-                  <div className="mt-3 border-t pt-2">
+                  {/* Consolidated financial breakdown */}
+                  {canSeeRevenue && (
+                    <div className="mt-2 bg-muted/30 rounded-lg p-2 text-xs space-y-1">
+                      {balance.totalOpeningBalance > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">{t('openingBalance', language)}</span>
+                          <span className="font-medium text-amber-700">+{formatAED(balance.totalOpeningBalance)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">{t('currentCharges', language)} ({groupTenants.length} {language === 'ar' ? 'وحدات' : 'units'})</span>
+                        <span className="font-medium">+{formatAED(balance.totalCurrentCharges)}</span>
+                      </div>
+                      {balance.totalAdjustments > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">{t('approvedAdjustments', language)}</span>
+                          <span className="font-medium text-amber-600">-{formatAED(balance.totalAdjustments)}</span>
+                        </div>
+                      )}
+                      {balance.totalCreditBalance > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">{t('creditBalance', language)}</span>
+                          <span className="font-medium text-blue-600">-{formatAED(balance.totalCreditBalance)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between border-t pt-1">
+                        <span className="text-muted-foreground font-medium">{t('totalDue', language)}</span>
+                        <span className="font-semibold">{formatAED(Math.max(0, balance.totalDue))}</span>
+                      </div>
+                      {balance.totalPaymentsReceived > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">{t('paymentsReceived', language)}</span>
+                          <span className="font-medium text-emerald-600">-{formatAED(balance.totalPaymentsReceived)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between border-t pt-1">
+                        <span className="text-muted-foreground font-medium">{t('remainingBalance', language)}</span>
+                        <span className={cn2('font-bold', balance.remaining <= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatAED(Math.max(0, balance.remaining))}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Per-unit breakdown toggle */}
+                  <div className="mt-2 border-t pt-2">
                     <button
-                      onClick={() => setExpandedTenant(isExpanded ? null : tenant.id)}
+                      onClick={() => setExpandedGroup(isGroupExpanded ? null : groupId)}
                       className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors w-full"
                     >
-                      {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                      {tenantPayments.length + tenantAdjustments.length} {tenantPayments.length + tenantAdjustments.length === 1 ? (language === 'ar' ? 'عنصر' : language === 'bn' ? 'আইটেম' : language === 'ur' ? 'آئٹم' : 'item') : (language === 'ar' ? 'عناصر' : language === 'bn' ? 'আইটেমসমূহ' : language === 'ur' ? 'آئٹمز' : 'items')}
-                      {canSeeRevenue && (
-                        <span className="ml-auto font-medium text-emerald-600">
-                          {formatAED(paid)}
-                          {totalAdjustments > 0 && <span className="text-amber-600 ml-1">(-{formatAED(totalAdjustments)})</span>}
-                        </span>
-                      )}
+                      {isGroupExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                      {language === 'ar' ? 'تفاصيل الوحدات' : language === 'bn' ? 'ইউনিট বিবরণ' : language === 'ur' ? 'یونٹ کی تفصیلات' : 'Unit Breakdown'}
                     </button>
 
-                    {isExpanded && (
+                    {isGroupExpanded && (
                       <div className="mt-2 space-y-2">
-                        {/* Adjustments displayed first with amber styling */}
-                        {tenantAdjustments.filter(a => a.status === 'approved').map(adjustment => (
-                          <div key={adjustment.id} className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                {canSeeRevenue && <span className="font-semibold text-amber-700">-{formatAED(adjustment.amount)}</span>}
-                                <Badge variant="outline" className="text-[10px] px-1 py-0 border-amber-300 text-amber-700">
-                                  {t(adjustment.adjustmentType as any, language) || adjustment.adjustmentType}
+                        {groupTenants.map(tenant => {
+                          const tPaid = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear && p.allocationType !== 'HISTORICAL_DEBT').reduce((sum, p) => sum + p.amount, 0)
+                          const tAdj = getTenantAdjustments(tenant).reduce((sum, a) => sum + a.amount, 0)
+                          const tCharges = tenant.rentAmount - tAdj
+                          const tOpening = Number(tenant.openingBalance) || 0
+                          const tCredit = Number(tenant.creditBalance) || 0
+                          const tDue = tOpening + tCharges - tCredit
+                          const tRemaining = tDue - tPaid
+                          const tStatus = getTenantPaymentStatus(tenant)
+                          const tPayments = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear)
+                          const tAdjList = getTenantAdjustments(tenant)
+
+                          return (
+                            <div key={tenant.id} className="bg-white border rounded-lg p-2.5 text-xs space-y-1.5">
+                              <div className="flex items-center justify-between">
+                                <span className="font-medium">{language === 'ar' ? 'وحدة' : language === 'bn' ? 'ইউনিট' : language === 'ur' ? 'یونٹ' : 'Unit'} {tenant.unitNumber || '—'}</span>
+                                <Badge className={cn2('text-[10px] px-1.5 py-0', getPaymentStatusColor(tStatus))}>
+                                  {tStatus === 'paid' && t('paid', language)}
+                                  {tStatus === 'partial' && t('partial', language)}
+                                  {tStatus === 'overdue' && t('overdue', language)}
+                                  {tStatus === 'unpaid' && t('unpaid', language)}
+                                  {tStatus === 'due-soon' && t('dueSoon', language)}
                                 </Badge>
                               </div>
-                              <p className="text-amber-600 mt-0.5 truncate text-[11px]">{adjustment.reason}</p>
-                              {adjustment.durationMonths > 1 && (
-                                <p className="text-amber-500 mt-0.5 text-[10px]">
-                                  {getMonthName(adjustment.effectiveMonth, language)} {adjustment.effectiveYear} — {adjustment.durationMonths} {t('months', language)}
-                                </p>
+                              {canSeeRevenue && (
+                                <div className="space-y-0.5">
+                                  <div className="flex justify-between text-[11px]">
+                                    <span className="text-muted-foreground">{t('currentCharges', language)}</span>
+                                    <span>{formatAED(tCharges)}</span>
+                                  </div>
+                                  {tOpening > 0 && (
+                                    <div className="flex justify-between text-[11px]">
+                                      <span className="text-muted-foreground">{t('openingBalance', language)}</span>
+                                      <span className="text-amber-700">+{formatAED(tOpening)}</span>
+                                    </div>
+                                  )}
+                                  {tAdj > 0 && (
+                                    <div className="flex justify-between text-[11px]">
+                                      <span className="text-muted-foreground">{t('approvedAdjustments', language)}</span>
+                                      <span className="text-amber-600">-{formatAED(tAdj)}</span>
+                                    </div>
+                                  )}
+                                  <div className="flex justify-between text-[11px] font-medium">
+                                    <span>{t('remainingBalance', language)}</span>
+                                    <span className={tRemaining <= 0 ? 'text-emerald-600' : 'text-red-600'}>{formatAED(Math.max(0, tRemaining))}</span>
+                                  </div>
+                                  {(tPayments.length > 0 || tAdjList.length > 0) && (
+                                    <div className="flex justify-between text-[11px]">
+                                      <span className="text-muted-foreground">{tPayments.length} {language === 'ar' ? 'دفعات' : 'payments'}</span>
+                                      <span className="text-emerald-600">{formatAED(tPaid)}</span>
+                                    </div>
+                                  )}
+                                </div>
                               )}
                             </div>
-                            {canSeeRevenue && (
-                              <div className="flex items-center gap-1 ml-2">
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); openEditAdjustmentDialog(adjustment) }}
-                                  className="p-1 hover:bg-white rounded transition-colors"
-                                  title={t('editAdjustment', language)}
-                                >
-                                  <Pencil className="w-3 h-3 text-blue-600" />
-                                </button>
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); setCancelAdjustmentTarget(adjustment); setCancelAdjustmentReason(''); setCancelAdjustmentDialogOpen(true) }}
-                                  className="p-1 hover:bg-white rounded transition-colors"
-                                  title={t('cancelAdjustment', language)}
-                                >
-                                  <X className="w-3 h-3 text-red-500" />
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                        {tenantPayments.map(payment => (
-                          <div key={payment.id} className="flex items-center justify-between bg-muted/50 rounded-lg px-3 py-2 text-xs">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                {canSeeRevenue && <span className="font-semibold">{formatAED(payment.amount)}</span>}
-                                <span className="text-muted-foreground">
-                                  {payment.date ? new Date(payment.date).toLocaleDateString(language === 'ar' ? 'ar-AE' : 'en-AE', { day: 'numeric', month: 'short' }) : ''}
-                                </span>
-                                {payment.method && (
-                                  <Badge variant="outline" className="text-[10px] px-1 py-0">
-                                    {payment.method}
-                                  </Badge>
-                                )}
-                                {payment.isLate && (
-                                  <Badge variant="outline" className="text-[10px] px-1 py-0 border-red-300 text-red-600">
-                                    {language === 'ar' ? 'متأخر' : language === 'bn' ? 'বিলম্বিত' : language === 'ur' ? 'دیر' : 'Late'}
-                                  </Badge>
-                                )}
-                                {payment.allocationType && payment.allocationType !== 'CURRENT_RENT' && (
-                                  <Badge variant="outline" className="text-[10px] px-1 py-0 border-blue-300 text-blue-600">
-                                    {payment.allocationType === 'HISTORICAL_DEBT' && t('historicalDebt', language)}
-                                    {payment.allocationType === 'ADVANCE_PAYMENT' && t('advancePayment', language)}
-                                  </Badge>
-                                )}
-                              </div>
-                              {payment.reference && (
-                                <p className="text-muted-foreground mt-0.5 truncate">
-                                  Ref: {payment.reference}
-                                </p>
-                              )}
-                            </div>
-                            {canSeeRevenue && (
-                              <div className="flex items-center gap-1 shrink-0 ml-2">
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); openEditPaymentDialog(payment) }}
-                                  className="p-1 hover:bg-white rounded transition-colors"
-                                  title={language === 'ar' ? 'تعديل الدفعة' : language === 'bn' ? 'পেমেন্ট সম্পাদনা' : language === 'ur' ? 'ادائیگی میں ترمیم' : 'Edit payment'}
-                                >
-                                  <Pencil className="w-3 h-3 text-blue-600" />
-                                </button>
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); openDeletePaymentDialog(payment) }}
-                                  className="p-1 hover:bg-white rounded transition-colors"
-                                  title={language === 'ar' ? 'حذف الدفعة' : language === 'bn' ? 'পেমেন্ট মুছুন' : language === 'ur' ? 'ادائیگی حذف کریں' : 'Delete payment'}
-                                >
-                                  <Trash2 className="w-3 h-3 text-red-600" />
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     )}
                   </div>
-                )}
-              </CardContent>
-            </Card>
-          )
-        })}
+
+                  {/* Action buttons */}
+                  <div className="flex gap-2 mt-3">
+                    {groupStatus !== 'paid' && (
+                      <Button
+                        size="sm"
+                        onClick={() => groupData && openGroupPayDialog(groupData, groupTenants)}
+                        className="flex-1 bg-emerald hover:bg-emerald/90 text-white h-8 text-xs"
+                      >
+                        <Check className="w-3 h-3 mr-1" />
+                        {language === 'ar' ? 'دفع المجموعة' : language === 'bn' ? 'গ্রুপ পেমেন্ট' : language === 'ur' ? 'گروه ادائیگی' : 'Group Payment'}
+                      </Button>
+                    )}
+                    {groupStatus !== 'paid' && (
+                      <button
+                        onClick={() => openWhatsAppLangDialog(groupTenants[0])}
+                        className="flex items-center justify-center gap-1 px-3 py-1 rounded-md text-xs border border-green-300 text-green-700 hover:bg-green-50"
+                        title={t('sendWhatsAppReminder', language)}
+                      >
+                        <MessageCircle className="w-3 h-3" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { setBillTenant(groupTenants[0]); setBillDialogOpen(true) }}
+                      className="flex items-center justify-center gap-1 px-3 py-1 rounded-md text-xs border border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                      title={t('viewBill', language)}
+                    >
+                      <FileText className="w-3 h-3" />
+                    </button>
+                  </div>
+                </CardContent>
+              </Card>
+            )
+          }
+
+          // Render ungrouped tenants as individual cards (same as before)
+          for (const tenant of ungrouped) {
+            const status = getTenantPaymentStatus(tenant)
+            const paid = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear && p.allocationType !== 'HISTORICAL_DEBT').reduce((sum, p) => sum + p.amount, 0)
+            const tenantAdjustments = getTenantAdjustments(tenant)
+            const totalAdjustments = tenantAdjustments.reduce((sum, a) => sum + a.amount, 0)
+            const openingBalance = Number(tenant.openingBalance) || 0
+            const creditBalance = Number(tenant.creditBalance) || 0
+            const currentCharges = tenant.rentAmount - totalAdjustments
+            const totalDue = openingBalance + currentCharges - creditBalance
+            const remaining = totalDue - paid
+            const tenantPayments = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear)
+            const isExpanded = expandedTenant === tenant.id
+
+            elements.push(
+              <Card key={tenant.id} className={cn2('card-hover', (status === 'overdue' || status === 'unpaid') && 'ring-1 ring-red-300')}>
+                <CardContent className="p-4">
+                  <div className="space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <h3 className="font-semibold text-sm truncate">
+                          {getNameByLang(tenant, language)}
+                        </h3>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {tenant.property ? getNameByLang(tenant.property, language) : ''} - {tenant.unitNumber || '—'}
+                        </p>
+                      </div>
+                      <Badge className={cn2('text-xs shrink-0', getPaymentStatusColor(status))}>
+                        {status === 'paid' && t('paid', language)}
+                        {status === 'partial' && t('partial', language)}
+                        {status === 'overdue' && t('overdue', language)}
+                        {status === 'unpaid' && t('unpaid', language)}
+                        {status === 'due-soon' && t('dueSoon', language)}
+                      </Badge>
+                    </div>
+                    {(tenant.legalCase || tenant.status === 'notice' || (tenant.openingBalance || 0) > 0) && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {tenant.legalCase && (
+                          <Badge className="text-[10px] bg-red-100 text-red-700 border border-red-200 hover:bg-red-100 px-1.5 py-0 shrink-0">
+                            <AlertTriangle className="w-3 h-3 mr-0.5" />
+                            LEGAL
+                          </Badge>
+                        )}
+                        {tenant.status === 'notice' && (
+                          <Badge className="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-100 px-1.5 py-0 shrink-0">
+                            {t('noticePeriod', language)}
+                          </Badge>
+                        )}
+                        {(tenant.openingBalance || 0) > 0 && (
+                          <Badge className="text-[10px] bg-amber-100 text-amber-700 border border-amber-200 hover:bg-amber-100 px-1.5 py-0 shrink-0">
+                            {t('outstanding', language)}: {formatAED(tenant.openingBalance)}
+                          </Badge>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {canSeeRevenue && (
+                    <div className="flex items-center justify-between mt-3">
+                      <div>
+                        <p className="text-xs text-muted-foreground">{t('currentCharges', language)}</p>
+                        <p className="font-bold text-sm">{formatAED(currentCharges)}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-muted-foreground">{t('remainingBalance', language)}</p>
+                        <p className={cn2('font-bold text-sm', remaining > 0 ? 'text-red-600' : remaining === 0 ? 'text-emerald-600' : 'text-blue-600')}>
+                          {formatAED(Math.max(0, remaining))}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {canSeeRevenue && (openingBalance > 0 || creditBalance > 0 || paid > 0 || totalAdjustments > 0) && (
+                    <div className="mt-2 bg-muted/30 rounded-lg p-2 text-xs space-y-1">
+                      {openingBalance > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">{t('openingBalance', language)}</span>
+                          <span className="font-medium text-amber-700">+{formatAED(openingBalance)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">{t('currentCharges', language)}</span>
+                        <span className="font-medium">+{formatAED(currentCharges)}</span>
+                      </div>
+                      {totalAdjustments > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">{t('approvedAdjustments', language)}</span>
+                          <span className="font-medium text-amber-600">-{formatAED(totalAdjustments)}</span>
+                        </div>
+                      )}
+                      {creditBalance > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">{t('creditBalance', language)}</span>
+                          <span className="font-medium text-blue-600">-{formatAED(creditBalance)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between border-t pt-1">
+                        <span className="text-muted-foreground font-medium">{t('totalDue', language)}</span>
+                        <span className="font-semibold">{formatAED(Math.max(0, totalDue))}</span>
+                      </div>
+                      {paid > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">{t('paymentsReceived', language)}</span>
+                          <span className="font-medium text-emerald-600">-{formatAED(paid)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between border-t pt-1">
+                        <span className="text-muted-foreground font-medium">{t('remainingBalance', language)}</span>
+                        <span className={cn2('font-bold', remaining <= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatAED(Math.max(0, remaining))}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2 mt-3">
+                    {status !== 'paid' && (
+                      <Button
+                        size="sm"
+                        onClick={() => openPayDialog(tenant)}
+                        className="flex-1 bg-emerald hover:bg-emerald/90 text-white h-8 text-xs"
+                      >
+                        <Check className="w-3 h-3 mr-1" />
+                        {t('markPaid', language)}
+                      </Button>
+                    )}
+                    {canSeeRevenue && (
+                      <button
+                        onClick={() => openAdjustmentDialog(tenant)}
+                        className="flex items-center justify-center gap-1 px-3 py-1 rounded-md text-xs border border-amber-300 text-amber-700 hover:bg-amber-50"
+                        title={t('createAdjustment', language)}
+                      >
+                        <MinusCircle className="w-3 h-3" />
+                      </button>
+                    )}
+                    {status !== 'paid' && (
+                      <button
+                        onClick={() => openWhatsAppLangDialog(tenant)}
+                        className="flex items-center justify-center gap-1 px-3 py-1 rounded-md text-xs border border-green-300 text-green-700 hover:bg-green-50"
+                        title={t('sendWhatsAppReminder', language)}
+                      >
+                        <MessageCircle className="w-3 h-3" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { setBillTenant(tenant); setBillDialogOpen(true) }}
+                      className="flex items-center justify-center gap-1 px-3 py-1 rounded-md text-xs border border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                      title={t('viewBill', language)}
+                    >
+                      <FileText className="w-3 h-3" />
+                    </button>
+                  </div>
+
+                  {(tenantPayments.length > 0 || tenantAdjustments.length > 0) && (
+                    <div className="mt-3 border-t pt-2">
+                      <button
+                        onClick={() => setExpandedTenant(isExpanded ? null : tenant.id)}
+                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors w-full"
+                      >
+                        {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                        {tenantPayments.length + tenantAdjustments.length} {tenantPayments.length + tenantAdjustments.length === 1 ? (language === 'ar' ? 'عنصر' : language === 'bn' ? 'আইটেম' : language === 'ur' ? 'آئٹم' : 'item') : (language === 'ar' ? 'عناصر' : language === 'bn' ? 'আইটেমসমূহ' : language === 'ur' ? 'آئٹمز' : 'items')}
+                        {canSeeRevenue && (
+                          <span className="ml-auto font-medium text-emerald-600">
+                            {formatAED(paid)}
+                            {totalAdjustments > 0 && <span className="text-amber-600 ml-1">(-{formatAED(totalAdjustments)})</span>}
+                          </span>
+                        )}
+                      </button>
+
+                      {isExpanded && (
+                        <div className="mt-2 space-y-2">
+                          {tenantAdjustments.filter(a => a.status === 'approved').map(adjustment => (
+                            <div key={adjustment.id} className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  {canSeeRevenue && <span className="font-semibold text-amber-700">-{formatAED(adjustment.amount)}</span>}
+                                  <Badge variant="outline" className="text-[10px] px-1 py-0 border-amber-300 text-amber-700">
+                                    {t(adjustment.adjustmentType as any, language) || adjustment.adjustmentType}
+                                  </Badge>
+                                </div>
+                                <p className="text-amber-600 mt-0.5 truncate text-[11px]">{adjustment.reason}</p>
+                                {adjustment.durationMonths > 1 && (
+                                  <p className="text-amber-500 mt-0.5 text-[10px]">
+                                    {getMonthName(adjustment.effectiveMonth, language)} {adjustment.effectiveYear} — {adjustment.durationMonths} {t('months', language)}
+                                  </p>
+                                )}
+                              </div>
+                              {canSeeRevenue && (
+                                <div className="flex items-center gap-1 ml-2">
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); openEditAdjustmentDialog(adjustment) }}
+                                    className="p-1 hover:bg-white rounded transition-colors"
+                                    title={t('editAdjustment', language)}
+                                  >
+                                    <Pencil className="w-3 h-3 text-blue-600" />
+                                  </button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setCancelAdjustmentTarget(adjustment); setCancelAdjustmentReason(''); setCancelAdjustmentDialogOpen(true) }}
+                                    className="p-1 hover:bg-white rounded transition-colors"
+                                    title={t('cancelAdjustment', language)}
+                                  >
+                                    <X className="w-3 h-3 text-red-500" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                          {tenantPayments.map(payment => (
+                            <div key={payment.id} className="flex items-center justify-between bg-muted/50 rounded-lg px-3 py-2 text-xs">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  {canSeeRevenue && <span className="font-semibold">{formatAED(payment.amount)}</span>}
+                                  <span className="text-muted-foreground">
+                                    {payment.date ? new Date(payment.date).toLocaleDateString(language === 'ar' ? 'ar-AE' : 'en-AE', { day: 'numeric', month: 'short' }) : ''}
+                                  </span>
+                                  {payment.method && (
+                                    <Badge variant="outline" className="text-[10px] px-1 py-0">
+                                      {payment.method}
+                                    </Badge>
+                                  )}
+                                  {payment.isLate && (
+                                    <Badge variant="outline" className="text-[10px] px-1 py-0 border-red-300 text-red-600">
+                                      {language === 'ar' ? 'متأخر' : language === 'bn' ? 'বিলম্বিত' : language === 'ur' ? 'دیر' : 'Late'}
+                                    </Badge>
+                                  )}
+                                  {payment.allocationType && payment.allocationType !== 'CURRENT_RENT' && (
+                                    <Badge variant="outline" className="text-[10px] px-1 py-0 border-blue-300 text-blue-600">
+                                      {payment.allocationType === 'HISTORICAL_DEBT' && t('historicalDebt', language)}
+                                      {payment.allocationType === 'ADVANCE_PAYMENT' && t('advancePayment', language)}
+                                    </Badge>
+                                  )}
+                                </div>
+                                {payment.reference && (
+                                  <p className="text-muted-foreground mt-0.5 truncate">
+                                    Ref: {payment.reference}
+                                  </p>
+                                )}
+                              </div>
+                              {canSeeRevenue && (
+                                <div className="flex items-center gap-1 shrink-0 ml-2">
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); openEditPaymentDialog(payment) }}
+                                    className="p-1 hover:bg-white rounded transition-colors"
+                                    title={language === 'ar' ? 'تعديل الدفعة' : language === 'bn' ? 'পেমেন্ট সম্পাদনা' : language === 'ur' ? 'ادائیگی میں ترمیم' : 'Edit payment'}
+                                  >
+                                    <Pencil className="w-3 h-3 text-blue-600" />
+                                  </button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); openDeletePaymentDialog(payment) }}
+                                    className="p-1 hover:bg-white rounded transition-colors"
+                                    title={language === 'ar' ? 'حذف الدفعة' : language === 'bn' ? 'পেমেন্ট মুছুন' : language === 'ur' ? 'ادائیگی حذف کریں' : 'Delete payment'}
+                                  >
+                                    <Trash2 className="w-3 h-3 text-red-600" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )
+          }
+
+          return elements
+        })()}
       </div>
       )}
 
@@ -1706,6 +2044,84 @@ export default function RentCollection() {
             <Button onClick={handleEditAdjustment} disabled={editAdjustmentForm.amount <= 0 || !editAdjustmentForm.reason || adjustmentLoading} className="bg-amber-600 hover:bg-amber-700 text-white">
               {adjustmentLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Pencil className="w-4 h-4 mr-2" />}
               {t('save', language)}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Group Payment Dialog */}
+      <Dialog open={groupPayDialogOpen} onOpenChange={setGroupPayDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Users className="w-5 h-5 text-indigo-600" />
+              {language === 'ar' ? 'دفع المجموعة' : language === 'bn' ? 'গ্রুপ পেমেন্ট' : language === 'ur' ? 'گروه ادائیگی' : 'Group Payment'} — {payingGroup && getNameByLang(payingGroup, language)}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+              <p className="text-xs text-indigo-700">
+                {language === 'ar'
+                  ? 'سيتم توزيع الدفعة تلقائياً على جميع الوحدات المرتبطة بنسبة الإيجار'
+                  : language === 'bn'
+                  ? 'পেমেন্টটি স্বয়ংক্রিয়ভাবে ভাড়ার অনুপাতে সমস্ত সংযুক্ত ইউনিটে বিতরণ করা হবে'
+                  : language === 'ur'
+                  ? 'ادائیگی خودکار طور پر کرایے کے تناسب سے تمام منسلک یونٹس میں تقسیم ہوگی'
+                  : 'Payment will be automatically distributed across all linked units proportional to rent'}
+              </p>
+            </div>
+            <div>
+              <Label>{language === 'ar' ? 'المبلغ الإجمالي' : language === 'bn' ? 'মোট পরিমাণ' : language === 'ur' ? 'کل رقم' : 'Total Amount'}</Label>
+              <Input type="number" value={groupPayForm.amount} onChange={e => setGroupPayForm({ ...groupPayForm, amount: Number(e.target.value) })} />
+            </div>
+            <div>
+              <Label>{t('paymentDate', language)}</Label>
+              <Input type="date" value={groupPayForm.paymentDate} onChange={e => setGroupPayForm({ ...groupPayForm, paymentDate: e.target.value })} />
+            </div>
+            <div>
+              <Label>{t('paymentMethod', language)}</Label>
+              <Select value={groupPayForm.method} onValueChange={v => setGroupPayForm({ ...groupPayForm, method: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cash">{t('cash', language)}</SelectItem>
+                  <SelectItem value="transfer">{t('bankTransfer', language)}</SelectItem>
+                  <SelectItem value="cheque">{t('cheque', language)}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>{t('allocationType', language)}</Label>
+              <Select value={groupPayAllocationType} onValueChange={setGroupPayAllocationType}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="CURRENT_RENT">{t('currentRent', language)}</SelectItem>
+                  <SelectItem value="HISTORICAL_DEBT">{t('historicalDebt', language)}</SelectItem>
+                  <SelectItem value="ADVANCE_PAYMENT">{t('advancePayment', language)}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>{t('reference', language)}</Label>
+              <Input value={groupPayForm.reference} onChange={e => setGroupPayForm({ ...groupPayForm, reference: e.target.value })} placeholder={language === 'ar' ? 'رقم الشيك / المرجع' : 'Cheque # / Reference'} />
+            </div>
+            <div>
+              <Label>{t('notes', language)}</Label>
+              <Input value={groupPayForm.notes} onChange={e => setGroupPayForm({ ...groupPayForm, notes: e.target.value })} />
+            </div>
+          </div>
+          {groupPayError && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+              <p className="text-sm text-red-700">{groupPayError}</p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setGroupPayDialogOpen(false)}>{t('cancel', language)}</Button>
+            <Button onClick={handleGroupPay} className="bg-emerald hover:bg-emerald/90 text-white" disabled={groupPayForm.amount <= 0 || groupPayLoading}>
+              {groupPayLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Check className="w-4 h-4 mr-2" />}
+              {groupPayLoading
+                ? (language === 'ar' ? 'جاري المعالجة...' : 'Processing...')
+                : (language === 'ar' ? 'تأكيد الدفع' : language === 'bn' ? 'পেমেন্ট নিশ্চিত করুন' : language === 'ur' ? 'ادائیگی کی تصدیق' : 'Confirm Payment')}
             </Button>
           </DialogFooter>
         </DialogContent>
