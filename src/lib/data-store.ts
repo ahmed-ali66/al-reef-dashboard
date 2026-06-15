@@ -718,6 +718,7 @@ export const useDataStore = create<DataState>()(
       const { properties, tenants, payments, adjustments } = get()
       return properties
         .filter(p => includeArchived || !p.archived)
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
         .map(p => ({
           ...p,
           tenants: tenants.filter(t => t.propertyId === p.id && isFinanciallyActive(t.status)).map(t => ({
@@ -824,10 +825,12 @@ export const useDataStore = create<DataState>()(
         })),
         recentPayments,
         chartData,
-        properties: properties.map(p => ({
-          ...p,
-          tenants: tenants.filter(t => t.propertyId === p.id && isFinanciallyActive(t.status)),
-        })),
+        properties: properties
+          .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+          .map(p => ({
+            ...p,
+            tenants: tenants.filter(t => t.propertyId === p.id && isFinanciallyActive(t.status)),
+          })),
         expenses,
         maintenanceItems,
       }

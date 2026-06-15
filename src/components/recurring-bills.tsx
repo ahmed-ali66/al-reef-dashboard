@@ -169,7 +169,8 @@ export default function RecurringBills() {
       if (propsRes.ok) {
         const data = await propsRes.json()
         const propList = data.data?.data || data.data || data || []
-        setProperties(Array.isArray(propList) ? propList : [])
+        const sorted = Array.isArray(propList) ? [...propList].sort((a: any, b: any) => (a.name || '').localeCompare(b.name || '')) : []
+        setProperties(sorted)
       }
     } catch (e) {
       console.error('Failed to fetch bills:', e)

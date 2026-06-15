@@ -72,7 +72,7 @@ export async function GET(request: Request) {
             },
           },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { name: 'asc' },
         skip: pagination.skip,
         take: pagination.limit,
       }),

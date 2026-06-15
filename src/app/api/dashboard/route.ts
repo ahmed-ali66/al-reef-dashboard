@@ -302,14 +302,16 @@ export async function GET() {
       },
     })
 
-    const propertiesWithCounts = properties.map((p) => {
-      const { tenants, ...propertyData } = p
-      return {
-        ...propertyData,
-        tenantCount: tenants.length,
-        activeTenantCount: tenants.filter((t) => FINANCIALLY_ACTIVE_STATUSES.includes(t.status as any)).length,
-      }
-    })
+    const propertiesWithCounts = properties
+      .map((p) => {
+        const { tenants, ...propertyData } = p
+        return {
+          ...propertyData,
+          tenantCount: tenants.length,
+          activeTenantCount: tenants.filter((t) => FINANCIALLY_ACTIVE_STATUSES.includes(t.status as any)).length,
+        }
+      })
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
 
     // ─── 10. Maintenance items — only recent/active (bounded to 50) ───
     const maintenanceItems = await prisma.maintenance.findMany({

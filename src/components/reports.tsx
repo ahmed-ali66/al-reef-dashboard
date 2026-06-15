@@ -662,7 +662,8 @@ export default function Reports() {
     try {
       setExporting(true)
       const store = useDataStore.getState()
-      const { properties, tenants, payments, expenses, maintenanceItems, company, reservations } = store
+      const { tenants, payments, expenses, maintenanceItems, company, reservations } = store
+      const properties = [...store.properties].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
       const reportData = store.getReportData(selectedMonth, selectedYear)
 
       const wb = XLSX.utils.book_new()

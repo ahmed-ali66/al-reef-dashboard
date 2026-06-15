@@ -193,7 +193,7 @@ export default function Reservations() {
         property: store.properties.find(p => p.id === r.propertyId) || undefined,
       }))
       setReservations(enriched)
-      setProperties(store.properties.filter(p => !p.archived))
+      setProperties(store.properties.filter(p => !p.archived).sort((a, b) => (a.name || '').localeCompare(b.name || '')))
     } catch (e) {
       console.error(e)
     } finally {
