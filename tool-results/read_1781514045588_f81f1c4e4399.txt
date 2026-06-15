@@ -1,0 +1,1424 @@
+     1→'use client'
+     2→
+     3→import { useEffect, useState, useCallback, useRef } from 'react'
+     4→import { useAppStore, isOwnerOrAdmin } from '@/lib/store'
+     5→import { useDataStore } from '@/lib/data-store'
+     6→import { formatAED, formatDate, getCategoryIcon } from '@/lib/utils'
+     7→import { t, getExpenseCategoryLabel, getNameByLang, type Language } from '@/lib/i18n'
+     8→import type { ExpenseData, PaymentData, TenantData, PropertyData, ReservationData } from '@/lib/types'
+     9→import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+    10→import { Button } from '@/components/ui/button'
+    11→import { Input } from '@/components/ui/input'
+    12→import { Badge } from '@/components/ui/badge'
+    13→import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
+    14→import { Progress } from '@/components/ui/progress'
+    15→import {
+    16→  TrendingUp,
+    17→  TrendingDown,
+    18→  DollarSign,
+    19→  ArrowUpRight,
+    20→  ArrowDownRight,
+    21→  Download,
+    22→  Loader2,
+    23→  ShieldAlert,
+    24→  FileSpreadsheet,
+    25→  FileText,
+    26→  Calendar,
+    27→  ChevronLeft,
+    28→  ChevronRight,
+    29→  CreditCard,
+    30→  AlertTriangle,
+    31→  Receipt,
+    32→  RefreshCw,
+    33→  Building2,
+    34→} from 'lucide-react'
+    35→import {
+    36→  BarChart,
+    37→  Bar,
+    38→  XAxis,
+    39→  YAxis,
+    40→  CartesianGrid,
+    41→  Tooltip,
+    42→  ResponsiveContainer,
+    43→  PieChart,
+    44→  Pie,
+    45→  Cell,
+    46→  Legend,
+    47→} from 'recharts'
+    48→import * as XLSX from 'xlsx'
+    49→import jsPDF from 'jspdf'
+    50→import html2canvas from 'html2canvas'
+    51→import { toast } from 'sonner'
+    52→
+    53→const PIE_COLORS = ['#0D7C3D', '#C4653A', '#C5A028', '#0A5C4E', '#8b5cf6', '#ef4444', '#06b6d4', '#f59e0b']
+    54→
+    55→// Category color mapping for consistent visual identity
+    56→const CATEGORY_COLORS: Record<string, { bg: string; text: string; fill: string }> = {
+    57→  manpower:   { bg: '#0D7C3D', text: '#FFFFFF', fill: '#0D7C3D' },
+    58→  salary:     { bg: '#0A5C4E', text: '#FFFFFF', fill: '#0A5C4E' },
+    59→  utility:    { bg: '#C5A028', text: '#FFFFFF', fill: '#C5A028' },
+    60→  utilities:  { bg: '#C5A028', text: '#FFFFFF', fill: '#C5A028' },
+    61→  maintenance:{ bg: '#C4653A', text: '#FFFFFF', fill: '#C4653A' },
+    62→  municipality:{ bg: '#8b5cf6', text: '#FFFFFF', fill: '#8b5cf6' },
+    63→  security:   { bg: '#06b6d4', text: '#FFFFFF', fill: '#06b6d4' },
+    64→  insurance:  { bg: '#f59e0b', text: '#FFFFFF', fill: '#f59e0b' },
+    65→  leasing:    { bg: '#ef4444', text: '#FFFFFF', fill: '#ef4444' },
+    66→  other:      { bg: '#6b7280', text: '#FFFFFF', fill: '#6b7280' },
+    67→}
+    68→
+    69→interface DailyIncomeItem {
+    70→  tenantName: string
+    71→  propertyName: string
+    72→  unitNumber: string | null
+    73→  amount: number
+    74→  time: string
+    75→  method: string | null
+    76→  isLate: boolean
+    77→  notes: string | null
+    78→  source: 'rent' | 'reservation'
+    79→}
+    80→
+    81→interface DailyExpenseItem {
+    82→  id: string
+    83→  category: string
+    84→  description: string
+    85→  amount: number
+    86→  vendor: string | null
+    87→  time: string
+    88→  building: string | null
+    89→  recurring: boolean
+    90→}
+    91→
+    92→export default function DailyExpensesReport() {
+    93→  const { language, authUser } = useAppStore()
+    94→  const lang = language as Language
+    95→  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
+    96→  const [exporting, setExporting] = useState(false)
+    97→  const [exportingPDF, setExportingPDF] = useState(false)
+    98→  const [incomeItems, setIncomeItems] = useState<DailyIncomeItem[]>([])
+    99→  const [expenseItems, setExpenseItems] = useState<DailyExpenseItem[]>([])
+   100→  const [totalIncome, setTotalIncome] = useState(0)
+   101→  const [totalExpense, setTotalExpense] = useState(0)
+   102→
+   103→  const barChartRef = useRef<HTMLDivElement>(null)
+   104→  const pieChartRef = useRef<HTMLDivElement>(null)
+   105→
+   106→  const canAccess = authUser && isOwnerOrAdmin(authUser.role)
+   107→
+   108→  const computeDailyData = useCallback(() => {
+   109→    const { payments, tenants, properties, expenses, reservations } = useDataStore.getState()
+   110→
+   111→    // Filter payments for the selected date
+   112→    const dayPayments = payments.filter(p => {
+   113→      const paymentDate = new Date(p.date).toISOString().split('T')[0]
+   114→      return paymentDate === selectedDate
+   115→    })
+   116→
+   117→    // Build income items from rent payments
+   118→    const income: DailyIncomeItem[] = dayPayments.map(p => {
+   119→      const tenant = tenants.find(t => t.id === p.tenantId)
+   120→      const property = tenant ? properties.find(pr => pr.id === tenant.propertyId) : null
+   121→      return {
+   122→        tenantName: tenant ? getNameByLang(tenant, lang) : 'Unknown',
+   123→        propertyName: property?.name || '',
+   124→        unitNumber: tenant?.unitNumber || null,
+   125→        amount: p.amount,
+   126→        time: new Date(p.date).toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit' }),
+   127→        method: p.method,
+   128→        isLate: p.isLate || false,
+   129→        notes: p.notes || null,
+   130→        source: 'rent' as const,
+   131→      }
+   132→    })
+   133→
+   134→    // Add reservation deposits as income items
+   135→    const activeReservations = (reservations || []).filter((r: ReservationData) =>
+   136→      r.status !== 'cancelled' && !r.deletedAt
+   137→    )
+   138→    for (const r of activeReservations) {
+   139→      // Include deposits that are paid or partial
+   140→      if (r.depositStatus === 'paid' || r.depositStatus === 'partial') {
+   141→        // Use depositPaymentDate if available, otherwise fall back to reservationDate
+   142→        const paymentDateStr = (r as any).depositPaymentDate
+   143→          ? new Date((r as any).depositPaymentDate).toISOString().split('T')[0]
+   144→          : new Date(r.reservationDate).toISOString().split('T')[0]
+   145→        if (paymentDateStr === selectedDate) {
+   146→          const property = properties.find(p => p.id === r.propertyId)
+   147→          income.push({
+   148→            tenantName: r.prospectName || 'Reservation',
+   149→            propertyName: property ? getNameByLang(property, lang) : '',
+   150→            unitNumber: r.unitNumber || null,
+   151→            amount: r.depositAmount,
+   152→            time: (r as any).depositPaymentDate
+   153→              ? new Date((r as any).depositPaymentDate).toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit' })
+   154→              : new Date(r.reservationDate).toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit' }),
+   155→            method: (r as any).depositPaymentMethod || 'cash',
+   156→            isLate: false,
+   157→            notes: r.notes || null,
+   158→            source: 'reservation' as const,
+   159→          })
+   160→        }
+   161→      }
+   162→    }
+   163→
+   164→    // Handle refunded/cancelled reservations - show as negative income on the date they were updated
+   165→    const cancelledReservations = (reservations || []).filter((r: ReservationData) =>
+   166→      r.status === 'cancelled' && !r.deletedAt && r.depositStatus === 'refunded'
+   167→    )
+   168→    for (const r of cancelledReservations) {
+   169→      const refundDate = new Date(r.createdAt).toISOString().split('T')[0]  // Use updatedAt if available
+   170→      const updatedDate = (r as any).updatedAt ? new Date((r as any).updatedAt).toISOString().split('T')[0] : refundDate
+   171→      if (updatedDate === selectedDate) {
+   172→        const property = properties.find(p => p.id === r.propertyId)
+   173→        income.push({
+   174→          tenantName: r.prospectName || 'Refund',
+   175→          propertyName: property ? getNameByLang(property, lang) : '',
+   176→          unitNumber: r.unitNumber || null,
+   177→          amount: -r.depositAmount, // negative amount for refund
+   178→          time: updatedDate,
+   179→          method: (r as any).depositPaymentMethod || 'cash',
+   180→          isLate: false,
+   181→          notes: `Refund: ${r.notes || ''}`,
+   182→          source: 'reservation' as const,
+   183→        })
+   184→      }
+   185→    }
+   186→
+   187→    // Filter expenses for the selected date
+   188→    const dayExpenses = expenses.filter(e => {
+   189→      const expenseDate = new Date(e.date).toISOString().split('T')[0]
+   190→      return expenseDate === selectedDate
+   191→    })
+   192→
+   193→    // Build expense items
+   194→    const expenseList: DailyExpenseItem[] = dayExpenses.map(e => ({
+   195→      id: e.id,
+   196→      category: e.category,
+   197→      description: e.description,
+   198→      amount: e.amount,
+   199→      vendor: e.vendor,
+   200→      time: new Date(e.date).toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit' }),
+   201→      building: e.building || null,
+   202→      recurring: e.recurring || false,
+   203→    }))
+   204→
+   205→    const totalIn = income.reduce((sum, i) => sum + i.amount, 0)
+   206→    const totalExp = expenseList.reduce((sum, e) => sum + e.amount, 0)
+   207→
+   208→    setIncomeItems(income)
+   209→    setExpenseItems(expenseList)
+   210→    setTotalIncome(totalIn)
+   211→    setTotalExpense(totalExp)
+   212→  }, [selectedDate, lang])
+   213→
+   214→  useEffect(() => { computeDailyData() }, [computeDailyData])
+   215→
+   216→  const netProfitLoss = totalIncome - totalExpense
+   217→  const expenseCategoryBreakdown: Record<string, number> = {}
+   218→  for (const e of expenseItems) {
+   219→    expenseCategoryBreakdown[e.category] = (expenseCategoryBreakdown[e.category] || 0) + e.amount
+   220→  }
+   221→
+   222→  // Chart data
+   223→  const barChartData = [
+   224→    { name: t('income', lang), value: totalIncome, fill: '#0D7C3D' },
+   225→    { name: t('debits', lang), value: totalExpense, fill: '#C4653A' },
+   226→    { name: t('netProfitLoss', lang), value: Math.max(0, netProfitLoss), fill: '#0A5C4E' },
+   227→  ]
+   228→
+   229→  const pieData = Object.entries(expenseCategoryBreakdown).map(([key, value]) => ({
+   230→    name: getExpenseCategoryLabel(key, lang),
+   231→    value,
+   232→  }))
+   233→
+   234→  const prevDay = () => {
+   235→    const d = new Date(selectedDate)
+   236→    d.setDate(d.getDate() - 1)
+   237→    setSelectedDate(d.toISOString().split('T')[0])
+   238→  }
+   239→
+   240→  const nextDay = () => {
+   241→    const d = new Date(selectedDate)
+   242→    d.setDate(d.getDate() + 1)
+   243→    const tomorrow = new Date()
+   244→    tomorrow.setDate(tomorrow.getDate() + 1)
+   245→    if (d <= tomorrow) {
+   246→      setSelectedDate(d.toISOString().split('T')[0])
+   247→    }
+   248→  }
+   249→
+   250→  const goToToday = () => {
+   251→    setSelectedDate(new Date().toISOString().split('T')[0])
+   252→  }
+   253→
+   254→  // ═══════════════════════════════════════════════════════════════════
+   255→  // PDF EXPORT — Professional, multi-page with charts and visual design
+   256→  // ═══════════════════════════════════════════════════════════════════
+   257→  const handleExportPDF = useCallback(async () => {
+   258→    try {
+   259→      setExportingPDF(true)
+   260→      const { company } = useDataStore.getState()
+   261→      const pdf = new jsPDF('p', 'mm', 'a4')
+   262→      const pw = pdf.internal.pageSize.getWidth()   // 210
+   263→      const ph = pdf.internal.pageSize.getHeight()   // 297
+   264→      const m = 14                                     // margin
+   265→      const cw = pw - m * 2                            // content width
+   266→      const profitMargin = totalIncome > 0 ? ((netProfitLoss / totalIncome) * 100).toFixed(1) : '0'
+   267→      const isProfit = netProfitLoss >= 0
+   268→
+   269→      // ─── Helper: draw a rounded rect ───
+   270→      const drawRRect = (x: number, y: number, w: number, h: number, r: number, fillColor: string) => {
+   271→        pdf.setFillColor(fillColor)
+   272→        pdf.roundedRect(x, y, w, h, r, r, 'F')
+   273→      }
+   274→
+   275→      // ─── Helper: draw horizontal line ───
+   276→      const drawLine = (x1: number, y1: number, x2: number, y2: number, color: string, thickness: number = 0.3) => {
+   277→        pdf.setDrawColor(color)
+   278→        pdf.setLineWidth(thickness)
+   279→        pdf.line(x1, y1, x2, y2)
+   280→      }
+   281→
+   282→      // ─── Helper: check page break ───
+   283→      const checkPage = (y: number, needed: number): number => {
+   284→        if (y + needed > ph - 25) {
+   285→          pdf.addPage()
+   286→          // Redraw mini header on new page
+   287→          pdf.setFillColor(13, 124, 61)
+   288→          pdf.rect(0, 0, pw, 14, 'F')
+   289→          pdf.setTextColor(255, 255, 255)
+   290→          pdf.setFontSize(9)
+   291→          pdf.text('Al Reef Al Madeena', m, 9)
+   292→          pdf.setFontSize(8)
+   293→          pdf.text(`${t('dailyExpensesReport', lang)} — ${formatDate(selectedDate + 'T00:00:00.000Z')}`, pw - m, 9, { align: 'right' })
+   294→          return 22
+   295→        }
+   296→        return y
+   297→      }
+   298→
+   299→      // ═════════════════════════════════════════════════════
+   300→      // PAGE 1: COVER + SUMMARY
+   301→      // ═════════════════════════════════════════════════════
+   302→
+   303→      // Full-width header band
+   304→      pdf.setFillColor(13, 124, 61)
+   305→      pdf.rect(0, 0, pw, 52, 'F')
+   306→
+   307→      // Accent stripe
+   308→      pdf.setFillColor(10, 92, 78)
+   309→      pdf.rect(0, 48, pw, 4, 'F')
+   310→
+   311→      // Company name
+   312→      pdf.setTextColor(255, 255, 255)
+   313→      pdf.setFontSize(22)
+   314→      pdf.text('Al Reef Al Madeena', m, 18)
+   315→      pdf.setFontSize(10)
+   316→      pdf.text('Real Estate Management and General Maintenance - L.L.C - S.P.C', m, 26)
+   317→      pdf.setFontSize(9)
+   318→      pdf.text("Near LuLu Muraba'a, Al Ain City, Abu Dhabi, UAE", m, 33)
+   319→
+   320→      // Report title — right aligned
+   321→      pdf.setFontSize(18)
+   322→      pdf.text(t('dailyExpensesReport', lang), pw - m, 22, { align: 'right' })
+   323→      pdf.setFontSize(11)
+   324→      pdf.text(formatDate(selectedDate + 'T00:00:00.000Z'), pw - m, 32, { align: 'right' })
+   325→      pdf.setFontSize(8)
+   326→      pdf.text(`${t('generatedOn', lang)}: ${new Date().toLocaleDateString('en-AE', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`, pw - m, 40, { align: 'right' })
+   327→
+   328→      let y = 62
+   329→
+   330→      // ─── KPI Cards Row ───
+   331→      const cardW = (cw - 9) / 4
+   332→      const cardH = 32
+   333→
+   334→      // Helper: draw amount with auto font size to fit card width
+   335→      const drawCardAmount = (text: string, x: number, yPos: number, maxW: number) => {
+   336→        let fontSize = 12
+   337→        pdf.setFontSize(fontSize)
+   338→        while (fontSize > 7 && pdf.getStringUnitWidth(text) * fontSize / 2.8 > maxW) {
+   339→          fontSize -= 0.5
+   340→          pdf.setFontSize(fontSize)
+   341→        }
+   342→        pdf.text(text, x, yPos)
+   343→      }
+   344→
+   345→      // Card 1: Total Income
+   346→      drawRRect(m, y, cardW, cardH, 3, '#E8F5E9')
+   347→      pdf.setFillColor('#0D7C3D')
+   348→      pdf.rect(m, y, cardW, 3, 'F')
+   349→      pdf.setTextColor(13, 124, 61)
+   350→      pdf.setFontSize(8)
+   351→      pdf.text(t('totalIncome', lang), m + 4, y + 11)
+   352→      pdf.setTextColor(13, 124, 61)
+   353→      drawCardAmount(formatAED(totalIncome), m + 4, y + 22, cardW - 6)
+   354→      pdf.setFontSize(7)
+   355→      pdf.setTextColor(100, 100, 100)
+   356→      pdf.text(`${incomeItems.length} ${t('tenantPayment', lang)}(s)`, m + 4, y + 28)
+   357→
+   358→      // Card 2: Total Expense
+   359→      const cx2 = m + cardW + 3
+   360→      drawRRect(cx2, y, cardW, cardH, 3, '#FBE9E7')
+   361→      pdf.setFillColor('#C4653A')
+   362→      pdf.rect(cx2, y, cardW, 3, 'F')
+   363→      pdf.setTextColor(196, 101, 58)
+   364→      pdf.setFontSize(8)
+   365→      pdf.text(t('totalExpense', lang), cx2 + 4, y + 11)
+   366→      pdf.setTextColor(196, 101, 58)
+   367→      drawCardAmount(formatAED(totalExpense), cx2 + 4, y + 22, cardW - 6)
+   368→      pdf.setFontSize(7)
+   369→      pdf.setTextColor(100, 100, 100)
+   370→      pdf.text(`${expenseItems.length} ${t('expensesCount', lang)}`, cx2 + 4, y + 28)
+   371→
+   372→      // Card 3: Net P/L
+   373→      const cx3 = cx2 + cardW + 3
+   374→      drawRRect(cx3, y, cardW, cardH, 3, isProfit ? '#E8F5E9' : '#FFEBEE')
+   375→      pdf.setFillColor(isProfit ? '#0D7C3D' : '#D32F2F')
+   376→      pdf.rect(cx3, y, cardW, 3, 'F')
+   377→      pdf.setTextColor(isProfit ? 13 : 211, isProfit ? 124 : 47, isProfit ? 61 : 47)
+   378→      pdf.setFontSize(8)
+   379→      pdf.text(t('netProfitLoss', lang), cx3 + 4, y + 11)
+   380→      drawCardAmount(formatAED(netProfitLoss), cx3 + 4, y + 22, cardW - 6)
+   381→      pdf.setFontSize(7)
+   382→      pdf.setTextColor(100, 100, 100)
+   383→      pdf.text(isProfit ? 'PROFIT' : 'LOSS', cx3 + 4, y + 28)
+   384→
+   385→      // Card 4: Margin %
+   386→      const cx4 = cx3 + cardW + 3
+   387→      drawRRect(cx4, y, cardW, cardH, 3, '#E0F2F1')
+   388→      pdf.setFillColor('#0A5C4E')
+   389→      pdf.rect(cx4, y, cardW, 3, 'F')
+   390→      pdf.setTextColor(10, 92, 78)
+   391→      pdf.setFontSize(8)
+   392→      pdf.text(t('profitOrLoss', lang) + ' %', cx4 + 4, y + 11)
+   393→      pdf.setFontSize(15)
+   394→      pdf.setTextColor(isProfit ? 13 : 211, isProfit ? 124 : 47, isProfit ? 61 : 47)
+   395→      pdf.text(`${profitMargin}%`, cx4 + 4, y + 22)
+   396→
+   397→      y += cardH + 10
+   398→
+   399→      // ─── BAR CHART (captured from DOM) ───
+   400→      pdf.setTextColor(40, 40, 40)
+   401→      pdf.setFontSize(12)
+   402→      pdf.text(t('incomeVsExpenses', lang), m, y)
+   403→      y += 4
+   404→
+   405→      if (barChartRef.current) {
+   406→        try {
+   407→          const canvas = await html2canvas(barChartRef.current, {
+   408→            scale: 2,
+   409→            backgroundColor: '#FFFFFF',
+   410→            logging: false,
+   411→            useCORS: true,
+   412→          })
+   413→          const imgData = canvas.toDataURL('image/png')
+   414→          const imgW = cw
+   415→          const imgH = 65
+   416→          pdf.addImage(imgData, 'PNG', m, y, imgW, imgH)
+   417→          y += imgH + 8
+   418→        } catch {
+   419→          // Fallback: simple text-based chart representation
+   420→          drawRRect(m, y, cw, 60, 3, '#F9FAFB')
+   421→          pdf.setTextColor(120, 120, 120)
+   422→          pdf.setFontSize(9)
+   423→          pdf.text('Bar Chart: Income vs Expenses', m + 4, y + 10)
+   424→          pdf.setFontSize(8)
+   425→          pdf.text(`${t('income', lang)}: ${formatAED(totalIncome)}`, m + 4, y + 20)
+   426→          pdf.text(`${t('debits', lang)}: ${formatAED(totalExpense)}`, m + 4, y + 28)
+   427→          pdf.text(`${t('netProfitLoss', lang)}: ${formatAED(netProfitLoss)}`, m + 4, y + 36)
+   428→          y += 68
+   429→        }
+   430→      } else {
+   431→        y += 68
+   432→      }
+   433→
+   434→      // ─── PIE CHART (captured from DOM) ───
+   435→      y = checkPage(y, 80)
+   436→      pdf.setTextColor(40, 40, 40)
+   437→      pdf.setFontSize(12)
+   438→      pdf.text(t('expenseDistribution', lang), m, y)
+   439→      y += 4
+   440→
+   441→      if (pieChartRef.current && pieData.length > 0) {
+   442→        try {
+   443→          const canvas = await html2canvas(pieChartRef.current, {
+   444→            scale: 2,
+   445→            backgroundColor: '#FFFFFF',
+   446→            logging: false,
+   447→            useCORS: true,
+   448→          })
+   449→          const imgData = canvas.toDataURL('image/png')
+   450→          const imgW = cw
+   451→          const imgH = 65
+   452→          pdf.addImage(imgData, 'PNG', m, y, imgW, imgH)
+   453→          y += imgH + 6
+   454→        } catch {
+   455→          y += 6
+   456→        }
+   457→      }
+   458→
+   459→      // ─── Category Breakdown Table ───
+   460→      y = checkPage(y, 40 + Object.keys(expenseCategoryBreakdown).length * 7)
+   461→      pdf.setTextColor(40, 40, 40)
+   462→      pdf.setFontSize(11)
+   463→      pdf.text('Expense Category Breakdown', m, y)
+   464→      y += 5
+   465→
+   466→      // Table header - use relative positions based on content width
+   467→      const catAmtX = m + cw * 0.5
+   468→      const catPctX = m + cw * 0.72
+   469→      const catCountX = m + cw * 0.9
+   470→      pdf.setFillColor(10, 92, 78)
+   471→      pdf.rect(m, y, cw, 7, 'F')
+   472→      pdf.setTextColor(255, 255, 255)
+   473→      pdf.setFontSize(8)
+   474→      pdf.text('Category', m + 10, y + 5)
+   475→      pdf.text('Amount (AED)', catAmtX, y + 5)
+   476→      pdf.text('% of Total', catPctX, y + 5)
+   477→      pdf.text('# Items', catCountX, y + 5)
+   478→      y += 7
+   479→
+   480→      // Sort categories by amount desc
+   481→      const sortedCats = Object.entries(expenseCategoryBreakdown).sort((a, b) => b[1] - a[1])
+   482→      for (let i = 0; i < sortedCats.length; i++) {
+   483→        const [cat, amt] = sortedCats[i]
+   484→        const pct = totalExpense > 0 ? ((amt / totalExpense) * 100).toFixed(1) : '0'
+   485→        const count = expenseItems.filter(e => e.category === cat).length
+   486→        const bgColor = i % 2 === 0 ? '#FFFFFF' : '#F9FAFB'
+   487→
+   488→        y = checkPage(y, 7)
+   489→        pdf.setFillColor(bgColor)
+   490→        pdf.rect(m, y, cw, 7, 'F')
+   491→
+   492→        // Category color dot
+   493→        const catColor = CATEGORY_COLORS[cat]?.fill || '#6b7280'
+   494→        pdf.setFillColor(catColor)
+   495→        pdf.circle(m + 4, y + 3.5, 2, 'F')
+   496→
+   497→        pdf.setTextColor(40, 40, 40)
+   498→        pdf.setFontSize(8)
+   499→        pdf.text(getExpenseCategoryLabel(cat, lang), m + 10, y + 5)
+   500→        pdf.text(formatAED(amt), catAmtX, y + 5)
+   501→        pdf.text(`${pct}%`, catPctX, y + 5)
+   502→        pdf.text(String(count), catCountX, y + 5)
+   503→        y += 7
+   504→      }
+   505→
+   506→      // Category total row
+   507→      pdf.setFillColor('#F3F4F6')
+   508→      pdf.rect(m, y, cw, 7, 'F')
+   509→      pdf.setTextColor(40, 40, 40)
+   510→      pdf.setFontSize(8)
+   511→      pdf.setFont('helvetica', 'bold')
+   512→      pdf.text('TOTAL', m + 10, y + 5)
+   513→      pdf.text(formatAED(totalExpense), catAmtX, y + 5)
+   514→      pdf.text('100%', catPctX, y + 5)
+   515→      pdf.text(String(expenseItems.length), catCountX, y + 5)
+   516→      pdf.setFont('helvetica', 'normal')
+   517→      y += 12
+   518→
+   519→      // ═════════════════════════════════════════════════════
+   520→      // PAGE 2+: DETAILED TRANSACTIONS
+   521→      // ═════════════════════════════════════════════════════
+   522→      pdf.addPage()
+   523→      y = 18
+   524→
+   525→      // Mini header on detail pages
+   526→      pdf.setFillColor(13, 124, 61)
+   527→      pdf.rect(0, 0, pw, 14, 'F')
+   528→      pdf.setTextColor(255, 255, 255)
+   529→      pdf.setFontSize(9)
+   530→      pdf.text('Al Reef Al Madeena', m, 9)
+   531→      pdf.setFontSize(8)
+   532→      pdf.text(`${t('dailyExpensesReport', lang)} — ${formatDate(selectedDate + 'T00:00:00.000Z')}`, pw - m, 9, { align: 'right' })
+   533→      y = 22
+   534→
+   535→      // ─── INCOME TABLE ───
+   536→      pdf.setTextColor(13, 124, 61)
+   537→      pdf.setFontSize(13)
+   538→      pdf.text(`${t('income', lang)} — ${t('rentCollected', lang)}`, m, y)
+   539→
+   540→      // Income total badge
+   541→      pdf.setFillColor('#E8F5E9')
+   542→      const incomeBadgeW = 45
+   543→      drawRRect(pw - m - incomeBadgeW, y - 5, incomeBadgeW, 8, 2, '#E8F5E9')
+   544→      pdf.setTextColor(13, 124, 61)
+   545→      pdf.setFontSize(9)
+   546→      pdf.text(formatAED(totalIncome), pw - m - incomeBadgeW + 3, y)
+   547→      y += 6
+   548→
+   549→      // Income table header - Time and Status columns removed, Tenant Name widened
+   550→      pdf.setFillColor(13, 124, 61)
+   551→      pdf.rect(m, y, cw, 8, 'F')
+   552→      pdf.setTextColor(255, 255, 255)
+   553→      pdf.setFontSize(7.5)
+   554→      pdf.text('#', m + 3, y + 5.5)
+   555→      pdf.text(t('tenantName', lang), m + 8, y + 5.5)
+   556→      pdf.text(t('property', lang), m + 58, y + 5.5)
+   557→      pdf.text(t('unitNumber', lang), m + 92, y + 5.5)
+   558→      pdf.text(t('amount', lang), m + 106, y + 5.5)
+   559→      pdf.text(t('paymentMethod', lang), m + 142, y + 5.5)
+   560→      y += 8
+   561→
+   562→      // Income rows - Time and Status columns removed
+   563→      const sortedIncome = [...incomeItems].sort((a, b) => a.time.localeCompare(b.time))
+   564→      for (let i = 0; i < sortedIncome.length; i++) {
+   565→        y = checkPage(y, 7)
+   566→        const item = sortedIncome[i]
+   567→        const rowBg = i % 2 === 0 ? '#FFFFFF' : '#F9FAFB'
+   568→        pdf.setFillColor(rowBg)
+   569→        pdf.rect(m, y, cw, 7, 'F')
+   570→
+   571→        // Status indicator
+   572→        if (item.isLate) {
+   573→          pdf.setFillColor('#FFEBEE')
+   574→          pdf.rect(m, y, cw, 7, 'F')
+   575→          // Red left border for late
+   576→          pdf.setFillColor('#D32F2F')
+   577→          pdf.rect(m, y, 1.5, 7, 'F')
+   578→        }
+   579→
+   580→        pdf.setTextColor(item.isLate ? 180 : 40, item.isLate ? 40 : 40, item.isLate ? 40 : 40)
+   581→        pdf.setFontSize(7.5)
+   582→        pdf.text(String(i + 1), m + 3, y + 5)
+   583→        pdf.text(item.tenantName.substring(0, 35), m + 8, y + 5)
+   584→        pdf.text(item.propertyName.substring(0, 24), m + 58, y + 5)
+   585→        pdf.text(item.unitNumber || '-', m + 92, y + 5)
+   586→        pdf.setTextColor(13, 124, 61)
+   587→        pdf.text(formatAED(item.amount), m + 106, y + 5)
+   588→        pdf.setTextColor(item.isLate ? 180 : 40, item.isLate ? 40 : 40, item.isLate ? 40 : 40)
+   589→        pdf.text((item.method || '-').substring(0, 18), m + 142, y + 5)
+   590→        y += 7
+   591→      }
+   592→
+   593→      // Income total row
+   594→      y = checkPage(y, 8)
+   595→      pdf.setFillColor('#E8F5E9')
+   596→      pdf.rect(m, y, cw, 7, 'F')
+   597→      pdf.setTextColor(13, 124, 61)
+   598→      pdf.setFontSize(8)
+   599→      pdf.setFont('helvetica', 'bold')
+   600→      pdf.text(`TOTAL INCOME: ${formatAED(totalIncome)}`, m + 10, y + 5)
+   601→      pdf.text(`${incomeItems.length} payments`, m + 142, y + 5)
+   602→      pdf.setFont('helvetica', 'normal')
+   603→      y += 10
+   604→
+   605→      // ─── PAYMENT METHOD TOTALS ───
+   606→      const methodTotals: Record<string, number> = {}
+   607→      for (const p of incomeItems) {
+   608→        // Normalize method names: 'bank_transfer' and 'transfer' → 'transfer'
+   609→        let method = (p.method || 'other').toLowerCase()
+   610→        if (method === 'bank_transfer') method = 'transfer'
+   611→        methodTotals[method] = (methodTotals[method] || 0) + p.amount
+   612→      }
+   613→      const totalCash = methodTotals['cash'] || 0
+   614→      const totalBankTransfer = methodTotals['transfer'] || 0
+   615→      const totalCheque = methodTotals['cheque'] || 0
+   616→
+   617→      y = checkPage(y, 30)
+   618→      // Payment Method Summary box
+   619→      drawRRect(m, y, cw, 26, 3, '#F0FDF4')
+   620→      pdf.setFillColor('#0D7C3D')
+   621→      pdf.rect(m, y, cw, 3, 'F')
+   622→      pdf.setTextColor(13, 124, 61)
+   623→      pdf.setFontSize(8)
+   624→      pdf.setFont('helvetica', 'bold')
+   625→      pdf.text(t('paymentMethodSummary', lang), m + 4, y + 8)
+   626→      pdf.setFont('helvetica', 'normal')
+   627→      pdf.setFontSize(7.5)
+   628→      pdf.setTextColor(40, 40, 40)
+   629→      // Cash
+   630→      pdf.text(`${t('totalCashPayments', lang)}:`, m + 8, y + 14)
+   631→      pdf.setTextColor(13, 124, 61)
+   632→      pdf.text(formatAED(totalCash), m + 55, y + 14)
+   633→      // Bank Transfer
+   634→      pdf.setTextColor(40, 40, 40)
+   635→      pdf.text(`${t('totalBankTransferPayments', lang)}:`, m + 8, y + 19)
+   636→      pdf.setTextColor(13, 124, 61)
+   637→      pdf.text(formatAED(totalBankTransfer), m + 55, y + 19)
+   638→      // Cheque
+   639→      pdf.setTextColor(40, 40, 40)
+   640→      pdf.text(`${t('totalChequePayments', lang)}:`, m + 8, y + 24)
+   641→      pdf.setTextColor(13, 124, 61)
+   642→      pdf.text(formatAED(totalCheque), m + 55, y + 24)
+   643→      y += 30
+   644→
+   645→      // ─── EXPENSE TABLE ───
+   646→      y = checkPage(y, 30)
+   647→      pdf.setTextColor(196, 101, 58)
+   648→      pdf.setFontSize(13)
+   649→      pdf.text(t('debits', lang), m, y)
+   650→
+   651→      // Expense total badge
+   652→      drawRRect(pw - m - 45, y - 5, 45, 8, 2, '#FBE9E7')
+   653→      pdf.setTextColor(196, 101, 58)
+   654→      pdf.setFontSize(9)
+   655→      pdf.text(formatAED(totalExpense), pw - m - 42, y)
+   656→      y += 6
+   657→
+   658→      // Expense table header - Time column removed, Property column added
+   659→      pdf.setFillColor(196, 101, 58)
+   660→      pdf.rect(m, y, cw, 8, 'F')
+   661→      pdf.setTextColor(255, 255, 255)
+   662→      pdf.setFontSize(7.5)
+   663→      pdf.text('#', m + 3, y + 5.5)
+   664→      pdf.text(t('expenseCategory', lang), m + 8, y + 5.5)
+   665→      pdf.text(t('description', lang), m + 35, y + 5.5)
+   666→      pdf.text(t('amount', lang), m + 77, y + 5.5)
+   667→      pdf.text(t('vendor', lang), m + 109, y + 5.5)
+   668→      pdf.text(t('property', lang), m + 136, y + 5.5)
+   669→      pdf.text('Type', m + 168, y + 5.5)
+   670→      y += 8
+   671→
+   672→      // Expense rows - Time removed, Property added
+   673→      const sortedExpenses = [...expenseItems].sort((a, b) => a.time.localeCompare(b.time))
+   674→      for (let i = 0; i < sortedExpenses.length; i++) {
+   675→        y = checkPage(y, 7)
+   676→        const item = sortedExpenses[i]
+   677→        const rowBg = i % 2 === 0 ? '#FFFFFF' : '#F9FAFB'
+   678→        pdf.setFillColor(rowBg)
+   679→        pdf.rect(m, y, cw, 7, 'F')
+   680→
+   681→        // Category color indicator (left border)
+   682→        const catColor = CATEGORY_COLORS[item.category]?.fill || '#6b7280'
+   683→        pdf.setFillColor(catColor)
+   684→        pdf.rect(m, y, 1.5, 7, 'F')
+   685→
+   686→        pdf.setTextColor(40, 40, 40)
+   687→        pdf.setFontSize(7.5)
+   688→        pdf.text(String(i + 1), m + 3, y + 5)
+   689→        pdf.text(getExpenseCategoryLabel(item.category, lang), m + 8, y + 5)
+   690→        pdf.text(item.description.substring(0, 28), m + 35, y + 5)
+   691→        pdf.setTextColor(196, 101, 58)
+   692→        pdf.text(formatAED(item.amount), m + 77, y + 5)
+   693→        pdf.setTextColor(40, 40, 40)
+   694→        pdf.text((item.vendor || '-').substring(0, 15), m + 109, y + 5)
+   695→        pdf.text((item.building || '-').substring(0, 20), m + 136, y + 5)
+   696→        pdf.text(item.recurring ? 'Recurring' : 'One-time', m + 168, y + 5)
+   697→        y += 7
+   698→      }
+   699→
+   700→      // Expense total row
+   701→      y = checkPage(y, 8)
+   702→      pdf.setFillColor('#FBE9E7')
+   703→      pdf.rect(m, y, cw, 7, 'F')
+   704→      pdf.setTextColor(196, 101, 58)
+   705→      pdf.setFontSize(8)
+   706→      pdf.setFont('helvetica', 'bold')
+   707→      pdf.text(`TOTAL EXPENSES: ${formatAED(totalExpense)}`, m + 10, y + 5)
+   708→      pdf.text(`${expenseItems.length} items`, m + 136, y + 5)
+   709→      pdf.setFont('helvetica', 'normal')
+   710→      y += 14
+   711→
+   712→      // ─── NET SUMMARY BOX ───
+   713→      y = checkPage(y, 28)
+   714→      const summaryBg = isProfit ? '#E8F5E9' : '#FFEBEE'
+   715→      const summaryBorder = isProfit ? '#0D7C3D' : '#D32F2F'
+   716→      drawRRect(m, y, cw, 24, 4, summaryBg)
+   717→      pdf.setFillColor(summaryBorder)
+   718→      pdf.rect(m, y, cw, 3, 'F')
+   719→
+   720→      pdf.setTextColor(isProfit ? 13 : 211, isProfit ? 124 : 47, isProfit ? 61 : 47)
+   721→      pdf.setFontSize(11)
+   722→      pdf.setFont('helvetica', 'bold')
+   723→      pdf.text(isProfit ? 'NET PROFIT' : 'NET LOSS', m + 6, y + 12)
+   724→      pdf.setFontSize(18)
+   725→      pdf.text(formatAED(Math.abs(netProfitLoss)), m + 6, y + 21)
+   726→
+   727→      pdf.setFontSize(9)
+   728→      pdf.setFont('helvetica', 'normal')
+   729→      pdf.text(`Margin: ${profitMargin}%`, m + 90, y + 12)
+   730→      pdf.text(`Income: ${formatAED(totalIncome)}`, m + 90, y + 19)
+   731→      pdf.text(`Expenses: ${formatAED(totalExpense)}`, m + 90, y + 25)
+   732→
+   733→      // ─── Page footers on all pages ───
+   734→      const totalPages = pdf.getNumberOfPages()
+   735→      for (let i = 1; i <= totalPages; i++) {
+   736→        pdf.setPage(i)
+   737→        drawLine(m, ph - 12, pw - m, ph - 12, '#E5E7EB', 0.3)
+   738→        pdf.setFontSize(6.5)
+   739→        pdf.setTextColor(150, 150, 150)
+   740→        pdf.text(`Al Reef Al Madeena | ${t('dailyExpensesReport', lang)} | ${formatDate(selectedDate + 'T00:00:00.000Z')}`, m, ph - 7)
+   741→        pdf.text(`Page ${i} of ${totalPages}`, pw - m, ph - 7, { align: 'right' })
+   742→        pdf.text('CONFIDENTIAL', pw / 2, ph - 7, { align: 'center' })
+   743→      }
+   744→
+   745→      pdf.save(`Al_Reef_Daily_Report_${selectedDate}.pdf`)
+   746→      toast.success(t('exportSuccess', lang))
+   747→    } catch (error) {
+   748→      console.error('PDF Export failed:', error)
+   749→      toast.error(t('exportFailed', lang))
+   750→    } finally {
+   751→      setExportingPDF(false)
+   752→    }
+   753→  }, [selectedDate, lang, incomeItems, expenseItems, totalIncome, totalExpense, netProfitLoss])
+   754→
+   755→  // ═══════════════════════════════════════════════════════════════════
+   756→  // XLSX EXPORT — Professional multi-sheet with formatting
+   757→  // ═══════════════════════════════════════════════════════════════════
+   758→  const handleExportXLSX = useCallback(() => {
+   759→    try {
+   760→      setExporting(true)
+   761→      const { company } = useDataStore.getState()
+   762→      const wb = XLSX.utils.book_new()
+   763→      const profitMargin = totalIncome > 0 ? ((netProfitLoss / totalIncome) * 100).toFixed(1) : '0'
+   764→      const isProfit = netProfitLoss >= 0
+   765→
+   766→      // ─── SHEET 1: EXECUTIVE SUMMARY ───
+   767→      const summaryRows: any[][] = [
+   768→        // Row 1: Company name (merged visually)
+   769→        [company.name || 'Al Reef Al Madeena Real Estate Management and General Maintenance - L.L.C - S.P.C'],
+   770→        // Row 2: Report title
+   771→        [t('dailyExpensesReport', lang).toUpperCase()],
+   772→        // Row 3: Date
+   773→        [`${t('date', lang)}: ${formatDate(selectedDate + 'T00:00:00.000Z')}`, '', '', `${t('generatedOn', lang)}: ${new Date().toLocaleDateString('en-AE')}`],
+   774→        // Row 4: blank
+   775→        [],
+   776→        // Row 5: Section header
+   777→        ['FINANCIAL SUMMARY', '', '', ''],
+   778→        // Row 6: Headers
+   779→        ['Metric', 'Amount (AED)', '% of Income', 'Count'],
+   780→        // Row 7-9: Data
+   781→        [t('totalIncome', lang), totalIncome, '100%', incomeItems.length],
+   782→        [t('totalExpense', lang), totalExpense, totalIncome > 0 ? `${((totalExpense / totalIncome) * 100).toFixed(1)}%` : 'N/A', expenseItems.length],
+   783→        [t('netProfitLoss', lang), netProfitLoss, `${profitMargin}%`, ''],
+   784→        // Row 10: blank
+   785→        [],
+   786→        // Row 11: Section header
+   787→        ['PAYMENT METHOD BREAKDOWN', '', '', ''],
+   788→        // Row 12: Headers
+   789→        ['Method', 'Amount (AED)', '# Payments', 'Avg Payment'],
+   790→      ]
+   791→
+   792→      // Payment method breakdown
+   793→      const methodBreakdown: Record<string, { total: number; count: number }> = {}
+   794→      for (const p of incomeItems) {
+   795→        // Normalize method names: 'bank_transfer' and 'transfer' → 'Bank Transfer'
+   796→        let method = p.method || 'Unknown'
+   797→        if (method.toLowerCase() === 'bank_transfer') method = 'Transfer'
+   798→        if (!methodBreakdown[method]) methodBreakdown[method] = { total: 0, count: 0 }
+   799→        methodBreakdown[method].total += p.amount
+   800→        methodBreakdown[method].count++
+   801→      }
+   802→      for (const [method, data] of Object.entries(methodBreakdown)) {
+   803→        summaryRows.push([
+   804→          method.charAt(0).toUpperCase() + method.slice(1).replace('_', ' '),
+   805→          data.total,
+   806→          data.count,
+   807→          data.count > 0 ? Math.round(data.total / data.count) : 0,
+   808→        ])
+   809→      }
+   810→
+   811→      // Late payment stats
+   812→      const latePayments = incomeItems.filter(p => p.isLate)
+   813→      const partialPayments = incomeItems.filter(p => p.notes?.includes('Partial'))
+   814→      summaryRows.push([])
+   815→      summaryRows.push(['PAYMENT STATUS ANALYSIS', '', '', ''])
+   816→      summaryRows.push(['Status', 'Amount (AED)', '# Payments', ''])
+   817→      summaryRows.push(['On-time', incomeItems.filter(p => !p.isLate).reduce((s, p) => s + p.amount, 0), incomeItems.filter(p => !p.isLate).length, ''])
+   818→      summaryRows.push(['Late', latePayments.reduce((s, p) => s + p.amount, 0), latePayments.length, ''])
+   819→      summaryRows.push(['Partial', partialPayments.reduce((s, p) => s + p.amount, 0), partialPayments.length, ''])
+   820→
+   821→      // Income by property
+   822→      const propertyBreakdown: Record<string, { total: number; count: number }> = {}
+   823→      for (const p of incomeItems) {
+   824→        if (!propertyBreakdown[p.propertyName]) propertyBreakdown[p.propertyName] = { total: 0, count: 0 }
+   825→        propertyBreakdown[p.propertyName].total += p.amount
+   826→        propertyBreakdown[p.propertyName].count++
+   827→      }
+   828→      summaryRows.push([])
+   829→      summaryRows.push(['INCOME BY PROPERTY', '', '', ''])
+   830→      summaryRows.push(['Property', 'Amount (AED)', '# Payments', 'Avg Rent'])
+   831→      for (const [prop, data] of Object.entries(propertyBreakdown).sort((a, b) => b[1].total - a[1].total)) {
+   832→        summaryRows.push([prop, data.total, data.count, data.count > 0 ? Math.round(data.total / data.count) : 0])
+   833→      }
+   834→
+   835→      const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows)
+   836→      wsSummary['!cols'] = [{ wch: 40 }, { wch: 18 }, { wch: 15 }, { wch: 14 }]
+   837→      // Merge company name across columns
+   838→      wsSummary['!merges'] = [
+   839→        { s: { r: 0, c: 0 }, e: { r: 0, c: 3 } },
+   840→        { s: { r: 1, c: 0 }, e: { r: 1, c: 3 } },
+   841→      ]
+   842→      XLSX.utils.book_append_sheet(wb, wsSummary, 'Executive Summary')
+   843→
+   844→      // ─── SHEET 2: INCOME DETAILS ───
+   845→      const incomeHeader = ['#', 'Tenant Name', 'Property', 'Unit', 'Amount (AED)', 'Time', 'Method', 'Status', 'Notes']
+   846→      const incomeRows = [...incomeItems]
+   847→        .sort((a, b) => a.time.localeCompare(b.time))
+   848→        .map((item, idx) => [
+   849→          idx + 1,
+   850→          item.tenantName,
+   851→          item.propertyName,
+   852→          item.unitNumber || '',
+   853→          item.amount,
+   854→          item.time,
+   855→          item.method || '',
+   856→          item.isLate ? 'LATE' : (item.notes?.includes('Partial') ? 'PARTIAL' : 'On Time'),
+   857→          item.notes || '',
+   858→        ])
+   859→
+   860→      // Add totals row
+   861→      incomeRows.push([])
+   862→      incomeRows.push(['', 'TOTAL', '', '', totalIncome, '', '', `${incomeItems.length} payments`, ''])
+   863→
+   864→      const wsIncome = XLSX.utils.aoa_to_sheet([incomeHeader, ...incomeRows])
+   865→      wsIncome['!cols'] = [
+   866→        { wch: 4 }, { wch: 22 }, { wch: 28 }, { wch: 8 },
+   867→        { wch: 14 }, { wch: 8 }, { wch: 14 }, { wch: 10 }, { wch: 25 },
+   868→      ]
+   869→      XLSX.utils.book_append_sheet(wb, wsIncome, 'Income Details')
+   870→
+   871→      // ─── SHEET 3: EXPENSE DETAILS ───
+   872→      const expenseHeader = ['#', 'Category', 'Description', 'Amount (AED)', 'Vendor', 'Time', 'Recurring', '% of Total']
+   873→      const expenseRows = [...expenseItems]
+   874→        .sort((a, b) => a.time.localeCompare(b.time))
+   875→        .map((item, idx) => [
+   876→          idx + 1,
+   877→          getExpenseCategoryLabel(item.category, 'en'),
+   878→          item.description,
+   879→          item.amount,
+   880→          item.vendor || '',
+   881→          item.time,
+   882→          item.recurring ? 'Yes' : 'No',
+   883→          totalExpense > 0 ? ((item.amount / totalExpense) * 100).toFixed(1) + '%' : '0%',
+   884→        ])
+   885→
+   886→      // Add totals row
+   887→      expenseRows.push([])
+   888→      expenseRows.push(['', 'TOTAL', '', totalExpense, '', '', '', '100%'])
+   889→
+   890→      const wsExpense = XLSX.utils.aoa_to_sheet([expenseHeader, ...expenseRows])
+   891→      wsExpense['!cols'] = [
+   892→        { wch: 4 }, { wch: 16 }, { wch: 36 }, { wch: 14 },
+   893→        { wch: 22 }, { wch: 8 }, { wch: 10 }, { wch: 12 },
+   894→      ]
+   895→      XLSX.utils.book_append_sheet(wb, wsExpense, 'Expense Details')
+   896→
+   897→      // ─── SHEET 4: CATEGORY ANALYSIS ───
+   898→      const catHeader = ['Category', 'Amount (AED)', '% of Total Expenses', '# Items', 'Avg per Item']
+   899→      const catRows = Object.entries(expenseCategoryBreakdown)
+   900→        .sort((a, b) => b[1] - a[1])
+   901→        .map(([cat, amt]) => {
+   902→          const count = expenseItems.filter(e => e.category === cat).length
+   903→          return [
+   904→            getExpenseCategoryLabel(cat, 'en'),
+   905→            amt,
+   906→            totalExpense > 0 ? ((amt / totalExpense) * 100).toFixed(1) + '%' : '0%',
+   907→            count,
+   908→            count > 0 ? Math.round(amt / count) : 0,
+   909→          ]
+   910→        })
+   911→      catRows.push([])
+   912→      catRows.push(['TOTAL', totalExpense, '100%', expenseItems.length, ''])
+   913→
+   914→      const wsCat = XLSX.utils.aoa_to_sheet([catHeader, ...catRows])
+   915→      wsCat['!cols'] = [{ wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 10 }, { wch: 14 }]
+   916→      XLSX.utils.book_append_sheet(wb, wsCat, 'Category Analysis')
+   917→
+   918→      XLSX.writeFile(wb, `Al_Reef_Daily_Report_${selectedDate}.xlsx`)
+   919→      toast.success(t('exportSuccess', lang))
+   920→    } catch (error) {
+   921→      console.error('XLSX Export failed:', error)
+   922→      toast.error(t('exportFailed', lang))
+   923→    } finally {
+   924→      setExporting(false)
+   925→    }
+   926→  }, [selectedDate, lang, incomeItems, expenseItems, totalIncome, totalExpense, netProfitLoss])
+   927→
+   928→  if (!canAccess) {
+   929→    return (
+   930→      <div className="flex flex-col items-center justify-center h-96 gap-4">
+   931→        <ShieldAlert className="w-12 h-12 text-terracotta" />
+   932→        <h2 className="text-xl font-bold">{t('accessDenied', lang)}</h2>
+   933→        <p className="text-muted-foreground text-sm text-center max-w-md">{t('financialDataProtected', lang)}</p>
+   934→      </div>
+   935→    )
+   936→  }
+   937→
+   938→  const formattedDate = formatDate(selectedDate + 'T00:00:00.000Z')
+   939→  const profitMarginPct = totalIncome > 0 ? ((netProfitLoss / totalIncome) * 100) : 0
+   940→  const collectionRate = incomeItems.length > 0 ? Math.round((incomeItems.filter(i => !i.isLate).length / incomeItems.length) * 100) : 0
+   941→  const outstandingAmount = totalIncome > 0 ? Math.max(0, totalIncome - incomeItems.filter(i => !i.isLate).reduce((s, i) => s + i.amount, 0)) : 0
+   942→  const expenseRatio = totalIncome > 0 ? ((totalExpense / totalIncome) * 100) : 0
+   943→  const generatedTimestamp = new Date().toLocaleDateString('en-AE', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+   944→
+   945→  return (
+   946→    <div className="space-y-6">
+   947→      {/* Professional Report Header */}
+   948→      <div className="flex items-center justify-between flex-wrap gap-2 pb-4 border-b-2 border-emerald/20 print:border-emerald/40">
+   949→        <div className="flex items-center gap-3 min-w-0">
+   950→          <div className="w-10 h-10 rounded-lg bg-emerald flex items-center justify-center text-white font-bold text-sm shrink-0">AM</div>
+   951→          <div className="min-w-0">
+   952→            <h2 className="font-bold text-foreground text-sm sm:text-base truncate">Al Reef Al Madeena</h2>
+   953→            <p className="text-xs text-muted-foreground hidden sm:block">Real Estate Management & General Maintenance</p>
+   954→          </div>
+   955→        </div>
+   956→        <div className="text-center hidden md:block">
+   957→          <h1 className="text-lg font-bold">{t('dailyExpensesReport', lang)}</h1>
+   958→        </div>
+   959→        <div className="text-right min-w-0">
+   960→          <p className="font-medium text-sm">{formattedDate}</p>
+   961→          <p className="text-xs text-muted-foreground hidden sm:block">{t('generatedOn', lang)}: {generatedTimestamp}</p>
+   962→        </div>
+   963→      </div>
+   964→
+   965→      {/* Controls */}
+   966→      <div className="flex items-center justify-between flex-wrap gap-4 no-print">
+   967→        <div className="flex items-center justify-center gap-2 sm:gap-4 w-full sm:w-auto">
+   968→          <Button variant="ghost" size="icon" onClick={prevDay}>
+   969→            <ChevronLeft className="w-5 h-5" />
+   970→          </Button>
+   971→          <div className="flex items-center gap-2">
+   972→            <Calendar className="w-4 h-4 text-emerald" />
+   973→            <Input
+   974→              type="date"
+   975→              value={selectedDate}
+   976→              onChange={e => setSelectedDate(e.target.value)}
+   977→              className="w-40 sm:w-44"
+   978→            />
+   979→          </div>
+   980→          <Button variant="ghost" size="icon" onClick={nextDay}>
+   981→            <ChevronRight className="w-5 h-5" />
+   982→          </Button>
+   983→          <Button variant="outline" size="sm" onClick={goToToday} className="border-emerald text-emerald">
+   984→            {t('today', lang)}
+   985→          </Button>
+   986→        </div>
+   987→        <div className="flex items-center gap-2 mx-auto sm:mx-0">
+   988→          <Button
+   989→            onClick={handleExportXLSX}
+   990→            disabled={exporting}
+   991→            className="bg-emerald hover:bg-emerald/90 text-white"
+   992→          >
+   993→            {exporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <FileSpreadsheet className="w-4 h-4 mr-2" />}
+   994→            {exporting ? t('loading', lang) : t('exportData', lang)}
+   995→          </Button>
+   996→          <Button
+   997→            onClick={handleExportPDF}
+   998→            disabled={exportingPDF}
+   999→            className="bg-emerald hover:bg-emerald/90 text-white"
+  1000→          >
+  1001→            {exportingPDF ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <FileText className="w-4 h-4 mr-2" />}
+  1002→            {exportingPDF ? t('loading', lang) : t('exportPDF', lang)}
+  1003→          </Button>
+  1004→        </div>
+  1005→      </div>
+  1006→
+  1007→      {/* Executive Summary KPI Cards */}
+  1008→      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+  1009→        {/* Total Income */}
+  1010→        <Card className="card-hover overflow-hidden print:bg-white print:border">
+  1011→          <div className="h-1 bg-emerald" />
+  1012→          <CardContent className="p-3 sm:p-4 min-w-0">
+  1013→            <div className="flex items-center justify-between mb-2">
+  1014→              <div className="w-8 h-8 rounded-full bg-emerald/10 flex items-center justify-center">
+  1015→                <ArrowUpRight className="w-4 h-4 text-emerald" />
+  1016→              </div>
+  1017→            </div>
+  1018→            <p className="text-xs text-muted-foreground mb-1">{t('totalIncome', lang)}</p>
+  1019→            <p className="text-xl font-bold text-emerald truncate text-ellipsis overflow-hidden">{formatAED(totalIncome)}</p>
+  1020→            <p className="text-xs text-muted-foreground mt-1">{incomeItems.length} {t('tenantPayment', lang)}(s)</p>
+  1021→          </CardContent>
+  1022→        </Card>
+  1023→
+  1024→        {/* Total Expenses */}
+  1025→        <Card className="card-hover overflow-hidden print:bg-white print:border">
+  1026→          <div className="h-1 bg-terracotta" />
+  1027→          <CardContent className="p-3 sm:p-4 min-w-0">
+  1028→            <div className="flex items-center justify-between mb-2">
+  1029→              <div className="w-8 h-8 rounded-full bg-terracotta/10 flex items-center justify-center">
+  1030→                <ArrowDownRight className="w-4 h-4 text-terracotta" />
+  1031→              </div>
+  1032→            </div>
+  1033→            <p className="text-xs text-muted-foreground mb-1">{t('totalExpense', lang)}</p>
+  1034→            <p className="text-xl font-bold text-terracotta truncate text-ellipsis overflow-hidden">{formatAED(totalExpense)}</p>
+  1035→            <p className="text-xs text-muted-foreground mt-1">{expenseItems.length} {t('expensesCount', lang)}</p>
+  1036→          </CardContent>
+  1037→        </Card>
+  1038→
+  1039→        {/* Net Profit */}
+  1040→        <Card className="card-hover overflow-hidden print:bg-white print:border">
+  1041→          <div className={`h-1 ${netProfitLoss >= 0 ? 'bg-emerald' : 'bg-red-500'}`} />
+  1042→          <CardContent className="p-3 sm:p-4 min-w-0">
+  1043→            <div className="flex items-center justify-between mb-2">
+  1044→              <div className={`w-8 h-8 rounded-full ${netProfitLoss >= 0 ? 'bg-emerald/10' : 'bg-red-100'} flex items-center justify-center`}>
+  1045→                <DollarSign className={`w-4 h-4 ${netProfitLoss >= 0 ? 'text-emerald' : 'text-red-500'}`} />
+  1046→              </div>
+  1047→            </div>
+  1048→            <p className="text-xs text-muted-foreground mb-1">{t('netProfitLoss', lang)}</p>
+  1049→            <p className={`text-xl font-bold truncate text-ellipsis overflow-hidden ${netProfitLoss >= 0 ? 'text-emerald' : 'text-red-600'}`}>
+  1050→              {formatAED(netProfitLoss)}
+  1051→            </p>
+  1052→            <p className="text-xs text-muted-foreground mt-1">{netProfitLoss >= 0 ? 'PROFIT' : 'LOSS'}</p>
+  1053→          </CardContent>
+  1054→        </Card>
+  1055→
+  1056→        {/* Collection Rate */}
+  1057→        <Card className="card-hover overflow-hidden print:bg-white print:border">
+  1058→          <div className="h-1 bg-deep-teal" />
+  1059→          <CardContent className="p-3 sm:p-4 min-w-0">
+  1060→            <div className="flex items-center justify-between mb-2">
+  1061→              <div className="w-8 h-8 rounded-full bg-deep-teal/10 flex items-center justify-center">
+  1062→                <TrendingUp className="w-4 h-4 text-deep-teal" />
+  1063→              </div>
+  1064→            </div>
+  1065→            <p className="text-xs text-muted-foreground mb-1">{t('collectionRate', lang)}</p>
+  1066→            <p className="text-xl font-bold text-deep-teal">{collectionRate}%</p>
+  1067→            <p className="text-xs text-muted-foreground mt-1">{incomeItems.filter(i => !i.isLate).length} {t('tenantPayment', lang)}(s) {t('onTime', lang)}</p>
+  1068→          </CardContent>
+  1069→        </Card>
+  1070→
+  1071→        {/* Number of Payments */}
+  1072→        <Card className="card-hover overflow-hidden print:bg-white print:border">
+  1073→          <div className="h-1 bg-gold" />
+  1074→          <CardContent className="p-3 sm:p-4 min-w-0">
+  1075→            <div className="flex items-center justify-between mb-2">
+  1076→              <div className="w-8 h-8 rounded-full bg-gold/10 flex items-center justify-center">
+  1077→                <CreditCard className="w-4 h-4 text-gold" />
+  1078→              </div>
+  1079→            </div>
+  1080→            <p className="text-xs text-muted-foreground mb-1">{t('tenantPayment', lang)}(s)</p>
+  1081→            <p className="text-xl font-bold text-foreground">{incomeItems.length + expenseItems.length}</p>
+  1082→            <p className="text-xs text-muted-foreground mt-1">{totalIncome > 0 ? `${((totalExpense / totalIncome) * 100).toFixed(0)}% ${t('debits', lang).toLowerCase()}` : '—'}</p>
+  1083→          </CardContent>
+  1084→        </Card>
+  1085→
+  1086→        {/* Outstanding Amounts */}
+  1087→        <Card className="card-hover overflow-hidden print:bg-white print:border">
+  1088→          <div className="h-1 bg-amber-500" />
+  1089→          <CardContent className="p-3 sm:p-4 min-w-0">
+  1090→            <div className="flex items-center justify-between mb-2">
+  1091→              <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center">
+  1092→                <AlertTriangle className="w-4 h-4 text-amber-600" />
+  1093→              </div>
+  1094→            </div>
+  1095→            <p className="text-xs text-muted-foreground mb-1">{t('outstanding', lang)}</p>
+  1096→            <p className="text-xl font-bold text-amber-600 truncate text-ellipsis overflow-hidden">{formatAED(outstandingAmount)}</p>
+  1097→            <p className="text-xs text-muted-foreground mt-1">{incomeItems.filter(i => i.isLate).length} {t('late', lang).toLowerCase()}</p>
+  1098→          </CardContent>
+  1099→        </Card>
+  1100→      </div>
+  1101→
+  1102→      {/* Charts */}
+  1103→      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  1104→        {/* Income vs Expenses Bar Chart */}
+  1105→        <Card ref={barChartRef}>
+  1106→          <CardHeader className="pb-2">
+  1107→            <CardTitle className="text-lg">{t('incomeVsExpenses', lang)}</CardTitle>
+  1108→          </CardHeader>
+  1109→          <CardContent>
+  1110→            <div className="h-64">
+  1111→              <ResponsiveContainer width="100%" height="100%">
+  1112→                <BarChart data={barChartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+  1113→                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e0d5" />
+  1114→                  <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+  1115→                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+  1116→                  <Tooltip formatter={(value: number) => formatAED(value)} contentStyle={{ backgroundColor: '#FFF8E7', border: '1px solid #e5e0d5', borderRadius: '8px', fontSize: '12px' }} />
+  1117→                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+  1118→                    {barChartData.map((entry, index) => (
+  1119→                      <Cell key={`cell-${index}`} fill={entry.fill} />
+  1120→                    ))}
+  1121→                  </Bar>
+  1122→                </BarChart>
+  1123→              </ResponsiveContainer>
+  1124→            </div>
+  1125→          </CardContent>
+  1126→        </Card>
+  1127→
+  1128→        {/* Expense Distribution Pie Chart */}
+  1129→        <Card ref={pieChartRef}>
+  1130→          <CardHeader className="pb-2">
+  1131→            <CardTitle className="text-lg">{t('expenseDistribution', lang)}</CardTitle>
+  1132→          </CardHeader>
+  1133→          <CardContent>
+  1134→            {pieData.length > 0 ? (
+  1135→              <div className="h-64">
+  1136→                <ResponsiveContainer width="100%" height="100%">
+  1137→                  <PieChart>
+  1138→                    <Pie
+  1139→                      data={pieData}
+  1140→                      dataKey="value"
+  1141→                      nameKey="name"
+  1142→                      cx="50%"
+  1143→                      cy="50%"
+  1144→                      outerRadius={80}
+  1145→                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+  1146→                      labelLine={false}
+  1147→                    >
+  1148→                      {pieData.map((_, index) => (
+  1149→                        <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+  1150→                      ))}
+  1151→                    </Pie>
+  1152→                    <Tooltip formatter={(value: number) => formatAED(value)} />
+  1153→                    <Legend />
+  1154→                  </PieChart>
+  1155→                </ResponsiveContainer>
+  1156→              </div>
+  1157→            ) : (
+  1158→              <div className="h-64 flex flex-col items-center justify-center text-muted-foreground">
+  1159→                <Receipt className="w-12 h-12 mb-3 opacity-20" />
+  1160→                <p className="text-sm font-medium">{t('noExpensesFound', lang)}</p>
+  1161→              </div>
+  1162→            )}
+  1163→          </CardContent>
+  1164→        </Card>
+  1165→      </div>
+  1166→
+  1167→      {/* Profitability Analysis Section */}
+  1168→      <Card>
+  1169→        <CardHeader className="pb-2">
+  1170→          <CardTitle className="text-lg flex items-center gap-2">
+  1171→            <DollarSign className="w-5 h-5 text-emerald" />
+  1172→            {t('profitAndLoss', lang)}
+  1173→          </CardTitle>
+  1174→        </CardHeader>
+  1175→        <CardContent>
+  1176→          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  1177→            {/* Financial Breakdown */}
+  1178→            <div className="space-y-3">
+  1179→              <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{t('financialSummary', lang)}</h4>
+  1180→              <div className="flex items-center justify-between p-3 rounded-lg bg-gradient-to-r from-emerald-50 to-emerald-100/50">
+  1181→                <div className="flex items-center gap-2">
+  1182→                  <ArrowUpRight className="w-4 h-4 text-emerald" />
+  1183→                  <span className="text-sm font-medium min-w-0 truncate">{t('totalIncome', lang)}</span>
+  1184→                </div>
+  1185→                <span className="font-bold text-emerald shrink-0">{formatAED(totalIncome)}</span>
+  1186→              </div>
+  1187→              <div className="flex items-center justify-between p-3 rounded-lg bg-gradient-to-r from-orange-50 to-orange-100/50">
+  1188→                <div className="flex items-center gap-2">
+  1189→                  <ArrowDownRight className="w-4 h-4 text-terracotta" />
+  1190→                  <span className="text-sm font-medium min-w-0 truncate">{t('totalExpense', lang)}</span>
+  1191→                </div>
+  1192→                <span className="font-bold text-terracotta shrink-0">{formatAED(totalExpense)}</span>
+  1193→              </div>
+  1194→              <div className={`flex items-center justify-between p-4 rounded-lg border-2 ${netProfitLoss >= 0 ? 'border-emerald bg-gradient-to-r from-emerald-50 to-emerald-100/30' : 'border-red-300 bg-gradient-to-r from-red-50 to-red-100/30'}`}>
+  1195→                <div className="flex items-center gap-2">
+  1196→                  {netProfitLoss >= 0 ? <ArrowUpRight className="w-5 h-5 text-emerald" /> : <ArrowDownRight className="w-5 h-5 text-red-500" />}
+  1197→                  <span className="text-base font-bold">{t('netProfitLoss', lang)}</span>
+  1198→                </div>
+  1199→                <span className={`text-2xl font-bold ${netProfitLoss >= 0 ? 'text-emerald' : 'text-red-600'}`}>{formatAED(netProfitLoss)}</span>
+  1200→              </div>
+  1201→            </div>
+  1202→
+  1203→            {/* Performance Metrics */}
+  1204→            <div className="space-y-4">
+  1205→              <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Performance Metrics</h4>
+  1206→              <div>
+  1207→                <div className="flex items-center justify-between mb-1.5">
+  1208→                  <span className="text-sm font-medium">{t('profitOrLoss', lang)} %</span>
+  1209→                  <span className={`text-sm font-bold ${netProfitLoss >= 0 ? 'text-emerald' : 'text-red-600'}`}>{profitMarginPct.toFixed(1)}%</span>
+  1210→                </div>
+  1211→                <Progress value={Math.min(Math.max(Math.abs(profitMarginPct), 0), 100)} className="h-2 [&>div]:bg-emerald" />
+  1212→              </div>
+  1213→              <div>
+  1214→                <div className="flex items-center justify-between mb-1.5">
+  1215→                  <span className="text-sm font-medium">{t('collectionRate', lang)}</span>
+  1216→                  <span className="text-sm font-bold text-deep-teal">{collectionRate}%</span>
+  1217→                </div>
+  1218→                <Progress value={collectionRate} className="h-2 [&>div]:bg-deep-teal" />
+  1219→              </div>
+  1220→              <div>
+  1221→                <div className="flex items-center justify-between mb-1.5">
+  1222→                  <span className="text-sm font-medium">{t('debits', lang)} / {t('income', lang)}</span>
+  1223→                  <span className="text-sm font-bold text-terracotta">{expenseRatio.toFixed(1)}%</span>
+  1224→                </div>
+  1225→                <Progress value={Math.min(expenseRatio, 100)} className="h-2 [&>div]:bg-terracotta" />
+  1226→              </div>
+  1227→            </div>
+  1228→          </div>
+  1229→        </CardContent>
+  1230→      </Card>
+  1231→
+  1232→      {/* Income Details Table */}
+  1233→      <Card>
+  1234→        <CardHeader className="pb-2">
+  1235→          <div className="flex items-center justify-between">
+  1236→            <CardTitle className="text-lg flex items-center gap-2">
+  1237→              <ArrowUpRight className="w-5 h-5 text-emerald" />
+  1238→              {t('income', lang)} — {t('rentCollected', lang)}
+  1239→            </CardTitle>
+  1240→            {incomeItems.length > 0 && (
+  1241→              <Badge className="bg-emerald/10 text-emerald border-emerald/20">{formatAED(totalIncome)}</Badge>
+  1242→            )}
+  1243→          </div>
+  1244→        </CardHeader>
+  1245→        <CardContent>
+  1246→          {incomeItems.length > 0 ? (
+  1247→            <div className="overflow-x-auto max-h-96 overflow-y-auto custom-scrollbar">
+  1248→              <Table className="min-w-[640px]">
+  1249→                <TableHeader>
+  1250→                  <TableRow className="bg-emerald/5 hover:bg-emerald/10">
+  1251→                    <TableHead className="w-10">#</TableHead>
+  1252→                    <TableHead>{t('tenantName', lang)}</TableHead>
+  1253→                    <TableHead>{t('property', lang)}</TableHead>
+  1254→                    <TableHead className="w-20">{t('unitNumber', lang)}</TableHead>
+  1255→                    <TableHead className="text-right">{t('amount', lang)}</TableHead>
+  1256→                    <TableHead className="w-20">{t('paymentTime', lang)}</TableHead>
+  1257→                    <TableHead className="w-28">{t('paymentMethod', lang)}</TableHead>
+  1258→                    <TableHead className="w-24">Status</TableHead>
+  1259→                  </TableRow>
+  1260→                </TableHeader>
+  1261→                <TableBody>
+  1262→                  {[...incomeItems].sort((a, b) => a.time.localeCompare(b.time)).map((item, idx) => (
+  1263→                    <TableRow key={idx} className={`${item.isLate ? 'bg-red-50/50 border-l-3 border-l-red-400' : ''} ${item.source === 'reservation' ? 'bg-sky-50/30' : ''}`}>
+  1264→                      <TableCell className="font-mono text-xs text-muted-foreground">{idx + 1}</TableCell>
+  1265→                      <TableCell>
+  1266→                        <div className="flex items-center gap-1.5">
+  1267→                          <p className="font-medium text-sm max-w-[120px] truncate">{item.tenantName}</p>
+  1268→                          {item.source === 'reservation' && (
+  1269→                            <Badge variant="outline" className="text-[10px] border-sky-400 text-sky-700 px-1 py-0 shrink-0">Reservation</Badge>
+  1270→                          )}
+  1271→                        </div>
+  1272→                      </TableCell>
+  1273→                      <TableCell>
+  1274→                        <p className="text-sm text-muted-foreground max-w-[120px] truncate">{item.propertyName}</p>
+  1275→                      </TableCell>
+  1276→                      <TableCell>
+  1277→                        {item.unitNumber ? (
+  1278→                          <Badge variant="outline" className="text-xs font-mono">{item.unitNumber}</Badge>
+  1279→                        ) : (
+  1280→                          <span className="text-xs text-muted-foreground">—</span>
+  1281→                        )}
+  1282→                      </TableCell>
+  1283→                      <TableCell className="text-right">
+  1284→                        <p className={item.amount < 0 ? 'font-bold text-red-600' : 'font-bold text-emerald'}>{formatAED(item.amount)}</p>
+  1285→                      </TableCell>
+  1286→                      <TableCell className="text-xs text-muted-foreground">{item.time}</TableCell>
+  1287→                      <TableCell>
+  1288→                        {item.source === 'reservation' && item.amount < 0 ? (
+  1289→                          <div className="flex items-center gap-1">
+  1290→                            <Badge variant="secondary" className="text-xs font-normal bg-red-100 text-red-700">Refund</Badge>
+  1291→                            <Badge variant="secondary" className="text-xs font-normal inline-block max-w-[60px] truncate">{item.method}</Badge>
+  1292→                          </div>
+  1293→                        ) : item.source === 'reservation' ? (
+  1294→                          <div className="flex items-center gap-1">
+  1295→                            <Badge variant="secondary" className="text-xs font-normal bg-sky-100 text-sky-700">Deposit</Badge>
+  1296→                            <Badge variant="secondary" className="text-xs font-normal inline-block max-w-[60px] truncate">{item.method}</Badge>
+  1297→                          </div>
+  1298→                        ) : item.method ? (
+  1299→                          <Badge variant="secondary" className="text-xs font-normal inline-block max-w-[80px] truncate">{item.method}</Badge>
+  1300→                        ) : (
+  1301→                          <span className="text-xs text-muted-foreground">—</span>
+  1302→                        )}
+  1303→                      </TableCell>
+  1304→                      <TableCell>
+  1305→                        {item.isLate ? (
+  1306→                          <Badge className="bg-red-100 text-red-700 border-red-200 text-xs inline-block max-w-[80px] truncate">Late</Badge>
+  1307→                        ) : item.notes?.includes('Partial') ? (
+  1308→                          <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-xs inline-block max-w-[80px] truncate">Partial</Badge>
+  1309→                        ) : item.amount < 0 ? (
+  1310→                          <Badge className="bg-red-100 text-red-700 border-red-200 text-xs inline-block max-w-[80px] truncate">Refund</Badge>
+  1311→                        ) : (
+  1312→                          <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs inline-block max-w-[80px] truncate">Paid</Badge>
+  1313→                        )}
+  1314→                      </TableCell>
+  1315→                    </TableRow>
+  1316→                  ))}
+  1317→                  {/* Income Total Row */}
+  1318→                  <TableRow className="bg-emerald/10 hover:bg-emerald/15 font-bold">
+  1319→                    <TableCell colSpan={4} className="font-bold text-emerald">{t('totalIncome', lang)}</TableCell>
+  1320→                    <TableCell className="text-right font-bold text-emerald">{formatAED(totalIncome)}</TableCell>
+  1321→                    <TableCell colSpan={3} className="text-xs text-muted-foreground">{incomeItems.length} {t('tenantPayment', lang)}(s)</TableCell>
+  1322→                  </TableRow>
+  1323→                </TableBody>
+  1324→              </Table>
+  1325→            </div>
+  1326→          ) : (
+  1327→            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+  1328→              <CreditCard className="w-12 h-12 mb-3 opacity-20" />
+  1329→              <p className="text-sm font-medium">{t('noTransactionsToday', lang)}</p>
+  1330→              <p className="text-xs mt-1">Income will appear here when payments are recorded</p>
+  1331→            </div>
+  1332→          )}
+  1333→        </CardContent>
+  1334→      </Card>
+  1335→
+  1336→      {/* Expense Details Table */}
+  1337→      <Card>
+  1338→        <CardHeader className="pb-2">
+  1339→          <div className="flex items-center justify-between">
+  1340→            <CardTitle className="text-lg flex items-center gap-2">
+  1341→              <ArrowDownRight className="w-5 h-5 text-terracotta" />
+  1342→              {t('debits', lang)}
+  1343→            </CardTitle>
+  1344→            {expenseItems.length > 0 && (
+  1345→              <Badge className="bg-terracotta/10 text-terracotta border-terracotta/20">{formatAED(totalExpense)}</Badge>
+  1346→            )}
+  1347→          </div>
+  1348→        </CardHeader>
+  1349→        <CardContent>
+  1350→          {expenseItems.length > 0 ? (
+  1351→            <div className="overflow-x-auto max-h-96 overflow-y-auto custom-scrollbar">
+  1352→              <Table className="min-w-[640px]">
+  1353→                <TableHeader>
+  1354→                  <TableRow className="bg-terracotta/5 hover:bg-terracotta/10">
+  1355→                    <TableHead className="w-10">#</TableHead>
+  1356→                    <TableHead>{t('expenseCategory', lang)}</TableHead>
+  1357→                    <TableHead>{t('description', lang)}</TableHead>
+  1358→                    <TableHead className="text-right">{t('amount', lang)}</TableHead>
+  1359→                    <TableHead>{t('vendor', lang)}</TableHead>
+  1360→                    <TableHead className="w-20">{t('paymentTime', lang)}</TableHead>
+  1361→                    <TableHead className="w-20">Type</TableHead>
+  1362→                  </TableRow>
+  1363→                </TableHeader>
+  1364→                <TableBody>
+  1365→                  {[...expenseItems].sort((a, b) => a.time.localeCompare(b.time)).map((item, idx) => {
+  1366→                    const catColor = CATEGORY_COLORS[item.category]?.fill || '#6b7280'
+  1367→                    return (
+  1368→                      <TableRow key={item.id} className="border-l-3" style={{ borderLeftColor: catColor }}>
+  1369→                        <TableCell className="font-mono text-xs text-muted-foreground">{idx + 1}</TableCell>
+  1370→                        <TableCell>
+  1371→                          <div className="flex items-center gap-2">
+  1372→                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: catColor }} />
+  1373→                            <Badge variant="secondary" className="text-xs font-normal inline-block max-w-[80px] truncate">{getExpenseCategoryLabel(item.category, lang)}</Badge>
+  1374→                          </div>
+  1375→                        </TableCell>
+  1376→                        <TableCell>
+  1377→                          <p className="text-sm font-medium max-w-[150px] truncate">{item.description}</p>
+  1378→                        </TableCell>
+  1379→                        <TableCell className="text-right">
+  1380→                          <p className="font-bold text-terracotta">{formatAED(item.amount)}</p>
+  1381→                        </TableCell>
+  1382→                        <TableCell>
+  1383→                          {item.vendor ? (
+  1384→                            <p className="text-sm max-w-[100px] truncate">{item.vendor}</p>
+  1385→                          ) : (
+  1386→                            <span className="text-xs text-muted-foreground">—</span>
+  1387→                          )}
+  1388→                        </TableCell>
+  1389→                        <TableCell className="text-xs text-muted-foreground">{item.time}</TableCell>
+  1390→                        <TableCell>
+  1391→                          {item.recurring ? (
+  1392→                            <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-xs gap-1 inline-block max-w-[80px] truncate">
+  1393→                              <RefreshCw className="w-3 h-3" />
+  1394→                              {t('recurring', lang)}
+  1395→                            </Badge>
+  1396→                          ) : (
+  1397→                            <Badge className="bg-gray-100 text-gray-600 border-gray-200 text-xs inline-block max-w-[80px] truncate">One-time</Badge>
+  1398→                          )}
+  1399→                        </TableCell>
+  1400→                      </TableRow>
+  1401→                    )
+  1402→                  })}
+  1403→                  {/* Expense Total Row */}
+  1404→                  <TableRow className="bg-terracotta/10 hover:bg-terracotta/15 font-bold">
+  1405→                    <TableCell colSpan={3} className="font-bold text-terracotta">{t('totalExpense', lang)}</TableCell>
+  1406→                    <TableCell className="text-right font-bold text-terracotta">{formatAED(totalExpense)}</TableCell>
+  1407→                    <TableCell colSpan={3} className="text-xs text-muted-foreground">{expenseItems.length} {t('expensesCount', lang)}</TableCell>
+  1408→                  </TableRow>
+  1409→                </TableBody>
+  1410→              </Table>
+  1411→            </div>
+  1412→          ) : (
+  1413→            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+  1414→              <Receipt className="w-12 h-12 mb-3 opacity-20" />
+  1415→              <p className="text-sm font-medium">{t('noTransactionsToday', lang)}</p>
+  1416→              <p className="text-xs mt-1">Expenses will appear here when they are added</p>
+  1417→            </div>
+  1418→          )}
+  1419→        </CardContent>
+  1420→      </Card>
+  1421→    </div>
+  1422→  )
+  1423→}
+  1424→

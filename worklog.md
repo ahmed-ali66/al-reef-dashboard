@@ -162,3 +162,33 @@ Stage Summary:
 - Group payment: single amount, auto-distributed proportionally, supports all allocation types
 - Restaurant "RES Account" group created: 3 units, AED 2,900 total monthly rent
 - Deployed to production: commit 58b97a7
+
+---
+Task ID: report-improvements-1
+Agent: Main Agent
+Task: Report Sorting, Linked-Unit Payment Consolidation & Credit Balance Display
+
+Work Log:
+- Analyzed daily-expenses-report.tsx, reports.tsx, and rent-collection.tsx
+- Added DailyIncomeItem fields: groupId, reference, isConsolidated
+- Implemented payment method sort priority: Cash(1) → Bank Transfer(2) → Cheque(3) → Other(4)
+- Added sortIncomeByMethod() utility for consistent sorting across UI/PDF/XLSX
+- Daily Report computeDailyData: consolidated linked-unit payments by groupId+method+reference
+- Daily Report UI: method-first sorting, "Linked" badge for consolidated entries
+- Daily Report PDF: method-first sorting, indigo "Linked Units" label for consolidated rows
+- Daily Report XLSX: method-sorted breakdown, consolidated entries with "(Linked)" suffix
+- Monthly Report PDF: consolidated income table with method sorting and indigo markers
+- Monthly Report XLSX: Payments sheet with consolidated entries and "Type" column
+- Credit balance display: replaced Math.max(0, remaining) with proper credit/debt indication
+  - remaining < 0 → "Available Credit" in blue (shows absolute value)
+  - remaining = 0 → "Settled" in green
+  - remaining > 0 → "Remaining Balance" in red
+- Added i18n keys: availableCredit, accountSettled (EN/AR/BN/UR)
+- Build verified, pushed to GitHub, Vercel auto-deploy triggered
+
+Stage Summary:
+- Payment methods consistently sorted Cash → Bank Transfer → Cheque in all report formats
+- Linked-unit payments (e.g. restaurant Units 15,16,17) appear as single consolidated entries
+- Credit balances now properly displayed as "Available Credit" instead of misleading "AED 0"
+- No financial calculations or payment allocations modified
+- Deployed to production: commit e87eb07
