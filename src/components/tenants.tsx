@@ -219,7 +219,7 @@ export default function Tenants() {
     try {
       const store = useDataStore.getState()
       const rentAmount = Number(form.rentAmount) || 0
-      const muniFee = form.municipalityFee ? Number(form.municipalityFee) : Math.round(rentAmount * 0.05)
+      const muniFee = form.municipalityFee ? Number(form.municipalityFee) : 0
       const body: any = {
         ...form,
         rentAmount,
@@ -345,10 +345,7 @@ export default function Tenants() {
   const updateForm = (field: keyof TenantFormState, value: string) => {
     setForm(prev => {
       const next = { ...prev, [field]: value }
-      // Auto-calculate municipality fee when rent changes
-      if (field === 'rentAmount' && !prev.municipalityFee) {
-        next.municipalityFee = String(Math.round((Number(value) || 0) * 0.05))
-      }
+      // Municipality fee defaults to 0 — staff enters manually only when applicable
       return next
     })
   }

@@ -344,7 +344,7 @@ export async function POST(request: Request) {
                 floor: tenantData.floor ? safeInt(tenantData.floor) : null,
                 sizeSqft: tenantData.sizeSqft ? safeDecimal(tenantData.sizeSqft) : null,
                 rentAmount: safeDecimal(tenantData.rentAmount, '0'),
-                municipalityFee: tenantData.municipalityFee ? safeDecimal(tenantData.municipalityFee) : safeDecimal(safeNumber(tenantData.rentAmount, 0) * 0.05),
+                municipalityFee: tenantData.municipalityFee ? safeDecimal(tenantData.municipalityFee) : null,
                 securityDeposit: tenantData.securityDeposit ? safeDecimal(tenantData.securityDeposit) : null,
                 paymentMethod: tenantData.paymentMethod || null,
                 leaseStart: tenantData.leaseStart ? new Date(tenantData.leaseStart) : null,

@@ -182,7 +182,7 @@ export async function POST() {
           floor: td.floor,
           sizeSqft: td.sizeSqft,
           rentAmount: td.rentAmount,
-          municipalityFee: Math.round(td.rentAmount * 0.05),
+          municipalityFee: 0,
           securityDeposit: td.rentAmount, // Always 1 month rent
           paymentMethod: td.paymentMethod,
           leaseStart: td.leaseStart,

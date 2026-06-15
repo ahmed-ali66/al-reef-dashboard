@@ -57,7 +57,7 @@ export function calculateFinancials(input: FinancialCalcInput): FinancialCalcRes
   const includeMuniFee = input.includeMuniFee !== false // default true
 
   const muniFee = includeMuniFee
-    ? (input.municipalityFee != null ? Number(input.municipalityFee) : Math.round(rentAmount * 0.05))
+    ? (input.municipalityFee != null ? Number(input.municipalityFee) : 0)
     : 0
 
   const currentCharges = rentAmount + muniFee - adjustments

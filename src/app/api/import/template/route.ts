@@ -62,7 +62,7 @@ export async function GET(request: Request) {
           floor: 1,
           size_sqft: 850,
           rent_amount: 45000,
-          municipality_fee: 2250,
+          municipality_fee: 0,
           security_deposit: 4500,
           payment_method: 'bank_transfer',
           lease_start: '2024-01-01',

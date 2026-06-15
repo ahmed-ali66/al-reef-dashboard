@@ -57,7 +57,7 @@ export async function GET(request: Request) {
     const rentAmount = Number(tenant.rentAmount)
     const openingBalance = Number(tenant.openingBalance) || 0
     const creditBalance = Number(tenant.creditBalance) || 0
-    const muniFee = includeMuniFee ? Math.round(rentAmount * 0.05) : 0
+    const muniFee = includeMuniFee ? Number(tenant.municipalityFee) || 0 : 0
     const currentCharges = rentAmount + muniFee
     const totalDue = openingBalance + currentCharges - creditBalance
     const remaining = totalDue - paidAmount

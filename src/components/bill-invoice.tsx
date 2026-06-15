@@ -30,10 +30,10 @@ export default function BillInvoice({
   language,
 }: BillInvoiceProps) {
   const invoiceRef = useRef<HTMLDivElement>(null)
-  const [includeMuniFee, setIncludeMuniFee] = useState(!!tenant.municipalityFee)
+  const [includeMuniFee, setIncludeMuniFee] = useState(!!tenant.municipalityFee && Number(tenant.municipalityFee) > 0)
   const [downloading, setDownloading] = useState(false)
 
-  const muniFee = includeMuniFee ? Math.round(tenant.rentAmount * 0.05) : 0
+  const muniFee = includeMuniFee ? Number(tenant.municipalityFee) || 0 : 0
   const openingBalance = Number(tenant.openingBalance) || 0
   const creditBalance = Number(tenant.creditBalance) || 0
   const currentCharges = tenant.rentAmount + muniFee
@@ -111,7 +111,7 @@ export default function BillInvoice({
             {t('includeMunicipalityFee', language)}
           </Label>
           <span className="text-xs text-muted-foreground">
-            ({t('municipalityFee', language)} - 5%)
+            ({t('municipalityFee', language)})
           </span>
         </div>
         <div className="flex items-center gap-2">
