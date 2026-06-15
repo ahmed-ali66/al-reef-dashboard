@@ -9,6 +9,7 @@ import Login from '@/components/login'
 import Sidebar from '@/components/sidebar'
 import Dashboard from '@/components/dashboard'
 import Properties from '@/components/properties'
+import PropertyCollection from '@/components/property-collection'
 import Tenants from '@/components/tenants'
 import RentCollection from '@/components/rent-collection'
 import Maintenance from '@/components/maintenance'
@@ -116,6 +117,7 @@ function AppContent() {
       switch (currentPage) {
       case 'dashboard': return <Dashboard />
       case 'properties': return <Properties />
+      case 'property-collection': return isOwnerOrAdmin(authUser?.role || '') ? <PropertyCollection /> : <AccessDenied />
       case 'tenants': return <Tenants />
       case 'reservations': return <Reservations />
       case 'rent': return <RentCollection />

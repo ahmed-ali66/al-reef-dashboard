@@ -16,7 +16,7 @@ import { Badge } from '@/components/ui/badge'
 import { Building2, Plus, Pencil, Trash2, Users, Loader2, Archive, ArchiveRestore } from 'lucide-react'
 
 export default function Properties() {
-  const { language, authUser } = useAppStore()
+  const { language, authUser, setCurrentPage, setSelectedPropertyId } = useAppStore()
   const [properties, setProperties] = useState<PropertyData[]>([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -154,7 +154,7 @@ export default function Properties() {
           const outstandingAmount = Math.max(0, totalRent - collectedAmount)
 
           return (
-            <Card key={p.id} className={cn2('property-card-hover', p.archived && 'opacity-60')}>
+            <Card key={p.id} className={cn2('property-card-hover cursor-pointer', p.archived && 'opacity-60')} onClick={() => { setSelectedPropertyId(p.id); setCurrentPage('property-collection') }}>
               <CardContent className="p-5">
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-3">
@@ -177,7 +177,7 @@ export default function Properties() {
                       </div>
                     </div>
                   </div>
-                  <div className="flex gap-1">
+                  <div className="flex gap-1" onClick={e => e.stopPropagation()}>
                     {canModify && (
                       <button onClick={() => handleArchive(p.id, !p.archived)} className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground" title={p.archived ? t('archiveProperty', language) : t('archiveProperty', language)}>
                         {p.archived ? <ArchiveRestore className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}

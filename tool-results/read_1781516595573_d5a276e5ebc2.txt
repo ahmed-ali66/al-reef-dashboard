@@ -1,0 +1,936 @@
+     1→import { create } from 'zustand'
+     2→import type { PropertyData, TenantData, PaymentData, ExpenseData, MaintenanceData, ReservationData, RentAdjustmentData, TenantGroupData } from '@/lib/types'
+     3→import { isFinanciallyActive } from '@/lib/utils'
+     4→
+     5→// Company info
+     6→export interface CompanyInfo {
+     7→  id: string
+     8→  name: string
+     9→  nameAr: string
+    10→  nameBn: string
+    11→  nameUr: string
+    12→  phone: string
+    13→  email: string
+    14→  address: string
+    15→}
+    16→
+    17→// Reset requests from forgot password
+    18→export interface ResetRequest {
+    19→  id: string
+    20→  email: string
+    21→  name: string
+    22→  message: string
+    23→  status: 'pending' | 'resolved' | 'dismissed'
+    24→  createdAt: string
+    25→  resolvedAt: string | null
+    26→  resolvedBy: string | null
+    27→}
+    28→
+    29→// Users for user management
+    30→export interface LocalUser {
+    31→  id: string
+    32→  email: string
+    33→  password: string // placeholder - real passwords are in the database
+    34→  name: string
+    35→  nameAr: string
+    36→  nameBn: string
+    37→  nameUr: string
+    38→  role: 'owner' | 'admin' | 'staff' | 'accountant'
+    39→  companyId: string
+    40→  isActive: boolean
+    41→}
+    42→
+    43→interface DataState {
+    44→  company: CompanyInfo
+    45→  users: LocalUser[]
+    46→  resetRequests: ResetRequest[]
+    47→  properties: PropertyData[]
+    48→  tenants: TenantData[]
+    49→  payments: PaymentData[]
+    50→  expenses: ExpenseData[]
+    51→  maintenanceItems: MaintenanceData[]
+    52→  reservations: ReservationData[]
+    53→  adjustments: RentAdjustmentData[]
+    54→  tenantGroups: TenantGroupData[]
+    55→  isSeeded: boolean
+    56→  isLoading: boolean
+    57→  isInitialized: boolean
+    58→
+    59→  // Data fetching
+    60→  fetchAllData: () => Promise<void>
+    61→  refreshAllData: () => Promise<void>
+    62→
+    63→  // Reservations CRUD
+    64→  addReservation: (data: any) => Promise<void>
+    65→  updateReservation: (id: string, data: any) => Promise<void>
+    66→  cancelReservation: (id: string) => Promise<void>
+    67→  convertReservation: (id: string, data: { depositAppliedTo: string; rentAmount: number; paymentMethod?: string; leaseStart?: string; leaseEnd?: string; contractDuration?: number }) => Promise<void>
+    68→  deleteReservation: (id: string) => Promise<void>
+    69→
+    70→  // User Management (Admin only)
+    71→  addUser: (data: Omit<LocalUser, 'id' | 'isActive'>) => Promise<LocalUser>
+    72→  updateUser: (id: string, data: Partial<LocalUser>) => Promise<void>
+    73→  deleteUser: (id: string) => Promise<void>
+    74→  resetUserPassword: (id: string, newPassword: string) => Promise<void>
+    75→  generateRandomPassword: () => string
+    76→
+    77→  // Reset Requests
+    78→  addResetRequest: (data: Omit<ResetRequest, 'id' | 'status' | 'createdAt' | 'resolvedAt' | 'resolvedBy'>) => Promise<ResetRequest>
+    79→  resolveResetRequest: (id: string, resolvedBy: string) => Promise<void>
+    80→  dismissResetRequest: (id: string, resolvedBy: string) => Promise<void>
+    81→  getPendingResetCount: () => number
+    82→
+    83→  // Properties CRUD
+    84→  addProperty: (data: Omit<PropertyData, 'id' | 'companyId' | 'createdAt' | 'tenants' | 'archived'>) => Promise<void>
+    85→  updateProperty: (id: string, data: Partial<PropertyData>) => Promise<void>
+    86→  deleteProperty: (id: string) => Promise<void>
+    87→  archiveProperty: (id: string, archived: boolean) => Promise<void>
+    88→
+    89→  // Tenants CRUD
+    90→  addTenant: (data: Omit<TenantData, 'id' | 'companyId' | 'createdAt' | 'payments' | 'property'>) => Promise<void>
+    91→  updateTenant: (id: string, data: Partial<TenantData>) => Promise<void>
+    92→  deleteTenant: (id: string) => Promise<void>
+    93→
+    94→  // Payments CRUD
+    95→  addPayment: (data: Omit<PaymentData, 'id' | 'createdAt' | 'tenant'>) => Promise<void>
+    96→  updatePayment: (id: string, data: Partial<PaymentData> & { reason?: string }) => Promise<void>
+    97→  deletePayment: (id: string, reason?: string) => Promise<void>
+    98→
+    99→  // Adjustments CRUD
+   100→  addAdjustment: (data: Omit<RentAdjustmentData, 'id' | 'companyId' | 'createdAt' | 'updatedAt' | 'tenant' | 'property'>) => Promise<void>
+   101→  updateAdjustment: (id: string, data: Partial<RentAdjustmentData>) => Promise<void>
+   102→  cancelAdjustment: (id: string, reason?: string) => Promise<void>
+   103→
+   104→  // Tenant Groups CRUD
+   105→  addTenantGroup: (data: { propertyId: string; name: string; nameAr?: string; nameBn?: string; nameUr?: string; billingMode?: string; notes?: string; tenantIds?: string[] }) => Promise<TenantGroupData>
+   106→  updateTenantGroup: (id: string, data: Partial<TenantGroupData> & { tenantIds?: string[] }) => Promise<void>
+   107→  deleteTenantGroup: (id: string) => Promise<void>
+   108→  recordGroupPayment: (groupId: string, data: { amount: number; month: number; year: number; method: string; reference?: string; notes?: string; paymentDate: string; allocationType?: string; customAllocation?: { tenantId: string; amount: number }[] }) => Promise<any>
+   109→
+   110→  // Expenses CRUD
+   111→  addExpense: (data: Omit<ExpenseData, 'id' | 'companyId' | 'createdAt'>) => Promise<void>
+   112→  updateExpense: (id: string, data: Partial<ExpenseData>) => Promise<void>
+   113→  deleteExpense: (id: string) => Promise<void>
+   114→
+   115→  // Maintenance CRUD
+   116→  addMaintenance: (data: Omit<MaintenanceData, 'id' | 'companyId' | 'createdAt'>) => Promise<void>
+   117→  updateMaintenance: (id: string, data: Partial<MaintenanceData>) => Promise<void>
+   118→  deleteMaintenance: (id: string) => Promise<void>
+   119→
+   120→  // Seed data
+   121→  seedData: () => Promise<void>
+   122→  clearData: () => void
+   123→
+   124→  // Getters - computed data
+   125→  getTenantsWithRelations: () => TenantData[]
+   126→  getPropertiesWithTenants: (includeArchived?: boolean) => PropertyData[]
+   127→  getDashboardData: () => any
+   128→  getReportData: (month: number, year: number) => any
+   129→
+   130→  // Server-side data fetching (preferred at scale)
+   131→  fetchDashboardData: () => Promise<any>
+   132→  fetchReportData: (month: number, year: number) => Promise<any>
+   133→}
+   134→
+   135→const DEFAULT_COMPANY: CompanyInfo = {
+   136→  id: '',
+   137→  name: '',
+   138→  nameAr: '',
+   139→  nameBn: '',
+   140→  nameUr: '',
+   141→  phone: '',
+   142→  email: '',
+   143→  address: '',
+   144→}
+   145→
+   146→// Helper: check if an adjustment applies to a given month/year
+   147→// For multi-month adjustments (durationMonths > 1), the adjustment applies to every month
+   148→// from effectiveMonth/effectiveYear for durationMonths months
+   149→function isAdjustmentActiveInMonth(adjustment: RentAdjustmentData, month: number, year: number): boolean {
+   150→  if (adjustment.status !== 'approved') return false
+   151→
+   152→  const startDate = new Date(adjustment.effectiveYear, adjustment.effectiveMonth - 1, 1)
+   153→  const checkDate = new Date(year, month - 1, 1)
+   154→  const endDate = new Date(
+   155→    adjustment.effectiveYear + Math.floor((adjustment.effectiveMonth - 1 + adjustment.durationMonths) / 12),
+   156→    ((adjustment.effectiveMonth - 1 + adjustment.durationMonths) % 12),
+   157→    0 // last day of the end month
+   158→  )
+   159→
+   160→  return checkDate >= startDate && checkDate <= endDate
+   161→}
+   162→
+   163→// PHASE 2: Dedup guard for 401 handling — prevent multiple simultaneous signOut calls
+   164→let isHandling401 = false
+   165→
+   166→// API helper — handles 401 by redirecting to login (with dedup guard)
+   167→async function apiCall(url: string, options?: RequestInit) {
+   168→  const res = await fetch(url, {
+   169→    ...options,
+   170→    headers: {
+   171→      'Content-Type': 'application/json',
+   172→      ...options?.headers,
+   173→    },
+   174→  })
+   175→
+   176→  // PHASE 2 FIX: On 401 Unauthorized, redirect to login page with dedup guard
+   177→  if (res.status === 401) {
+   178→    if (!isHandling401 && typeof window !== 'undefined') {
+   179→      isHandling401 = true
+   180→      try {
+   181→        // Use NextAuth signOut to properly clear session
+   182→        const { signOut } = await import('next-auth/react')
+   183→        await signOut({ callbackUrl: '/' })
+   184→      } finally {
+   185→        // Reset after a delay to allow future 401s if session expires again
+   186→        setTimeout(() => { isHandling401 = false }, 5000)
+   187→      }
+   188→    }
+   189→    throw new Error('Session expired. Please log in again.')
+   190→  }
+   191→
+   192→  // PHASE 2: Handle 409 Conflict (optimistic concurrency failure)
+   193→  if (res.status === 409) {
+   194→    const data = await res.json().catch(() => ({ error: 'Record was modified by another user' }))
+   195→    const error = new Error(data.error || 'Record was modified by another user. Please refresh and try again.')
+   196→    ;(error as any).isConflict = true
+   197→    ;(error as any).statusCode = 409
+   198→    throw error
+   199→  }
+   200→
+   201→  if (!res.ok) {
+   202→    const data = await res.json().catch(() => ({ error: 'Request failed' }))
+   203→    throw new Error(data.error || `Request failed with status ${res.status}`)
+   204→  }
+   205→  return res.json()
+   206→}
+   207→
+   208→export const useDataStore = create<DataState>()(
+   209→  (set, get) => ({
+   210→    company: DEFAULT_COMPANY,
+   211→    users: [],
+   212→    resetRequests: [],
+   213→    properties: [],
+   214→    tenants: [],
+   215→    payments: [],
+   216→    expenses: [],
+   217→    maintenanceItems: [],
+   218→    reservations: [],
+   219→    adjustments: [],
+   220→    tenantGroups: [],
+   221→    isSeeded: false,
+   222→    isLoading: false,
+   223→    isInitialized: false,
+   224→
+   225→    // Fetch all data from API on app load
+   226→    fetchAllData: async () => {
+   227→      if (get().isLoading) return
+   228→      set({ isLoading: true })
+   229→
+   230→      try {
+   231→        // Fetch all data in parallel
+   232→        // Staff can now view payments (amounts masked) and users (still blocked via 403 catch)
+   233→        const [companyData, propertiesData, tenantsData, paymentsData, expensesData, maintenanceData, usersData, resetData, reservationsData, adjustmentsData, tenantGroupsData] = await Promise.all([
+   234→          apiCall('/api/company').catch(() => null),
+   235→          apiCall('/api/properties?includeArchived=true&limit=1000').catch(() => ({ data: [] })),
+   236→          apiCall('/api/tenants?limit=1000').catch(() => ({ data: [] })),
+   237→          apiCall('/api/payments?limit=1000').catch(() => ({ data: [] })),
+   238→          apiCall('/api/expenses?limit=1000').catch(() => ({ data: [] })),
+   239→          apiCall('/api/maintenance?limit=1000').catch(() => ({ data: [] })),
+   240→          apiCall('/api/users?limit=1000').catch(() => ({ data: [] })),
+   241→          apiCall('/api/reset-requests').catch(() => []),
+   242→          apiCall('/api/reservations?limit=1000').catch(() => ({ data: [] })),
+   243→          apiCall('/api/adjustments?limit=1000').catch(() => ({ data: [] })),
+   244→          apiCall('/api/tenant-groups').catch(() => []),
+   245→        ])
+   246→
+   247→        // Helper to extract data from paginated or plain responses
+   248→        const extractData = (resp: any): any[] => {
+   249→          if (!resp) return []
+   250→          if (Array.isArray(resp)) return resp
+   251→          if (resp.data && Array.isArray(resp.data)) return resp.data
+   252→          return []
+   253→        }
+   254→
+   255→        set({
+   256→          company: companyData || DEFAULT_COMPANY,
+   257→          properties: extractData(propertiesData),
+   258→          tenants: extractData(tenantsData),
+   259→          payments: extractData(paymentsData),
+   260→          expenses: extractData(expensesData),
+   261→          maintenanceItems: extractData(maintenanceData),
+   262→          users: extractData(usersData),
+   263→          resetRequests: extractData(resetData),
+   264→          reservations: extractData(reservationsData),
+   265→          adjustments: extractData(adjustmentsData),
+   266→          tenantGroups: Array.isArray(tenantGroupsData) ? tenantGroupsData : (extractData(tenantGroupsData)),
+   267→          isSeeded: true, // If data was fetched, it's seeded
+   268→          isInitialized: true,
+   269→          isLoading: false,
+   270→        })
+   271→      } catch (error) {
+   272→        console.error('Failed to fetch data:', error)
+   273→        set({ isLoading: false, isInitialized: true })
+   274→      }
+   275→    },
+   276→
+   277→    // Refresh all data after mutations — forces re-fetch to ensure consistency
+   278→    refreshAllData: async () => {
+   279→      try {
+   280→        const [propertiesData, tenantsData, paymentsData, expensesData, maintenanceData, reservationsData, adjustmentsData, tenantGroupsData] = await Promise.all([
+   281→          apiCall('/api/properties?includeArchived=true&limit=1000').catch(() => ({ data: [] })),
+   282→          apiCall('/api/tenants?limit=1000').catch(() => ({ data: [] })),
+   283→          apiCall('/api/payments?limit=1000').catch(() => ({ data: [] })),
+   284→          apiCall('/api/expenses?limit=1000').catch(() => ({ data: [] })),
+   285→          apiCall('/api/maintenance?limit=1000').catch(() => ({ data: [] })),
+   286→          apiCall('/api/reservations?limit=1000').catch(() => ({ data: [] })),
+   287→          apiCall('/api/adjustments?limit=1000').catch(() => ({ data: [] })),
+   288→          apiCall('/api/tenant-groups').catch(() => []),
+   289→        ])
+   290→
+   291→        const extractData = (resp: any): any[] => {
+   292→          if (!resp) return []
+   293→          if (Array.isArray(resp)) return resp
+   294→          if (resp.data && Array.isArray(resp.data)) return resp.data
+   295→          return []
+   296→        }
+   297→
+   298→        set({
+   299→          properties: extractData(propertiesData),
+   300→          tenants: extractData(tenantsData),
+   301→          payments: extractData(paymentsData),
+   302→          expenses: extractData(expensesData),
+   303→          maintenanceItems: extractData(maintenanceData),
+   304→          reservations: extractData(reservationsData),
+   305→          adjustments: extractData(adjustmentsData),
+   306→          tenantGroups: Array.isArray(tenantGroupsData) ? tenantGroupsData : (extractData(tenantGroupsData)),
+   307→        })
+   308→      } catch (error) {
+   309→        console.error('Failed to refresh data:', error)
+   310→      }
+   311→    },
+   312→
+   313→    // User Management
+   314→    generateRandomPassword: () => {
+   315→      const uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+   316→      const lowercase = 'abcdefghijkmnpqrstuvwxyz'
+   317→      const digits = '23456789'
+   318→      const special = '!@#'
+   319→      // Ensure at least one of each required category (password policy: min 8 chars, 1 uppercase, 1 number)
+   320→      let password =
+   321→        uppercase.charAt(Math.floor(Math.random() * uppercase.length)) +
+   322→        digits.charAt(Math.floor(Math.random() * digits.length)) +
+   323→        special.charAt(Math.floor(Math.random() * special.length))
+   324→      const allChars = uppercase + lowercase + digits + special
+   325→      for (let i = 3; i < 12; i++) {
+   326→        password += allChars.charAt(Math.floor(Math.random() * allChars.length))
+   327→      }
+   328→      // Shuffle to avoid predictable positions
+   329→      return password.split('').sort(() => Math.random() - 0.5).join('')
+   330→    },
+   331→
+   332→    addUser: async (data) => {
+   333→      const user = await apiCall('/api/users', {
+   334→        method: 'POST',
+   335→        body: JSON.stringify(data),
+   336→      })
+   337→      set(s => ({ users: [...s.users, user] }))
+   338→      return user
+   339→    },
+   340→
+   341→    updateUser: async (id, data) => {
+   342→      const updated = await apiCall(`/api/users/${id}`, {
+   343→        method: 'PUT',
+   344→        body: JSON.stringify(data),
+   345→      })
+   346→      set(s => ({
+   347→        users: s.users.map(u => u.id === id ? { ...u, ...updated } : u),
+   348→      }))
+   349→    },
+   350→
+   351→    deleteUser: async (id) => {
+   352→      await apiCall(`/api/users/${id}`, { method: 'DELETE' })
+   353→      set(s => ({
+   354→        users: s.users.map(u => u.id === id ? { ...u, isActive: false } : u),
+   355→      }))
+   356→    },
+   357→
+   358→    resetUserPassword: async (id, newPassword) => {
+   359→      await apiCall('/api/users/reset-password', {
+   360→        method: 'POST',
+   361→        body: JSON.stringify({ userId: id, newPassword }),
+   362→      })
+   363→    },
+   364→
+   365→    // Reset Requests
+   366→    addResetRequest: async (data) => {
+   367→      const request = await apiCall('/api/reset-requests', {
+   368→        method: 'POST',
+   369→        body: JSON.stringify(data),
+   370→      })
+   371→      set(s => ({ resetRequests: [...s.resetRequests, request] }))
+   372→      return request
+   373→    },
+   374→
+   375→    resolveResetRequest: async (id, resolvedBy) => {
+   376→      await apiCall(`/api/reset-requests/${id}`, {
+   377→        method: 'PATCH',
+   378→        body: JSON.stringify({ status: 'resolved' }),
+   379→      })
+   380→      set(s => ({
+   381→        resetRequests: s.resetRequests.map(r =>
+   382→          r.id === id ? { ...r, status: 'resolved' as const, resolvedAt: new Date().toISOString(), resolvedBy } : r
+   383→        ),
+   384→      }))
+   385→    },
+   386→
+   387→    dismissResetRequest: async (id, resolvedBy) => {
+   388→      await apiCall(`/api/reset-requests/${id}`, {
+   389→        method: 'PATCH',
+   390→        body: JSON.stringify({ status: 'dismissed' }),
+   391→      })
+   392→      set(s => ({
+   393→        resetRequests: s.resetRequests.map(r =>
+   394→          r.id === id ? { ...r, status: 'dismissed' as const, resolvedAt: new Date().toISOString(), resolvedBy } : r
+   395→        ),
+   396→      }))
+   397→    },
+   398→
+   399→    getPendingResetCount: () => {
+   400→      return get().resetRequests.filter(r => r.status === 'pending').length
+   401→    },
+   402→
+   403→    // Properties CRUD
+   404→    addProperty: async (data) => {
+   405→      const newProp = await apiCall('/api/properties', {
+   406→        method: 'POST',
+   407→        body: JSON.stringify(data),
+   408→      })
+   409→      set(s => ({ properties: [...s.properties, { ...newProp, tenants: [] }] }))
+   410→      await get().refreshAllData()
+   411→    },
+   412→
+   413→    updateProperty: async (id, data) => {
+   414→      const updated = await apiCall(`/api/properties/${id}`, {
+   415→        method: 'PUT',
+   416→        body: JSON.stringify(data),
+   417→      })
+   418→      set(s => ({
+   419→        properties: s.properties.map(p => p.id === id ? { ...p, ...updated } : p),
+   420→      }))
+   421→      await get().refreshAllData()
+   422→    },
+   423→
+   424→    deleteProperty: async (id) => {
+   425→      await apiCall(`/api/properties/${id}`, { method: 'DELETE' })
+   426→      set(s => ({
+   427→        properties: s.properties.filter(p => p.id !== id),
+   428→        tenants: s.tenants.filter(t => t.propertyId !== id),
+   429→      }))
+   430→      await get().refreshAllData()
+   431→    },
+   432→
+   433→    archiveProperty: async (id, archived) => {
+   434→      await apiCall(`/api/properties/${id}`, {
+   435→        method: 'PATCH',
+   436→        body: JSON.stringify({ archived }),
+   437→      })
+   438→      set(s => ({
+   439→        properties: s.properties.map(p => p.id === id ? { ...p, archived } : p),
+   440→      }))
+   441→      await get().refreshAllData()
+   442→    },
+   443→
+   444→    // Tenants CRUD
+   445→    addTenant: async (data) => {
+   446→      const newTenant = await apiCall('/api/tenants', {
+   447→        method: 'POST',
+   448→        body: JSON.stringify(data),
+   449→      })
+   450→      set(s => ({ tenants: [...s.tenants, { ...newTenant, payments: [] }] }))
+   451→      await get().refreshAllData()
+   452→    },
+   453→
+   454→    updateTenant: async (id, data) => {
+   455→      const updated = await apiCall(`/api/tenants/${id}`, {
+   456→        method: 'PUT',
+   457→        body: JSON.stringify(data),
+   458→      })
+   459→      set(s => ({
+   460→        tenants: s.tenants.map(t => t.id === id ? { ...t, ...updated } : t),
+   461→      }))
+   462→      await get().refreshAllData()
+   463→    },
+   464→
+   465→    deleteTenant: async (id) => {
+   466→      await apiCall(`/api/tenants/${id}`, { method: 'DELETE' })
+   467→      // Move Out: the tenant stays in the system with status 'moved_out'
+   468→      // We refresh all data to reflect the updated status and unit availability
+   469→      await get().refreshAllData()
+   470→    },
+   471→
+   472→    // Payments
+   473→    addPayment: async (data) => {
+   474→      const newPayment = await apiCall('/api/payments', {
+   475→        method: 'POST',
+   476→        body: JSON.stringify(data),
+   477→      })
+   478→      set(s => ({ payments: [...s.payments, newPayment] }))
+   479→
+   480→      // Update tenant score locally if late (server already did it, but update UI)
+   481→      if (data.isLate) {
+   482→        set(s => ({
+   483→          tenants: s.tenants.map(t => t.id === data.tenantId ? {
+   484→            ...t,
+   485→            latePaymentCount: t.latePaymentCount + 1,
+   486→            // Only update tenantScore if no manual override is active
+   487→            tenantScore: (t.manualScoreOverride !== null && t.manualScoreOverride !== undefined) ? t.tenantScore : Math.max(0, t.tenantScore - 5),
+   488→            systemScore: Math.max(0, (t.systemScore ?? t.tenantScore) - 5),
+   489→          } : t),
+   490→        }))
+   491→      }
+   492→      await get().refreshAllData()
+   493→    },
+   494→
+   495→    updatePayment: async (id, data) => {
+   496→      const { reason, ...paymentData } = data
+   497→      const updated = await apiCall(`/api/payments/${id}`, {
+   498→        method: 'PUT',
+   499→        body: JSON.stringify({ ...paymentData, reason }),
+   500→      })
+   501→      set(s => ({
+   502→        payments: s.payments.map(p => p.id === id ? { ...p, ...updated } : p),
+   503→      }))
+   504→      await get().refreshAllData()
+   505→    },
+   506→
+   507→    deletePayment: async (id, reason) => {
+   508→      const url = reason
+   509→        ? `/api/payments/${id}?reason=${encodeURIComponent(reason)}`
+   510→        : `/api/payments/${id}`
+   511→      await apiCall(url, { method: 'DELETE' })
+   512→      set(s => ({ payments: s.payments.filter(p => p.id !== id) }))
+   513→      await get().refreshAllData()
+   514→    },
+   515→
+   516→    // Adjustments CRUD
+   517→    addAdjustment: async (data) => {
+   518→      const newAdjustment = await apiCall('/api/adjustments', {
+   519→        method: 'POST',
+   520→        body: JSON.stringify(data),
+   521→      })
+   522→      set(s => ({ adjustments: [...s.adjustments, newAdjustment] }))
+   523→      await get().refreshAllData()
+   524→    },
+   525→
+   526→    updateAdjustment: async (id, data) => {
+   527→      const updated = await apiCall(`/api/adjustments/${id}`, {
+   528→        method: 'PUT',
+   529→        body: JSON.stringify(data),
+   530→      })
+   531→      set(s => ({
+   532→        adjustments: s.adjustments.map(a => a.id === id ? { ...a, ...updated } : a),
+   533→      }))
+   534→      await get().refreshAllData()
+   535→    },
+   536→
+   537→    cancelAdjustment: async (id, reason) => {
+   538→      const url = reason
+   539→        ? `/api/adjustments/${id}?reason=${encodeURIComponent(reason)}`
+   540→        : `/api/adjustments/${id}`
+   541→      await apiCall(url, { method: 'DELETE' })
+   542→      set(s => ({
+   543→        adjustments: s.adjustments.map(a => a.id === id ? { ...a, status: 'cancelled' } : a),
+   544→      }))
+   545→      await get().refreshAllData()
+   546→    },
+   547→
+   548→    // Tenant Groups CRUD
+   549→    addTenantGroup: async (data) => {
+   550→      const newGroup = await apiCall('/api/tenant-groups', {
+   551→        method: 'POST',
+   552→        body: JSON.stringify(data),
+   553→      })
+   554→      set(s => ({ tenantGroups: [...s.tenantGroups, newGroup] }))
+   555→      await get().refreshAllData()
+   556→      return newGroup
+   557→    },
+   558→
+   559→    updateTenantGroup: async (id, data) => {
+   560→      const { tenantIds, ...groupData } = data as any
+   561→      const updated = await apiCall(`/api/tenant-groups/${id}`, {
+   562→        method: 'PUT',
+   563→        body: JSON.stringify(data),
+   564→      })
+   565→      set(s => ({
+   566→        tenantGroups: s.tenantGroups.map(g => g.id === id ? { ...g, ...updated } : g),
+   567→      }))
+   568→      await get().refreshAllData()
+   569→    },
+   570→
+   571→    deleteTenantGroup: async (id) => {
+   572→      await apiCall(`/api/tenant-groups/${id}`, { method: 'DELETE' })
+   573→      set(s => ({
+   574→        tenantGroups: s.tenantGroups.filter(g => g.id !== id),
+   575→      }))
+   576→      await get().refreshAllData()
+   577→    },
+   578→
+   579→    recordGroupPayment: async (groupId, data) => {
+   580→      const result = await apiCall(`/api/tenant-groups/${groupId}/pay`, {
+   581→        method: 'POST',
+   582→        body: JSON.stringify(data),
+   583→      })
+   584→      await get().refreshAllData()
+   585→      return result
+   586→    },
+   587→
+   588→    // Expenses CRUD
+   589→    addExpense: async (data) => {
+   590→      const newExpense = await apiCall('/api/expenses', {
+   591→        method: 'POST',
+   592→        body: JSON.stringify(data),
+   593→      })
+   594→      set(s => ({ expenses: [...s.expenses, newExpense] }))
+   595→      await get().refreshAllData()
+   596→    },
+   597→
+   598→    updateExpense: async (id, data) => {
+   599→      const updated = await apiCall(`/api/expenses/${id}`, {
+   600→        method: 'PUT',
+   601→        body: JSON.stringify(data),
+   602→      })
+   603→      set(s => ({
+   604→        expenses: s.expenses.map(e => e.id === id ? { ...e, ...updated } : e),
+   605→      }))
+   606→      await get().refreshAllData()
+   607→    },
+   608→
+   609→    deleteExpense: async (id) => {
+   610→      await apiCall(`/api/expenses/${id}`, { method: 'DELETE' })
+   611→      set(s => ({ expenses: s.expenses.filter(e => e.id !== id) }))
+   612→      await get().refreshAllData()
+   613→    },
+   614→
+   615→    // Maintenance CRUD
+   616→    addMaintenance: async (data) => {
+   617→      const newItem = await apiCall('/api/maintenance', {
+   618→        method: 'POST',
+   619→        body: JSON.stringify(data),
+   620→      })
+   621→      set(s => ({ maintenanceItems: [...s.maintenanceItems, newItem] }))
+   622→      await get().refreshAllData()
+   623→    },
+   624→
+   625→    updateMaintenance: async (id, data) => {
+   626→      const updated = await apiCall(`/api/maintenance/${id}`, {
+   627→        method: 'PUT',
+   628→        body: JSON.stringify(data),
+   629→      })
+   630→      set(s => ({
+   631→        maintenanceItems: s.maintenanceItems.map(m => m.id === id ? { ...m, ...updated } : m),
+   632→      }))
+   633→      await get().refreshAllData()
+   634→    },
+   635→
+   636→    deleteMaintenance: async (id) => {
+   637→      await apiCall(`/api/maintenance/${id}`, { method: 'DELETE' })
+   638→      set(s => ({ maintenanceItems: s.maintenanceItems.filter(m => m.id !== id) }))
+   639→      await get().refreshAllData()
+   640→    },
+   641→
+   642→    // Reservations CRUD
+   643→    addReservation: async (data) => {
+   644→      await apiCall('/api/reservations', {
+   645→        method: 'POST',
+   646→        body: JSON.stringify(data),
+   647→      })
+   648→      await get().refreshAllData()
+   649→    },
+   650→
+   651→    updateReservation: async (id, data) => {
+   652→      await apiCall(`/api/reservations/${id}`, {
+   653→        method: 'PUT',
+   654→        body: JSON.stringify(data),
+   655→      })
+   656→      await get().refreshAllData()
+   657→    },
+   658→
+   659→    cancelReservation: async (id) => {
+   660→      await apiCall(`/api/reservations/${id}`, {
+   661→        method: 'PATCH',
+   662→        body: JSON.stringify({ action: 'cancel' }),
+   663→      })
+   664→      await get().refreshAllData()
+   665→    },
+   666→
+   667→    convertReservation: async (id, data) => {
+   668→      await apiCall(`/api/reservations/${id}/convert`, {
+   669→        method: 'POST',
+   670→        body: JSON.stringify(data),
+   671→      })
+   672→      await get().refreshAllData()
+   673→    },
+   674→
+   675→    deleteReservation: async (id) => {
+   676→      await apiCall(`/api/reservations/${id}`, { method: 'DELETE' })
+   677→      await get().refreshAllData()
+   678→    },
+   679→
+   680→    // Seed
+   681→    seedData: async () => {
+   682→      await apiCall('/api/seed', { method: 'POST' })
+   683→      // Re-fetch all data after seeding
+   684→      await get().fetchAllData()
+   685→    },
+   686→
+   687→    clearData: () => {
+   688→      set({
+   689→        company: DEFAULT_COMPANY,
+   690→        users: [],
+   691→        resetRequests: [],
+   692→        properties: [],
+   693→        tenants: [],
+   694→        payments: [],
+   695→        expenses: [],
+   696→        maintenanceItems: [],
+   697→        reservations: [],
+   698→        adjustments: [],
+   699→        tenantGroups: [],
+   700→        isSeeded: false,
+   701→        isLoading: false,
+   702→        isInitialized: false, // CRITICAL: Reset so next login triggers fetchAllData
+   703→      })
+   704→    },
+   705→
+   706→    // Getters - computed from local state (same logic as before)
+   707→    getTenantsWithRelations: () => {
+   708→      const { tenants, payments, properties, adjustments } = get()
+   709→      return tenants.map(tenant => ({
+   710→        ...tenant,
+   711→        payments: payments.filter(p => p.tenantId === tenant.id),
+   712→        adjustments: adjustments.filter(a => a.tenantId === tenant.id),
+   713→        property: properties.find(p => p.id === tenant.propertyId) || undefined,
+   714→      }))
+   715→    },
+   716→
+   717→    getPropertiesWithTenants: (includeArchived = false) => {
+   718→      const { properties, tenants, payments, adjustments } = get()
+   719→      return properties
+   720→        .filter(p => includeArchived || !p.archived)
+   721→        .map(p => ({
+   722→          ...p,
+   723→          tenants: tenants.filter(t => t.propertyId === p.id && isFinanciallyActive(t.status)).map(t => ({
+   724→            ...t,
+   725→            payments: payments.filter(p => p.tenantId === t.id),
+   726→            adjustments: adjustments.filter(a => a.tenantId === t.id),
+   727→          })),
+   728→        }))
+   729→    },
+   730→
+   731→    getDashboardData: () => {
+   732→      const { company, tenants, payments, properties, expenses, maintenanceItems, adjustments } = get()
+   733→      const now = new Date()
+   734→      const currentMonth = now.getMonth() + 1
+   735→      const currentYear = now.getFullYear()
+   736→
+   737→      const activeTenants = tenants.filter(t => isFinanciallyActive(t.status))
+   738→      const expectedRevenue = activeTenants.reduce((sum, t) => sum + t.rentAmount, 0)
+   739→      const currentMonthPayments = payments.filter(p => p.month === currentMonth && p.year === currentYear)
+   740→      const collectedRevenue = currentMonthPayments.reduce((sum, p) => sum + p.amount, 0)
+   741→
+   742→      // Calculate adjustments for current month (including multi-month adjustments)
+   743→      const currentMonthAdjustments = adjustments.filter(a => {
+   744→        if (a.status !== 'approved') return false
+   745→        return isAdjustmentActiveInMonth(a, currentMonth, currentYear)
+   746→      })
+   747→      const totalAdjustments = currentMonthAdjustments.reduce((sum, a) => sum + a.amount, 0)
+   748→
+   749→      const overdueTenants = activeTenants.filter(t => {
+   750→        const hasPaid = payments.some(p => p.tenantId === t.id && p.month === currentMonth && p.year === currentYear)
+   751→        return !hasPaid
+   752→      })
+   753→
+   754→      const partialTenants = activeTenants.filter(t => {
+   755→        const monthPayments = payments.filter(p => p.tenantId === t.id && p.month === currentMonth && p.year === currentYear)
+   756→        const totalPaid = monthPayments.reduce((sum, p) => sum + p.amount, 0)
+   757→        return totalPaid > 0 && totalPaid < t.rentAmount
+   758→      })
+   759→
+   760→      const overdueAmount = overdueTenants.reduce((sum, t) => sum + t.rentAmount, 0)
+   761→      const partialAmount = partialTenants.reduce((sum, t) => {
+   762→        const paid = payments.filter(p => p.tenantId === t.id && p.month === currentMonth && p.year === currentYear).reduce((s, p) => s + p.amount, 0)
+   763→        return sum + (t.rentAmount - paid)
+   764→      }, 0)
+   765→
+   766→      const totalUnits = properties.reduce((sum, p) => sum + p.totalUnits, 0)
+   767→      const occupiedUnits = activeTenants.length
+   768→      const occupancyRate = totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 100) : 0
+   769→
+   770→      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+   771→      const chartData: any[] = []
+   772→      for (let i = 5; i >= 0; i--) {
+   773→        let m = currentMonth - i, y = currentYear
+   774→        if (m <= 0) { m += 12; y -= 1 }
+   775→        const monthExpected = activeTenants.reduce((sum, t) => sum + t.rentAmount, 0)
+   776→        const monthPayments = payments.filter(p => p.month === m && p.year === y)
+   777→        const monthCollected = monthPayments.reduce((sum, p) => sum + p.amount, 0)
+   778→        chartData.push({ month: monthNames[m - 1], expected: monthExpected, collected: monthCollected })
+   779→      }
+   780→
+   781→      const recentPayments = payments
+   782→        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+   783→        .slice(0, 10)
+   784→        .map(p => ({
+   785→          ...p,
+   786→          tenant: tenants.find(t => t.id === p.tenantId) || undefined,
+   787→        }))
+   788→
+   789→      const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0)
+   790→
+   791→      return {
+   792→        company,
+   793→        stats: {
+   794→          expectedRevenue,
+   795→          collectedRevenue,
+   796→          overdueCount: overdueTenants.length,
+   797→          overdueAmount: overdueAmount + partialAmount,
+   798→          activeTenants: activeTenants.length,
+   799→          totalTenants: tenants.length,
+   800→          occupancyRate,
+   801→          totalUnits,
+   802→          occupiedUnits,
+   803→          partialCount: partialTenants.length,
+   804→          netProfit: collectedRevenue - totalExpenses,
+   805→          totalExpenses,
+   806→          totalAdjustments,
+   807→          netCashCollected: collectedRevenue - totalAdjustments,
+   808→        },
+   809→        overdueTenants: overdueTenants.map(t => ({
+   810→          ...t,
+   811→          payments: payments.filter(p => p.tenantId === t.id),
+   812→          property: properties.find(p => p.id === t.propertyId) || undefined,
+   813→        })),
+   814→        partialTenants: partialTenants.map(t => ({
+   815→          ...t,
+   816→          payments: payments.filter(p => p.tenantId === t.id),
+   817→          property: properties.find(p => p.id === t.propertyId) || undefined,
+   818→        })),
+   819→        dueSoon: [],
+   820→        activeTenantsList: activeTenants.map(t => ({
+   821→          ...t,
+   822→          payments: payments.filter(p => p.tenantId === t.id),
+   823→          property: properties.find(p => p.id === t.propertyId) || undefined,
+   824→        })),
+   825→        recentPayments,
+   826→        chartData,
+   827→        properties: properties.map(p => ({
+   828→          ...p,
+   829→          tenants: tenants.filter(t => t.propertyId === p.id && isFinanciallyActive(t.status)),
+   830→        })),
+   831→        expenses,
+   832→        maintenanceItems,
+   833→      }
+   834→    },
+   835→
+   836→    getReportData: (month, year) => {
+   837→      const { tenants, payments, properties, expenses, adjustments } = get()
+   838→      const activeTenants = tenants.filter(t => isFinanciallyActive(t.status))
+   839→      const expectedRevenue = activeTenants.reduce((sum, t) => sum + t.rentAmount, 0)
+   840→      const monthPayments = payments.filter(p => p.month === month && p.year === year)
+   841→      const totalRevenue = monthPayments.reduce((sum, p) => sum + p.amount, 0)
+   842→
+   843→      // Calculate adjustments for this month
+   844→      const monthAdjustments = adjustments.filter(a => {
+   845→        if (a.status !== 'approved') return false
+   846→        return isAdjustmentActiveInMonth(a, month, year)
+   847→      })
+   848→      const totalAdjustments = monthAdjustments.reduce((sum, a) => sum + a.amount, 0)
+   849→
+   850→      const monthlyExpenses = expenses.filter(e => {
+   851→        const d = new Date(e.date)
+   852→        return d.getMonth() + 1 === month && d.getFullYear() === year
+   853→      })
+   854→      const totalExpenses = monthlyExpenses.reduce((sum, e) => sum + e.amount, 0)
+   855→      const totalUnits = properties.reduce((sum, p) => sum + p.totalUnits, 0)
+   856→      const occupiedUnits = activeTenants.length
+   857→      const occupancyRate = totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 100) : 0
+   858→      const collectionRate = expectedRevenue > 0 ? Math.round((totalRevenue / expectedRevenue) * 100) : 0
+   859→
+   860→      const expenseBreakdown: Record<string, number> = {}
+   861→      for (const e of monthlyExpenses) {
+   862→        expenseBreakdown[e.category] = (expenseBreakdown[e.category] || 0) + e.amount
+   863→      }
+   864→
+   865→      const vacantUnits = totalUnits - occupiedUnits
+   866→      const avgRent = activeTenants.length > 0 ? expectedRevenue / activeTenants.length : 0
+   867→      const vacancyLoss = vacantUnits * avgRent
+   868→
+   869→      const unpaidTenants = activeTenants.filter(t => !monthPayments.some(p => p.tenantId === t.id))
+   870→      const partialTenants = activeTenants.filter(t => {
+   871→        const paid = monthPayments.filter(p => p.tenantId === t.id).reduce((s, p) => s + p.amount, 0)
+   872→        return paid > 0 && paid < t.rentAmount
+   873→      })
+   874→      const unpaidAmount = unpaidTenants.reduce((s, t) => s + t.rentAmount, 0) + partialTenants.reduce((s, t) => {
+   875→        const paid = monthPayments.filter(p => p.tenantId === t.id).reduce((sum, p) => sum + p.amount, 0)
+   876→        return s + (t.rentAmount - paid)
+   877→      }, 0)
+   878→
+   879→      const trend: any[] = []
+   880→      for (let i = 5; i >= 0; i--) {
+   881→        let m = month - i, y = year
+   882→        if (m <= 0) { m += 12; y -= 1 }
+   883→        const tPayments = payments.filter(p => p.month === m && p.year === y)
+   884→        const revenue = tPayments.reduce((s, p) => s + p.amount, 0)
+   885→        const tExpenses = expenses.filter(e => {
+   886→          const d = new Date(e.date)
+   887→          return d.getMonth() + 1 === m && d.getFullYear() === y
+   888→        }).reduce((s, e) => s + e.amount, 0)
+   889→        trend.push({ month: m, year: y, revenue, expenses: tExpenses, profit: revenue - tExpenses })
+   890→      }
+   891→
+   892→      const rentalIncome = totalRevenue
+   893→      const otherIncome = 0
+   894→      const grossRevenue = rentalIncome + otherIncome
+   895→      const badDebt = unpaidAmount
+   896→      const grossProfit = grossRevenue - vacancyLoss - badDebt
+   897→      const costOfOperations = totalExpenses
+   898→      const netIncome = grossProfit - costOfOperations
+   899→
+   900→      return {
+   901→        month, year, totalRevenue, expectedRevenue, totalExpenses,
+   902→        profitLoss: totalRevenue - totalExpenses,
+   903→        occupancyRate, collectionRate, totalUnits, occupiedUnits,
+   904→        expenseBreakdown, monthlyExpenses, trend,
+   905→        rentalIncome, otherIncome, grossRevenue, vacancyLoss, badDebt,
+   906→        grossProfit, costOfOperations, netIncome,
+   907→        totalAdjustments,
+   908→        cashCollected: totalRevenue,
+   909→        adjustmentTotal: totalAdjustments,
+   910→        netRevenue: totalRevenue + totalAdjustments,
+   911→      }
+   912→    },
+   913→
+   914→    // Server-side data fetching (preferred at scale — uses aggregated server endpoints)
+   915→    fetchDashboardData: async () => {
+   916→      try {
+   917→        const data = await apiCall('/api/dashboard')
+   918→        return data
+   919→      } catch (error) {
+   920→        console.error('Failed to fetch dashboard data:', error)
+   921→        return null
+   922→      }
+   923→    },
+   924→
+   925→    fetchReportData: async (month: number, year: number) => {
+   926→      try {
+   927→        const data = await apiCall(`/api/reports?month=${month}&year=${year}`)
+   928→        return data
+   929→      } catch (error) {
+   930→        console.error('Failed to fetch report data:', error)
+   931→        return null
+   932→      }
+   933→    },
+   934→  })
+   935→)
+   936→

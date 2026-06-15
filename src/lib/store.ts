@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Language } from '@/lib/i18n'
 
-export type PageType = 'dashboard' | 'properties' | 'tenants' | 'rent' | 'maintenance' | 'expenses' | 'recurring-bills' | 'daily-report' | 'reports' | 'contracts' | 'reservations' | 'settings' | 'system' | 'audit-logs'
+export type PageType = 'dashboard' | 'properties' | 'tenants' | 'rent' | 'maintenance' | 'expenses' | 'recurring-bills' | 'daily-report' | 'reports' | 'contracts' | 'reservations' | 'settings' | 'system' | 'audit-logs' | 'property-collection'
 
 export interface AuthUser {
   id: string
@@ -27,6 +27,10 @@ interface AppState {
   currentPage: PageType
   setCurrentPage: (page: PageType) => void
 
+  // Property Collection Overview
+  selectedPropertyId: string | null
+  setSelectedPropertyId: (id: string | null) => void
+
   // Language
   language: Language
   setLanguage: (lang: Language) => void
@@ -44,11 +48,15 @@ export const useAppStore = create<AppState>()(
       isAuthenticated: false,
       authUser: null,
       login: (user) => set({ isAuthenticated: true, authUser: user }),
-      logout: () => set({ isAuthenticated: false, authUser: null, currentPage: 'dashboard' }),
+      logout: () => set({ isAuthenticated: false, authUser: null, currentPage: 'dashboard', selectedPropertyId: null }),
 
       // Navigation
       currentPage: 'dashboard',
       setCurrentPage: (page) => set({ currentPage: page }),
+
+      // Property Collection Overview
+      selectedPropertyId: null,
+      setSelectedPropertyId: (id) => set({ selectedPropertyId: id }),
 
       // Language
       language: 'en',
