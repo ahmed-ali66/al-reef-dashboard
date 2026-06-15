@@ -1066,10 +1066,22 @@ export default function RentCollection() {
                         <p className="font-bold text-sm">{formatAED(balance.totalCurrentCharges)}</p>
                       </div>
                       <div className="text-right">
-                        <p className="text-xs text-muted-foreground">{t('remainingBalance', language)}</p>
-                        <p className={cn2('font-bold text-sm', balance.remaining > 0 ? 'text-red-600' : balance.remaining === 0 ? 'text-emerald-600' : 'text-blue-600')}>
-                          {formatAED(Math.max(0, balance.remaining))}
-                        </p>
+                        {balance.remaining < 0 ? (
+                          <>
+                            <p className="text-xs text-muted-foreground">{t('availableCredit', language)}</p>
+                            <p className="font-bold text-sm text-blue-600">{formatAED(Math.abs(balance.remaining))}</p>
+                          </>
+                        ) : balance.remaining === 0 ? (
+                          <>
+                            <p className="text-xs text-muted-foreground">{t('accountSettled', language)}</p>
+                            <p className="font-bold text-sm text-emerald-600">{formatAED(0)}</p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-xs text-muted-foreground">{t('remainingBalance', language)}</p>
+                            <p className="font-bold text-sm text-red-600">{formatAED(balance.remaining)}</p>
+                          </>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1110,8 +1122,8 @@ export default function RentCollection() {
                         </div>
                       )}
                       <div className="flex justify-between border-t pt-1">
-                        <span className="text-muted-foreground font-medium">{t('remainingBalance', language)}</span>
-                        <span className={cn2('font-bold', balance.remaining <= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatAED(Math.max(0, balance.remaining))}</span>
+                        <span className="text-muted-foreground font-medium">{balance.remaining < 0 ? t('availableCredit', language) : t('remainingBalance', language)}</span>
+                        <span className={cn2('font-bold', balance.remaining < 0 ? 'text-blue-600' : balance.remaining === 0 ? 'text-emerald-600' : 'text-red-600')}>{formatAED(Math.abs(balance.remaining))}</span>
                       </div>
                     </div>
                   )}
@@ -1171,8 +1183,8 @@ export default function RentCollection() {
                                     </div>
                                   )}
                                   <div className="flex justify-between text-[11px] font-medium">
-                                    <span>{t('remainingBalance', language)}</span>
-                                    <span className={tRemaining <= 0 ? 'text-emerald-600' : 'text-red-600'}>{formatAED(Math.max(0, tRemaining))}</span>
+                                    <span>{tRemaining < 0 ? t('availableCredit', language) : t('remainingBalance', language)}</span>
+                                    <span className={tRemaining < 0 ? 'text-blue-600' : tRemaining === 0 ? 'text-emerald-600' : 'text-red-600'}>{formatAED(Math.abs(tRemaining))}</span>
                                   </div>
                                   {(tPayments.length > 0 || tAdjList.length > 0) && (
                                     <div className="flex justify-between text-[11px]">
@@ -1287,10 +1299,22 @@ export default function RentCollection() {
                         <p className="font-bold text-sm">{formatAED(currentCharges)}</p>
                       </div>
                       <div className="text-right">
-                        <p className="text-xs text-muted-foreground">{t('remainingBalance', language)}</p>
-                        <p className={cn2('font-bold text-sm', remaining > 0 ? 'text-red-600' : remaining === 0 ? 'text-emerald-600' : 'text-blue-600')}>
-                          {formatAED(Math.max(0, remaining))}
-                        </p>
+                        {remaining < 0 ? (
+                          <>
+                            <p className="text-xs text-muted-foreground">{t('availableCredit', language)}</p>
+                            <p className="font-bold text-sm text-blue-600">{formatAED(Math.abs(remaining))}</p>
+                          </>
+                        ) : remaining === 0 ? (
+                          <>
+                            <p className="text-xs text-muted-foreground">{t('accountSettled', language)}</p>
+                            <p className="font-bold text-sm text-emerald-600">{formatAED(0)}</p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-xs text-muted-foreground">{t('remainingBalance', language)}</p>
+                            <p className="font-bold text-sm text-red-600">{formatAED(remaining)}</p>
+                          </>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1330,8 +1354,8 @@ export default function RentCollection() {
                         </div>
                       )}
                       <div className="flex justify-between border-t pt-1">
-                        <span className="text-muted-foreground font-medium">{t('remainingBalance', language)}</span>
-                        <span className={cn2('font-bold', remaining <= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatAED(Math.max(0, remaining))}</span>
+                        <span className="text-muted-foreground font-medium">{remaining < 0 ? t('availableCredit', language) : t('remainingBalance', language)}</span>
+                        <span className={cn2('font-bold', remaining < 0 ? 'text-blue-600' : remaining === 0 ? 'text-emerald-600' : 'text-red-600')}>{formatAED(Math.abs(remaining))}</span>
                       </div>
                     </div>
                   )}

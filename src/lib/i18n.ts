@@ -400,6 +400,8 @@ export const translations = {
   paymentsReceived: { en: 'Payments Received', ar: 'المدفوعات المستلمة', bn: 'প্রাপ্ত পেমেন্ট', ur: 'وصول شدہ ادائیگیاں' },
   approvedAdjustments: { en: 'Approved Adjustments', ar: 'التعديلات المعتمدة', bn: 'অনুমোদিত সমন্বয়', ur: 'منظور شدہ ایڈجسٹمنٹ' },
   remainingBalance: { en: 'Remaining Balance', ar: 'الرصيد المتبقي', bn: 'বাকি ব্যালেন্স', ur: 'باقی بیلنس' },
+  availableCredit: { en: 'Available Credit', ar: 'الرصيد الدائن المتاح', bn: 'উপলব্ধ ক্রেডিট', ur: 'دستیاب کریڈٹ' },
+  accountSettled: { en: 'Settled', ar: 'م settled', bn: 'নিষ্পন্ন', ur: 'تصفیہ شدہ' },
   totalEffectiveCollection: { en: 'Total Effective Collection', ar: 'إجمالي التحصيل الفعلي', bn: 'মোট কার্যকর আদায়', ur: 'کل موثر وصولی' },
   adjustmentCancelled: { en: 'Adjustment cancelled successfully', ar: 'تم إلغاء التعديل بنجاح', bn: 'সমন্বয় সফলভাবে বাতিল হয়েছে', ur: 'ایڈجسٹمنٹ کامیابی سے منسوخ ہو گیا' },
   cancellationReason: { en: 'Cancellation Reason', ar: 'سبب الإلغاء', bn: 'বাতিলের কারণ', ur: 'منسوخ کرنے کی وجہ' },

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import type { ReportData } from '@/lib/types'
+import type { ReportData, PaymentData } from '@/lib/types'
 import { useAppStore, isOwnerOrAdmin } from '@/lib/store'
 import { useDataStore } from '@/lib/data-store'
 import { formatAED, formatDate, getCategoryIcon, isFinanciallyActive } from '@/lib/utils'
@@ -216,11 +216,34 @@ export default function Reports() {
 
       // ── Credit Table: Income by Tenant ──
       // Get monthly payments for the credit table
-      const { payments: allPayments, tenants: allTenants, properties: allProperties, reservations: allReservations } = store
+      const { payments: allPayments, tenants: allTenants, properties: allProperties, reservations: allReservations, tenantGroups: allTenantGroups } = store
       const monthPayments = allPayments.filter(p => p.month === selectedMonth && p.year === selectedYear)
 
+      // Payment method sort priority: Cash → Bank Transfer → Cheque → Other
+      const getMethodSortPriority = (method: string | null): number => {
+        switch ((method || '').toLowerCase()) {
+          case 'cash': return 1
+          case 'bank_transfer': case 'transfer': return 2
+          case 'cheque': return 3
+          default: return 4
+        }
+      }
+
       // Build income items for the month (rent payments)
-      const monthlyIncomeItems = monthPayments.map(p => {
+      interface MonthlyIncomeItem {
+        tenantName: string
+        propertyName: string
+        unitNumber: string | null
+        amount: number
+        method: string | null
+        isLate: boolean
+        source: 'rent' | 'reservation'
+        groupId: string | null
+        reference: string | null
+        isConsolidated: boolean
+      }
+
+      const monthlyIncomeItems: MonthlyIncomeItem[] = monthPayments.map(p => {
         const tenant = allTenants.find(t => t.id === p.tenantId)
         const property = tenant ? allProperties.find(pr => pr.id === tenant.propertyId) : null
         return {
@@ -231,6 +254,9 @@ export default function Reports() {
           method: p.method,
           isLate: p.isLate || false,
           source: 'rent' as const,
+          groupId: tenant?.groupId || null,
+          reference: p.reference || null,
+          isConsolidated: false,
         }
       })
 
@@ -257,13 +283,53 @@ export default function Reports() {
               method: r.depositPaymentMethod || 'cash',
               isLate: false,
               source: 'reservation' as const,
+              groupId: null,
+              reference: null,
+              isConsolidated: false,
             })
           }
         }
       }
 
-      // Sort all income items by tenant name
-      monthlyIncomeItems.sort((a, b) => a.tenantName.localeCompare(b.tenantName))
+      // ─── Consolidate linked-unit (group) payments ───
+      const consolidatedMonthlyItems: MonthlyIncomeItem[] = []
+      const groupBuckets = new Map<string, MonthlyIncomeItem[]>()
+      for (const item of monthlyIncomeItems) {
+        if (item.groupId) {
+          const key = `${item.groupId}|${item.method || 'none'}|${item.reference || 'none'}`
+          if (!groupBuckets.has(key)) groupBuckets.set(key, [])
+          groupBuckets.get(key)!.push(item)
+        } else {
+          consolidatedMonthlyItems.push(item)
+        }
+      }
+      for (const [, items] of groupBuckets) {
+        if (items.length === 1) {
+          consolidatedMonthlyItems.push(items[0])
+        } else {
+          const first = items[0]
+          const tenantGroup = allTenantGroups.find((g: any) => g.id === first.groupId)
+          consolidatedMonthlyItems.push({
+            tenantName: tenantGroup ? getNameByLang(tenantGroup, lang) : first.tenantName,
+            propertyName: first.propertyName,
+            unitNumber: items.map(i => i.unitNumber).filter(Boolean).join(', '),
+            amount: items.reduce((sum, i) => sum + i.amount, 0),
+            method: first.method,
+            isLate: items.some(i => i.isLate),
+            source: first.source,
+            groupId: first.groupId,
+            reference: first.reference,
+            isConsolidated: true,
+          })
+        }
+      }
+
+      // Sort: method priority (Cash → Bank Transfer → Cheque), then tenant name
+      consolidatedMonthlyItems.sort((a, b) => {
+        const methodDiff = getMethodSortPriority(a.method) - getMethodSortPriority(b.method)
+        if (methodDiff !== 0) return methodDiff
+        return a.tenantName.localeCompare(b.tenantName)
+      })
 
       pdf.addPage()
       let creditY = 18
@@ -305,7 +371,7 @@ export default function Reports() {
       creditY += 8
 
       // Credit rows
-      for (let i = 0; i < monthlyIncomeItems.length; i++) {
+      for (let i = 0; i < consolidatedMonthlyItems.length; i++) {
         if (creditY > pageHeight - 25) {
           pdf.addPage()
           creditY = 18
@@ -330,8 +396,8 @@ export default function Reports() {
           pdf.text(t('paymentMethod', lang), margin + 142, creditY + 5.5)
           creditY += 8
         }
-        const item = monthlyIncomeItems[i]
-        const rowBg = i % 2 === 0 ? '#FFFFFF' : '#F9FAFB'
+        const item = consolidatedMonthlyItems[i]
+        const rowBg = item.isConsolidated ? '#EEF2FF' : (i % 2 === 0 ? '#FFFFFF' : '#F9FAFB')
         pdf.setFillColor(rowBg)
         pdf.rect(margin, creditY, contentWidth, 7, 'F')
 
@@ -343,16 +409,29 @@ export default function Reports() {
           pdf.rect(margin, creditY, 1.5, 7, 'F')
         }
 
+        // Indigo left border for consolidated entries
+        if (item.isConsolidated) {
+          pdf.setFillColor('#6366F1') // indigo
+          pdf.rect(margin, creditY, 1.5, 7, 'F')
+        }
+
         pdf.setTextColor(item.isLate ? 180 : 40, item.isLate ? 40 : 40, item.isLate ? 40 : 40)
         pdf.setFontSize(7.5)
         pdf.text(String(i + 1), margin + 3, creditY + 5)
         pdf.text(item.tenantName.substring(0, 35), margin + 8, creditY + 5)
         pdf.text(item.propertyName.substring(0, 24), margin + 58, creditY + 5)
-        pdf.text(item.unitNumber || '-', margin + 92, creditY + 5)
+        pdf.text((item.unitNumber || '-').substring(0, 20), margin + 92, creditY + 5)
         pdf.setTextColor(13, 124, 61)
         pdf.text(formatAED(item.amount), margin + 106, creditY + 5)
         pdf.setTextColor(item.isLate ? 180 : 40, item.isLate ? 40 : 40, item.isLate ? 40 : 40)
         pdf.text((item.method || '-').substring(0, 18), margin + 142, creditY + 5)
+        // Show linked-unit indicator for consolidated entries
+        if (item.isConsolidated) {
+          pdf.setFontSize(6)
+          pdf.setTextColor(99, 102, 241) // indigo
+          pdf.text('Linked Units', margin + 142, creditY + 5 + 3.5)
+          pdf.setFontSize(7.5)
+        }
         creditY += 7
       }
 
@@ -364,13 +443,13 @@ export default function Reports() {
       pdf.setFontSize(8)
       pdf.setFont('helvetica', 'bold')
       pdf.text(`TOTAL INCOME: ${formatAED(data.cashCollected)}`, margin + 10, creditY + 5)
-      pdf.text(`${monthlyIncomeItems.length} payments`, margin + 142, creditY + 5)
+      pdf.text(`${consolidatedMonthlyItems.length} entries`, margin + 142, creditY + 5)
       pdf.setFont('helvetica', 'normal')
       creditY += 10
 
       // ── Payment Method Totals ──
       const monthMethodTotals: Record<string, number> = {}
-      for (const p of monthlyIncomeItems) {
+      for (const p of consolidatedMonthlyItems) {
         // Normalize method names: 'bank_transfer' and 'transfer' → 'transfer'
         let method = (p.method || 'other').toLowerCase()
         if (method === 'bank_transfer') method = 'transfer'
@@ -708,16 +787,71 @@ export default function Reports() {
       XLSX.utils.book_append_sheet(wb, wsTenants, 'Tenants')
 
       // ── Sheet 4: Payments ──
+      // Consolidate linked-unit payments and sort by method priority
+      const getMethodSortXlsx = (method: string | null): number => {
+        switch ((method || '').toLowerCase()) {
+          case 'cash': return 1
+          case 'bank_transfer': case 'transfer': return 2
+          case 'cheque': return 3
+          default: return 4
+        }
+      }
+
       const paymentsHeader = [
-        'Date', 'Tenant Name', 'Property', 'Unit', 'Month', 'Year',
-        'Amount (AED)', 'Method', 'Reference', 'Late?', 'Days Late',
+        'Date', 'Tenant Name', 'Property', 'Unit(s)', 'Month', 'Year',
+        'Amount (AED)', 'Method', 'Reference', 'Late?', 'Days Late', 'Type',
       ]
-      const paymentsRows = payments
-        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-        .map(p => {
+
+      // Build payment entries, consolidating linked-unit payments
+      const xlsxPaymentEntries: any[][] = []
+      const xlsxGroupBuckets = new Map<string, PaymentData[]>()
+
+      for (const p of payments) {
+        const tenant = tenants.find(tn => tn.id === p.tenantId)
+        if (tenant?.groupId) {
+          const key = `${tenant.groupId}|${p.method || 'none'}|${p.reference || 'none'}|${new Date(p.date).toISOString().split('T')[0]}`
+          if (!xlsxGroupBuckets.has(key)) xlsxGroupBuckets.set(key, [])
+          xlsxGroupBuckets.get(key)!.push(p)
+        }
+      }
+
+      const groupedPaymentIds = new Set<string>()
+      for (const [, groupPayments] of xlsxGroupBuckets) {
+        if (groupPayments.length > 1) {
+          // Consolidated entry
+          const firstPayment = groupPayments[0]
+          const firstTenant = tenants.find(tn => tn.id === firstPayment.tenantId)!
+          const prop = properties.find(pr => pr.id === firstTenant.propertyId)
+          const tenantGroup = (store as any).tenantGroups?.find((g: any) => g.id === firstTenant.groupId)
+          const totalAmount = groupPayments.reduce((sum, p) => sum + p.amount, 0)
+          const unitNumbers = groupPayments.map(p => {
+            const t = tenants.find(tn => tn.id === p.tenantId)
+            return t?.unitNumber || ''
+          }).filter(Boolean).join(', ')
+          const maxDaysLate = Math.max(...groupPayments.map(p => p.daysLate || 0))
+
+          xlsxPaymentEntries.push([
+            formatDate(firstPayment.date),
+            tenantGroup ? tenantGroup.name : firstTenant.name,
+            prop?.name || '',
+            unitNumbers,
+            getMonthName(firstPayment.month, 'en'),
+            firstPayment.year,
+            totalAmount,
+            firstPayment.method || '',
+            firstPayment.reference || '',
+            groupPayments.some(p => p.isLate) ? 'Yes' : 'No',
+            maxDaysLate,
+            'Consolidated (Linked Units)',
+          ])
+          groupPayments.forEach(p => groupedPaymentIds.add(p.id))
+        } else {
+          // Single entry from a group tenant — just add individually
+          groupedPaymentIds.add(groupPayments[0].id)
+          const p = groupPayments[0]
           const tenant = tenants.find(tn => tn.id === p.tenantId)
           const prop = tenant ? properties.find(pr => pr.id === tenant.propertyId) : null
-          return [
+          xlsxPaymentEntries.push([
             formatDate(p.date),
             tenant?.name || '',
             prop?.name || '',
@@ -729,10 +863,41 @@ export default function Reports() {
             p.reference || '',
             p.isLate ? 'Yes' : 'No',
             p.daysLate,
-          ]
-        })
-      const wsPayments = XLSX.utils.aoa_to_sheet([paymentsHeader, ...paymentsRows])
-      wsPayments['!cols'] = [{ wch: 14 }, { wch: 22 }, { wch: 18 }, { wch: 12 }, { wch: 10 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 22 }, { wch: 8 }, { wch: 10 }]
+            'Single Unit',
+          ])
+        }
+      }
+
+      // Add non-grouped payments
+      for (const p of payments) {
+        if (groupedPaymentIds.has(p.id)) continue
+        const tenant = tenants.find(tn => tn.id === p.tenantId)
+        const prop = tenant ? properties.find(pr => pr.id === tenant.propertyId) : null
+        xlsxPaymentEntries.push([
+          formatDate(p.date),
+          tenant?.name || '',
+          prop?.name || '',
+          tenant?.unitNumber || '',
+          getMonthName(p.month, 'en'),
+          p.year,
+          p.amount,
+          p.method || '',
+          p.reference || '',
+          p.isLate ? 'Yes' : 'No',
+          p.daysLate,
+          'Single Unit',
+        ])
+      }
+
+      // Sort by method priority, then by date
+      xlsxPaymentEntries.sort((a, b) => {
+        const methodDiff = getMethodSortXlsx(a[7] as string) - getMethodSortXlsx(b[7] as string)
+        if (methodDiff !== 0) return methodDiff
+        return new Date(b[0] as string).getTime() - new Date(a[0] as string).getTime()
+      })
+
+      const wsPayments = XLSX.utils.aoa_to_sheet([paymentsHeader, ...xlsxPaymentEntries])
+      wsPayments['!cols'] = [{ wch: 14 }, { wch: 22 }, { wch: 18 }, { wch: 16 }, { wch: 10 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 22 }, { wch: 8 }, { wch: 10 }, { wch: 22 }]
       XLSX.utils.book_append_sheet(wb, wsPayments, 'Payments')
 
       // ── Sheet 5: Expenses ──

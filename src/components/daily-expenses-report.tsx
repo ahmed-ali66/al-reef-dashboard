@@ -76,6 +76,28 @@ interface DailyIncomeItem {
   isLate: boolean
   notes: string | null
   source: 'rent' | 'reservation'
+  groupId: string | null
+  reference: string | null
+  isConsolidated: boolean
+}
+
+// Payment method sort priority: Cash → Bank Transfer → Cheque → Other
+const getMethodSortPriority = (method: string | null): number => {
+  switch ((method || '').toLowerCase()) {
+    case 'cash': return 1
+    case 'bank_transfer': case 'transfer': return 2
+    case 'cheque': return 3
+    default: return 4
+  }
+}
+
+// Sort income items: method priority first, then by time within each method
+const sortIncomeByMethod = (items: DailyIncomeItem[]): DailyIncomeItem[] => {
+  return [...items].sort((a, b) => {
+    const methodDiff = getMethodSortPriority(a.method) - getMethodSortPriority(b.method)
+    if (methodDiff !== 0) return methodDiff
+    return a.time.localeCompare(b.time)
+  })
 }
 
 interface DailyExpenseItem {
@@ -115,6 +137,7 @@ export default function DailyExpensesReport() {
     })
 
     // Build income items from rent payments
+    const { tenantGroups } = useDataStore.getState()
     const income: DailyIncomeItem[] = dayPayments.map(p => {
       const tenant = tenants.find(t => t.id === p.tenantId)
       const property = tenant ? properties.find(pr => pr.id === tenant.propertyId) : null
@@ -128,6 +151,9 @@ export default function DailyExpensesReport() {
         isLate: p.isLate || false,
         notes: p.notes || null,
         source: 'rent' as const,
+        groupId: tenant?.groupId || null,
+        reference: p.reference || null,
+        isConsolidated: false,
       }
     })
 
@@ -156,6 +182,9 @@ export default function DailyExpensesReport() {
             isLate: false,
             notes: r.notes || null,
             source: 'reservation' as const,
+            groupId: null,
+            reference: null,
+            isConsolidated: false,
           })
         }
       }
@@ -180,6 +209,9 @@ export default function DailyExpensesReport() {
           isLate: false,
           notes: `Refund: ${r.notes || ''}`,
           source: 'reservation' as const,
+          groupId: null,
+          reference: null,
+          isConsolidated: false,
         })
       }
     }
@@ -202,10 +234,53 @@ export default function DailyExpensesReport() {
       recurring: e.recurring || false,
     }))
 
-    const totalIn = income.reduce((sum, i) => sum + i.amount, 0)
+    // ─── Consolidate linked-unit (group) payments ───
+    // Payments from tenants in the same group with the same method & reference
+    // are merged into a single entry for cleaner reporting
+    const consolidatedIncome: DailyIncomeItem[] = []
+    const groupPaymentBuckets = new Map<string, DailyIncomeItem[]>()
+
+    for (const item of income) {
+      if (item.groupId) {
+        // Key: groupId + method + reference (same transaction = same group payment)
+        const key = `${item.groupId}|${item.method || 'none'}|${item.reference || 'none'}`
+        if (!groupPaymentBuckets.has(key)) {
+          groupPaymentBuckets.set(key, [])
+        }
+        groupPaymentBuckets.get(key)!.push(item)
+      } else {
+        consolidatedIncome.push(item)
+      }
+    }
+
+    // Merge each group of linked payments into a single consolidated entry
+    for (const [, items] of groupPaymentBuckets) {
+      if (items.length === 1) {
+        consolidatedIncome.push(items[0])
+      } else {
+        const first = items[0]
+        const tenantGroup = tenantGroups.find(g => g.id === first.groupId)
+        consolidatedIncome.push({
+          tenantName: tenantGroup ? getNameByLang(tenantGroup, lang) : first.tenantName,
+          propertyName: first.propertyName,
+          unitNumber: items.map(i => i.unitNumber).filter(Boolean).join(', '),
+          amount: items.reduce((sum, i) => sum + i.amount, 0),
+          time: first.time,
+          method: first.method,
+          isLate: items.some(i => i.isLate),
+          notes: first.notes,
+          source: first.source,
+          groupId: first.groupId,
+          reference: first.reference,
+          isConsolidated: true,
+        })
+      }
+    }
+
+    const totalIn = consolidatedIncome.reduce((sum, i) => sum + i.amount, 0)
     const totalExp = expenseList.reduce((sum, e) => sum + e.amount, 0)
 
-    setIncomeItems(income)
+    setIncomeItems(consolidatedIncome)
     setExpenseItems(expenseList)
     setTotalIncome(totalIn)
     setTotalExpense(totalExp)
@@ -559,8 +634,8 @@ export default function DailyExpensesReport() {
       pdf.text(t('paymentMethod', lang), m + 142, y + 5.5)
       y += 8
 
-      // Income rows - Time and Status columns removed
-      const sortedIncome = [...incomeItems].sort((a, b) => a.time.localeCompare(b.time))
+      // Income rows - sorted by method priority (Cash → Bank Transfer → Cheque), then time
+      const sortedIncome = sortIncomeByMethod(incomeItems)
       for (let i = 0; i < sortedIncome.length; i++) {
         y = checkPage(y, 7)
         const item = sortedIncome[i]
@@ -582,11 +657,18 @@ export default function DailyExpensesReport() {
         pdf.text(String(i + 1), m + 3, y + 5)
         pdf.text(item.tenantName.substring(0, 35), m + 8, y + 5)
         pdf.text(item.propertyName.substring(0, 24), m + 58, y + 5)
-        pdf.text(item.unitNumber || '-', m + 92, y + 5)
+        pdf.text((item.unitNumber || '-').substring(0, 20), m + 92, y + 5)
         pdf.setTextColor(13, 124, 61)
         pdf.text(formatAED(item.amount), m + 106, y + 5)
         pdf.setTextColor(item.isLate ? 180 : 40, item.isLate ? 40 : 40, item.isLate ? 40 : 40)
         pdf.text((item.method || '-').substring(0, 18), m + 142, y + 5)
+        // Show linked-unit indicator for consolidated entries
+        if (item.isConsolidated) {
+          pdf.setFontSize(6)
+          pdf.setTextColor(99, 102, 241) // indigo
+          pdf.text('Linked Units', m + 142, y + 5 + 3.5)
+          pdf.setFontSize(7.5)
+        }
         y += 7
       }
 
@@ -789,17 +871,18 @@ export default function DailyExpensesReport() {
         ['Method', 'Amount (AED)', '# Payments', 'Avg Payment'],
       ]
 
-      // Payment method breakdown
-      const methodBreakdown: Record<string, { total: number; count: number }> = {}
+      // Payment method breakdown - sorted: Cash → Bank Transfer → Cheque → Other
+      const methodBreakdown: Record<string, { total: number; count: number; sortKey: number }> = {}
       for (const p of incomeItems) {
         // Normalize method names: 'bank_transfer' and 'transfer' → 'Bank Transfer'
         let method = p.method || 'Unknown'
         if (method.toLowerCase() === 'bank_transfer') method = 'Transfer'
-        if (!methodBreakdown[method]) methodBreakdown[method] = { total: 0, count: 0 }
+        const sortKey = getMethodSortPriority(p.method)
+        if (!methodBreakdown[method]) methodBreakdown[method] = { total: 0, count: 0, sortKey }
         methodBreakdown[method].total += p.amount
         methodBreakdown[method].count++
       }
-      for (const [method, data] of Object.entries(methodBreakdown)) {
+      for (const [method, data] of Object.entries(methodBreakdown).sort((a, b) => a[1].sortKey - b[1].sortKey)) {
         summaryRows.push([
           method.charAt(0).toUpperCase() + method.slice(1).replace('_', ' '),
           data.total,
@@ -843,18 +926,17 @@ export default function DailyExpensesReport() {
 
       // ─── SHEET 2: INCOME DETAILS ───
       const incomeHeader = ['#', 'Tenant Name', 'Property', 'Unit', 'Amount (AED)', 'Time', 'Method', 'Status', 'Notes']
-      const incomeRows = [...incomeItems]
-        .sort((a, b) => a.time.localeCompare(b.time))
+      const incomeRows = sortIncomeByMethod(incomeItems)
         .map((item, idx) => [
           idx + 1,
-          item.tenantName,
+          item.isConsolidated ? `${item.tenantName} (Linked)` : item.tenantName,
           item.propertyName,
           item.unitNumber || '',
           item.amount,
           item.time,
           item.method || '',
           item.isLate ? 'LATE' : (item.notes?.includes('Partial') ? 'PARTIAL' : 'On Time'),
-          item.notes || '',
+          item.isConsolidated ? 'Consolidated Group Payment' : (item.notes || ''),
         ])
 
       // Add totals row
@@ -1259,12 +1341,15 @@ export default function DailyExpensesReport() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {[...incomeItems].sort((a, b) => a.time.localeCompare(b.time)).map((item, idx) => (
-                    <TableRow key={idx} className={`${item.isLate ? 'bg-red-50/50 border-l-3 border-l-red-400' : ''} ${item.source === 'reservation' ? 'bg-sky-50/30' : ''}`}>
+                  {sortIncomeByMethod(incomeItems).map((item, idx) => (
+                    <TableRow key={idx} className={`${item.isLate ? 'bg-red-50/50 border-l-3 border-l-red-400' : ''} ${item.source === 'reservation' ? 'bg-sky-50/30' : ''} ${item.isConsolidated ? 'bg-indigo-50/30' : ''}`}>
                       <TableCell className="font-mono text-xs text-muted-foreground">{idx + 1}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1.5">
                           <p className="font-medium text-sm max-w-[120px] truncate">{item.tenantName}</p>
+                          {item.isConsolidated && (
+                            <Badge variant="outline" className="text-[10px] border-indigo-400 text-indigo-700 px-1 py-0 shrink-0">Linked</Badge>
+                          )}
                           {item.source === 'reservation' && (
                             <Badge variant="outline" className="text-[10px] border-sky-400 text-sky-700 px-1 py-0 shrink-0">Reservation</Badge>
                           )}
@@ -1274,7 +1359,9 @@ export default function DailyExpensesReport() {
                         <p className="text-sm text-muted-foreground max-w-[120px] truncate">{item.propertyName}</p>
                       </TableCell>
                       <TableCell>
-                        {item.unitNumber ? (
+                        {item.isConsolidated ? (
+                          <Badge variant="outline" className="text-xs font-mono border-indigo-300 text-indigo-700">{item.unitNumber}</Badge>
+                        ) : item.unitNumber ? (
                           <Badge variant="outline" className="text-xs font-mono">{item.unitNumber}</Badge>
                         ) : (
                           <span className="text-xs text-muted-foreground">—</span>
