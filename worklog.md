@@ -135,3 +135,30 @@ Stage Summary:
 - Fix: Exclude HISTORICAL_DEBT from all paymentsReceived calculations
 - Files modified: rent-collection.tsx (5 fixes), dashboard/route.ts, invoices/pdf/route.ts, invoices/search/route.ts, properties.tsx, payments/[id]/route.ts (DELETE + PUT reversal logic), financial-utils.ts (documentation)
 - Deployed to production: commit b4e1d5e
+---
+Task ID: tenant-groups-1
+Agent: Main Agent
+Task: Implement TenantGroup (Linked Units) feature for restaurant occupying Units 15-17 in Neima New Property
+
+Work Log:
+- Analyzed all 3 options (Separate/Grouped/Merged) and recommended Option 2 (Grouped/Linked Units)
+- Added TenantGroup model to Prisma schema with: name, nameAr/Bn/Ur, billingMode, status, notes, soft delete
+- Added groupId field on Tenant (nullable, SET NULL on delete)
+- Created migration 20260615_add_tenant_groups and deployed to production PostgreSQL
+- Created API routes: GET/POST /api/tenant-groups, GET/PUT/DELETE /api/tenant-groups/[id], POST /api/tenant-groups/[id]/pay
+- Group payment auto-allocates across linked tenants proportional to their rent amounts
+- Supports customAllocation override for manual per-unit amounts
+- Added TenantGroupData type to types.ts and groupId to TenantData
+- Updated data-store.ts: tenantGroups state, fetchAllData, refreshAllData, CRUD methods, recordGroupPayment
+- Updated rent-collection.tsx: consolidated group card with indigo border, per-unit breakdown expandable section, group payment dialog
+- Created restaurant group linking Units 15 (AED 1000), 16 (AED 1000), 17 (AED 900) in Neima New Property
+- Single-unit tenants completely unaffected (groupId = null means no group card)
+- Built and verified: Next.js build succeeds
+- Pushed to GitHub, Vercel auto-deployed
+
+Stage Summary:
+- TenantGroup model: id, companyId, propertyId, name, billingMode (consolidated/individual), status, notes
+- Group card: Users icon, "X Linked Units" badge, consolidated balance, per-unit breakdown toggle
+- Group payment: single amount, auto-distributed proportionally, supports all allocation types
+- Restaurant "RES Account" group created: 3 units, AED 2,900 total monthly rent
+- Deployed to production: commit 58b97a7
