@@ -572,7 +572,6 @@ export default function PropertyCollection() {
                             <TableHead className="text-xs">{t('unitNumber', language)}</TableHead>
                             <TableHead className="text-xs">{t('tenantName', language)}</TableHead>
                             <TableHead className="text-xs text-right">{t('rentAmount', language)}</TableHead>
-                            <TableHead className="text-xs text-right">{t('currentCharges', language)}</TableHead>
                             <TableHead className="text-xs text-right">{t('creditBalanceLabel', language)}</TableHead>
                             <TableHead className="text-xs text-right">{t('remainingBalance', language)}</TableHead>
                             <TableHead className="text-xs text-center">{t('status', language)}</TableHead>
@@ -586,7 +585,6 @@ export default function PropertyCollection() {
                                 <TableCell className="text-xs font-medium">{tenant.unitNumber}</TableCell>
                                 <TableCell className="text-xs">{getNameByLang(tenant, language)}</TableCell>
                                 <TableCell className="text-xs text-right">{formatAED(tenant.rentAmount)}</TableCell>
-                                <TableCell className="text-xs text-right">{formatAED(fin.currentCharges)}</TableCell>
                                 <TableCell className="text-xs text-right">{fin.creditBalance > 0 ? formatAED(fin.creditBalance) : '-'}</TableCell>
                                 <TableCell className="text-xs text-right font-medium">
                                   <span className={fin.remainingBalance > 0 ? 'text-red-600' : fin.remainingBalance < 0 ? 'text-emerald-600' : ''}>
@@ -640,10 +638,6 @@ export default function PropertyCollection() {
                             <p className="text-xs text-muted-foreground">{t('rentAmount', language)}</p>
                             <p className="font-semibold text-sm">{formatAED(tenant.rentAmount)}</p>
                           </div>
-                          <div className="text-right">
-                            <p className="text-xs text-muted-foreground">{t('currentCharges', language)}</p>
-                            <p className="font-semibold text-sm">{formatAED(fin.currentCharges)}</p>
-                          </div>
                           {fin.creditBalance > 0 && (
                             <div className="text-right">
                               <p className="text-xs text-muted-foreground">{t('creditBalanceLabel', language)}</p>
@@ -678,10 +672,6 @@ export default function PropertyCollection() {
                       <div>
                         <span className="text-muted-foreground">{t('rentAmount', language)}: </span>
                         <span className="font-medium">{formatAED(tenant.rentAmount)}</span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">{t('currentCharges', language)}: </span>
-                        <span className="font-medium">{formatAED(fin.currentCharges)}</span>
                       </div>
                       {fin.creditBalance > 0 && (
                         <div>
