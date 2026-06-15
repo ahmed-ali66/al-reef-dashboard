@@ -345,6 +345,7 @@ export const translations = {
   invoiceNumber: { en: 'Invoice Number', ar: 'رقم الفاتورة', bn: 'চালান নম্বর', ur: 'انوائس نمبر' },
   searchInvoice: { en: 'Search Invoice #', ar: 'بحث رقم الفاتورة', bn: 'চালান নম্বর খুঁজুন', ur: 'انوائس نمبر تلاش کریں' },
   searchTenant: { en: 'Search Tenant / Property', ar: 'بحث المستأجر / العقار', bn: 'ভাড়াটিয়া / সম্পত্তি খুঁজুন', ur: 'کرایہ دار / ملکیت تلاش کریں' },
+  searchTenantName: { en: 'Search Tenant Name', ar: 'بحث اسم المستأجر', bn: 'ভাড়াটিয়ার নাম খুঁজুন', ur: 'کرایہ دار کا نام تلاش کریں' },
   totalCashPayments: { en: 'Total Cash Payments', ar: 'إجمالي المدفوعات النقدية', bn: 'মোট নগদ পেমেন্ট', ur: 'کل نقد ادائیگیاں' },
   totalBankTransferPayments: { en: 'Total Bank Transfer', ar: 'إجمالي التحويل البنكي', bn: 'মোট ব্যাংক ট্রান্সফার', ur: 'کل بینک ٹرانسفر' },
   totalChequePayments: { en: 'Total Cheque Payments', ar: 'إجمالي مدفوعات الشيكات', bn: 'মোট চেক পেমেন্ট', ur: 'کل چیک ادائیگیاں' },

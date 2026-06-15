@@ -48,7 +48,10 @@ export default function RentCollection() {
   const [paymentError, setPaymentError] = useState('')
   const [paymentActionLoading, setPaymentActionLoading] = useState(false)
 
-  // Tenant name / property search
+  // Property filter
+  const [propertyFilter, setPropertyFilter] = useState<string>('all')
+
+  // Tenant name search (tenant name only, not property)
   const [tenantSearch, setTenantSearch] = useState('')
 
   // Unit number filter
@@ -211,18 +214,24 @@ export default function RentCollection() {
     return true
   })
 
-  // Step 2: Search filter (tenant name + property name)
-  const searchFiltered = statusFiltered.filter(t => {
-    if (!tenantSearch.trim()) return true
-    const searchLower = tenantSearch.trim().toLowerCase()
-    const tenantName = getNameByLang(t, language).toLowerCase()
-    const propertyName = t.property ? getNameByLang(t.property, language).toLowerCase() : ''
-    return tenantName.includes(searchLower) || propertyName.includes(searchLower)
+  // Step 2: Property filter
+  const propertyFiltered = statusFiltered.filter(t => {
+    if (propertyFilter === 'all') return true
+    return t.propertyId === propertyFilter
   })
 
-  // Derive unique unit numbers from search-filtered tenants (context-aware)
+  // Derive unique properties from status-filtered tenants
+  const uniqueProperties = Array.from(
+    new Map(
+      propertyFiltered
+        .filter(t => t.property)
+        .map(t => [t.property!.id, t.property!])
+    ).values()
+  ) as PropertyData[]
+
+  // Derive unique unit numbers from property-filtered tenants (context-aware)
   const uniqueUnitNumbers = Array.from(
-    new Set(searchFiltered.map(t => t.unitNumber).filter(Boolean) as string[])
+    new Set(propertyFiltered.map(t => t.unitNumber).filter(Boolean) as string[])
   ).sort((a, b) => {
     const numA = Number(a)
     const numB = Number(b)
@@ -230,19 +239,32 @@ export default function RentCollection() {
     return a.localeCompare(b)
   })
 
+  // Reset property filter if the selected property is no longer available
+  if (propertyFilter !== 'all' && !uniqueProperties.some(p => p.id === propertyFilter)) {
+    setPropertyFilter('all')
+  }
+
   // Reset unit filter if the selected unit is no longer available in the dropdown
   if (unitFilter !== 'all' && !uniqueUnitNumbers.includes(unitFilter)) {
     setUnitFilter('all')
   }
 
-  // Step 3: Unit number filter (applied on top of search-filtered results)
-  const unitFiltered = searchFiltered.filter(t => {
+  // Step 3: Unit number filter (applied on top of property-filtered results)
+  const unitFiltered = propertyFiltered.filter(t => {
     if (unitFilter === 'all') return true
     return t.unitNumber === unitFilter
   })
 
-  // Step 4: Payment date filter (only applies when viewing paid or partially paid)
-  const filteredTenants = unitFiltered.filter(t => {
+  // Step 4: Search filter (tenant name only)
+  const searchFiltered = unitFiltered.filter(t => {
+    if (!tenantSearch.trim()) return true
+    const searchLower = tenantSearch.trim().toLowerCase()
+    const tenantName = getNameByLang(t, language).toLowerCase()
+    return tenantName.includes(searchLower)
+  })
+
+  // Step 5: Payment date filter (only applies when viewing paid or partially paid)
+  const filteredTenants = searchFiltered.filter(t => {
     if (!paymentDateFilter) return true
     if (filter !== 'paid' && filter !== 'partial') return true
     // Check if the tenant has any payment for the selected month/year on the filtered date
@@ -837,6 +859,17 @@ export default function RentCollection() {
         ))}
         {filter !== 'adjustments' && (
           <>
+            <Select value={propertyFilter} onValueChange={v => { setPropertyFilter(v); setUnitFilter('all') }}>
+              <SelectTrigger className="w-[160px] h-9 text-sm">
+                <SelectValue placeholder={t('allProperties', language) || 'All Properties'} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('allProperties', language) || 'All Properties'}</SelectItem>
+                {uniqueProperties.map(p => (
+                  <SelectItem key={p.id} value={p.id}>{getNameByLang(p, language)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select value={unitFilter} onValueChange={v => setUnitFilter(v)}>
               <SelectTrigger className="w-[140px] h-9 text-sm">
                 <SelectValue placeholder={t('allUnits', language) || 'All Units'} />
@@ -869,7 +902,7 @@ export default function RentCollection() {
               <Search className="w-4 h-4 text-gray-400" />
               <input
                 type="text"
-                placeholder={t('searchTenant', language) || 'Search Tenant / Property'}
+                placeholder={t('searchTenantName', language) || 'Search Tenant Name'}
                 value={tenantSearch}
                 onChange={e => setTenantSearch(e.target.value)}
                 className="border-0 outline-none text-sm w-36 lg:w-52 bg-transparent"
