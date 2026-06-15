@@ -1,0 +1,1716 @@
+     1→'use client'
+     2→
+     3→import { useEffect, useState, useCallback } from 'react'
+     4→import type { TenantData, PropertyData, PaymentData, RentAdjustmentData } from '@/lib/types'
+     5→import { useAppStore, isOwnerOrAdmin } from '@/lib/store'
+     6→import { useDataStore } from '@/lib/data-store'
+     7→import { formatAED, getPaymentStatusColor, cn2, isFinanciallyActive } from '@/lib/utils'
+     8→import { t, getMonthName, getNameByLang, getWhatsAppLink, type WhatsAppLanguage } from '@/lib/i18n'
+     9→import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+    10→import { Button } from '@/components/ui/button'
+    11→import { Input } from '@/components/ui/input'
+    12→import { Label } from '@/components/ui/label'
+    13→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    14→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+    15→import { Badge } from '@/components/ui/badge'
+    16→import { Banknote, MessageCircle, Check, AlertTriangle, Clock, Loader2, ChevronLeft, ChevronRight, FileText, Search, Pencil, Trash2, ChevronDown, ChevronUp, X, Plus, MinusCircle, Calendar, SlidersHorizontal } from 'lucide-react'
+    17→import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+    18→import BillInvoice from '@/components/bill-invoice'
+    19→
+    20→export default function RentCollection() {
+    21→  const { language, authUser } = useAppStore()
+    22→  const [tenants, setTenants] = useState<TenantData[]>([])
+    23→  const [loading, setLoading] = useState(true)
+    24→  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1)
+    25→  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
+    26→  const [filter, setFilter] = useState<'all' | 'paid' | 'partial' | 'unpaid' | 'overdue' | 'adjustments'>('all')
+    27→  const [payDialogOpen, setPayDialogOpen] = useState(false)
+    28→  const [payingTenant, setPayingTenant] = useState<TenantData | null>(null)
+    29→  const [payForm, setPayForm] = useState({ amount: 0, method: 'cash', reference: '', notes: '', paymentDate: new Date().toISOString().split('T')[0] })
+    30→  const [payAllocationType, setPayAllocationType] = useState<string>('CURRENT_RENT')
+    31→
+    32→  // Bill invoice dialog
+    33→  const [billDialogOpen, setBillDialogOpen] = useState(false)
+    34→  const [billTenant, setBillTenant] = useState<TenantData | null>(null)
+    35→
+    36→  // WhatsApp language selection dialog
+    37→  const [whatsappLangDialogOpen, setWhatsappLangDialogOpen] = useState(false)
+    38→  const [whatsappTargetTenant, setWhatsappTargetTenant] = useState<TenantData | null>(null)
+    39→  const [whatsappRemindAll, setWhatsappRemindAll] = useState(false)
+    40→
+    41→  // Payment edit/delete state
+    42→  const [expandedTenant, setExpandedTenant] = useState<string | null>(null)
+    43→  const [editPaymentDialog, setEditPaymentDialog] = useState(false)
+    44→  const [deletePaymentDialog, setDeletePaymentDialog] = useState(false)
+    45→  const [selectedPayment, setSelectedPayment] = useState<PaymentData | null>(null)
+    46→  const [editForm, setEditForm] = useState({ amount: 0, date: '', method: 'cash', reference: '', notes: '', isLate: false })
+    47→  const [deleteReason, setDeleteReason] = useState('')
+    48→  const [paymentError, setPaymentError] = useState('')
+    49→  const [paymentActionLoading, setPaymentActionLoading] = useState(false)
+    50→
+    51→  // Tenant name / property search
+    52→  const [tenantSearch, setTenantSearch] = useState('')
+    53→
+    54→  // Unit number filter
+    55→  const [unitFilter, setUnitFilter] = useState<string>('all')
+    56→
+    57→  // Payment date filter (only applies to paid/partial tabs)
+    58→  const [paymentDateFilter, setPaymentDateFilter] = useState<string>('')
+    59→
+    60→  // Invoice search
+    61→  const [invoiceSearch, setInvoiceSearch] = useState('')
+    62→  const [invoiceSearchResults, setInvoiceSearchResults] = useState<any[] | null>(null)
+    63→  const [invoiceSearching, setInvoiceSearching] = useState(false)
+    64→  const [invoiceSearchOpen, setInvoiceSearchOpen] = useState(false)
+    65→
+    66→  // Adjustment dialog state
+    67→  const [adjustmentDialogOpen, setAdjustmentDialogOpen] = useState(false)
+    68→  const [adjustmentTenant, setAdjustmentTenant] = useState<TenantData | null>(null)
+    69→  const [adjustmentForm, setAdjustmentForm] = useState({
+    70→    amount: 0,
+    71→    adjustmentType: 'maintenance_delay',
+    72→    reason: '',
+    73→    notes: '',
+    74→    effectiveMonth: new Date().getMonth() + 1,
+    75→    effectiveYear: new Date().getFullYear(),
+    76→    durationMonths: 1,
+    77→  })
+    78→  const [cancelAdjustmentDialogOpen, setCancelAdjustmentDialogOpen] = useState(false)
+    79→  const [cancelAdjustmentTarget, setCancelAdjustmentTarget] = useState<RentAdjustmentData | null>(null)
+    80→  const [cancelAdjustmentReason, setCancelAdjustmentReason] = useState('')
+    81→  const [editAdjustmentDialogOpen, setEditAdjustmentDialogOpen] = useState(false)
+    82→  const [editAdjustmentTarget, setEditAdjustmentTarget] = useState<RentAdjustmentData | null>(null)
+    83→  const [editAdjustmentForm, setEditAdjustmentForm] = useState({
+    84→    amount: 0,
+    85→    adjustmentType: 'maintenance_delay',
+    86→    reason: '',
+    87→    notes: '',
+    88→    effectiveMonth: new Date().getMonth() + 1,
+    89→    effectiveYear: new Date().getFullYear(),
+    90→    durationMonths: 1,
+    91→  })
+    92→  const [adjustmentLoading, setAdjustmentLoading] = useState(false)
+    93→  const [adjustmentError, setAdjustmentError] = useState('')
+    94→
+    95→  // Adjustments tab filter state
+    96→  const [adjustmentTypeFilter, setAdjustmentTypeFilter] = useState<string>('all')
+    97→  const [adjustmentPropertyFilter, setAdjustmentPropertyFilter] = useState<string>('all')
+    98→  const [adjustmentUnitFilter, setAdjustmentUnitFilter] = useState<string>('all')
+    99→  const [adjustmentSearch, setAdjustmentSearch] = useState('')
+   100→
+   101→  const searchInvoice = async () => {
+   102→    if (!invoiceSearch.trim() || invoiceSearch.trim().length < 2) return
+   103→    setInvoiceSearching(true)
+   104→    try {
+   105→      const res = await fetch(`/api/invoices/search?q=${encodeURIComponent(invoiceSearch.trim())}`)
+   106→      if (!res.ok) {
+   107→        // Handle auth errors and server errors
+   108→        setInvoiceSearchResults([])
+   109→        setInvoiceSearchOpen(true)
+   110→        return
+   111→      }
+   112→      const data = await res.json()
+   113→      // API returns { results: [...], total: N } directly via successResponse()
+   114→      setInvoiceSearchResults(data.results || [])
+   115→      setInvoiceSearchOpen(true)
+   116→    } catch (e) {
+   117→      console.error('Invoice search failed:', e)
+   118→      setInvoiceSearchResults([])
+   119→      setInvoiceSearchOpen(true)
+   120→    } finally {
+   121→      setInvoiceSearching(false)
+   122→    }
+   123→  }
+   124→
+   125→  const canSeeRevenue = isOwnerOrAdmin(authUser?.role || '')
+   126→
+   127→  const fetchData = useCallback(() => {
+   128→    try {
+   129→      const tenants = useDataStore.getState().getTenantsWithRelations()
+   130→      setTenants(tenants)
+   131→    } catch (e) {
+   132→      console.error(e)
+   133→    } finally {
+   134→      setLoading(false)
+   135→    }
+   136→  }, [])
+   137→
+   138→  useEffect(() => { fetchData() }, [fetchData])
+   139→
+   140→  const activeTenants = tenants.filter(t => isFinanciallyActive(t.status))
+   141→
+   142→  // Helper: check if adjustment is active in a given month
+   143→  const isAdjustmentActiveInMonth = (a: RentAdjustmentData, month: number, year: number): boolean => {
+   144→    if (a.status !== 'approved') return false
+   145→    const startDate = new Date(a.effectiveYear, a.effectiveMonth - 1, 1)
+   146→    const checkDate = new Date(year, month - 1, 1)
+   147→    const endDate = new Date(
+   148→      a.effectiveYear + Math.floor((a.effectiveMonth - 1 + a.durationMonths) / 12),
+   149→      ((a.effectiveMonth - 1 + a.durationMonths) % 12),
+   150→      0
+   151→    )
+   152→    return checkDate >= startDate && checkDate <= endDate
+   153→  }
+   154→
+   155→  const getTenantAdjustments = (tenant: TenantData): RentAdjustmentData[] => {
+   156→    return (tenant.adjustments || []).filter(a => isAdjustmentActiveInMonth(a, selectedMonth, selectedYear))
+   157→  }
+   158→
+   159→  const getTenantPaymentStatus = (tenant: TenantData): 'paid' | 'partial' | 'overdue' | 'unpaid' | 'due-soon' => {
+   160→    // CRITICAL: Exclude HISTORICAL_DEBT payments from totalPaid because those payments
+   161→    // are already reflected in the reduced tenant.openingBalance. Including them here
+   162→    // would double-count the payment (once via reduced openingBalance, once via paymentsReceived).
+   163→    const payments = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear && p.allocationType !== 'HISTORICAL_DEBT')
+   164→    const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0)
+   165→    const tenantAdjustments = getTenantAdjustments(tenant)
+   166→    const totalAdjustments = tenantAdjustments.reduce((sum, a) => sum + a.amount, 0)
+   167→    const creditApplied = Math.min(tenant.creditBalance || 0, Math.max(0, tenant.rentAmount - totalPaid - totalAdjustments))
+   168→    const totalCredits = totalPaid + totalAdjustments + creditApplied
+   169→    if (totalCredits >= tenant.rentAmount) return 'paid'
+   170→    if (totalCredits > 0) return 'partial'
+   171→
+   172→    // Calendar-based status for unpaid tenants
+   173→    const now = new Date()
+   174→    const isSelectedCurrentMonth = selectedMonth === now.getMonth() + 1 && selectedYear === now.getFullYear()
+   175→
+   176→    if (isSelectedCurrentMonth) {
+   177→      const dayOfMonth = now.getDate()
+   178→      if (dayOfMonth <= 2) return 'due-soon'
+   179→      if (dayOfMonth <= 4) return 'unpaid'
+   180→      return 'overdue'
+   181→    }
+   182→
+   183→    // Past months - all unpaid are overdue
+   184→    if (selectedYear < now.getFullYear() || (selectedYear === now.getFullYear() && selectedMonth < now.getMonth() + 1)) {
+   185→      return 'overdue'
+   186→    }
+   187→
+   188→    // Future months - due soon
+   189→    return 'due-soon'
+   190→  }
+   191→
+   192→  // Step 1: Status filter
+   193→  const statusFiltered = activeTenants.filter(t => {
+   194→    const status = getTenantPaymentStatus(t)
+   195→    if (filter === 'all') return true
+   196→    if (filter === 'paid') return status === 'paid'
+   197→    if (filter === 'partial') return status === 'partial'
+   198→    if (filter === 'unpaid') return status === 'overdue' || status === 'unpaid' || status === 'due-soon'
+   199→    if (filter === 'overdue') return status === 'overdue'
+   200→    return true
+   201→  })
+   202→
+   203→  // Step 2: Search filter (tenant name + property name)
+   204→  const searchFiltered = statusFiltered.filter(t => {
+   205→    if (!tenantSearch.trim()) return true
+   206→    const searchLower = tenantSearch.trim().toLowerCase()
+   207→    const tenantName = getNameByLang(t, language).toLowerCase()
+   208→    const propertyName = t.property ? getNameByLang(t.property, language).toLowerCase() : ''
+   209→    return tenantName.includes(searchLower) || propertyName.includes(searchLower)
+   210→  })
+   211→
+   212→  // Derive unique unit numbers from search-filtered tenants (context-aware)
+   213→  const uniqueUnitNumbers = Array.from(
+   214→    new Set(searchFiltered.map(t => t.unitNumber).filter(Boolean) as string[])
+   215→  ).sort((a, b) => {
+   216→    const numA = Number(a)
+   217→    const numB = Number(b)
+   218→    if (!isNaN(numA) && !isNaN(numB)) return numA - numB
+   219→    return a.localeCompare(b)
+   220→  })
+   221→
+   222→  // Reset unit filter if the selected unit is no longer available in the dropdown
+   223→  if (unitFilter !== 'all' && !uniqueUnitNumbers.includes(unitFilter)) {
+   224→    setUnitFilter('all')
+   225→  }
+   226→
+   227→  // Step 3: Unit number filter (applied on top of search-filtered results)
+   228→  const unitFiltered = searchFiltered.filter(t => {
+   229→    if (unitFilter === 'all') return true
+   230→    return t.unitNumber === unitFilter
+   231→  })
+   232→
+   233→  // Step 4: Payment date filter (only applies when viewing paid or partially paid)
+   234→  const filteredTenants = unitFiltered.filter(t => {
+   235→    if (!paymentDateFilter) return true
+   236→    if (filter !== 'paid' && filter !== 'partial') return true
+   237→    // Check if the tenant has any payment for the selected month/year on the filtered date
+   238→    const payments = (t.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear)
+   239→    return payments.some(p => {
+   240→      const paymentDate = new Date(p.date).toISOString().split('T')[0]
+   241→      return paymentDate === paymentDateFilter
+   242→    })
+   243→  })
+   244→
+   245→  const stats = {
+   246→    total: activeTenants.length,
+   247→    paid: activeTenants.filter(t => getTenantPaymentStatus(t) === 'paid').length,
+   248→    partial: activeTenants.filter(t => getTenantPaymentStatus(t) === 'partial').length,
+   249→    unpaid: activeTenants.filter(t => getTenantPaymentStatus(t) === 'unpaid').length,
+   250→    overdue: activeTenants.filter(t => getTenantPaymentStatus(t) === 'overdue').length,
+   251→    expectedRevenue: activeTenants.reduce((s, t) => s + t.rentAmount, 0),
+   252→    collectedRevenue: activeTenants.reduce((s, t) => {
+   253→      // CRITICAL: Exclude HISTORICAL_DEBT payments — they're already reflected in reduced openingBalance
+   254→      const paid = (t.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear && p.allocationType !== 'HISTORICAL_DEBT').reduce((sum, p) => sum + p.amount, 0)
+   255→      const creditApplied = Math.min(t.creditBalance || 0, Math.max(0, t.rentAmount - paid))
+   256→      return s + paid + creditApplied
+   257→    }, 0),
+   258→    adjustmentsTotal: activeTenants.reduce((s, t) => {
+   259→      const adj = getTenantAdjustments(t).reduce((sum, a) => sum + a.amount, 0)
+   260→      return s + adj
+   261→    }, 0),
+   262→  }
+   263→
+   264→  // Get all adjustments for the selected month/year (for Adjustments tab)
+   265→  const allAdjustments = useDataStore.getState().adjustments.filter(a =>
+   266→    isAdjustmentActiveInMonth(a, selectedMonth, selectedYear)
+   267→  )
+   268→
+   269→  // Adjustment type options
+   270→  const adjustmentTypeOptions = ['maintenance_delay', 'flood_damage', 'utility_failure', 'goodwill', 'contract_amendment', 'owner_discount', 'other']
+   271→
+   272→  // Helper to get adjustment type label
+   273→  const getAdjustmentTypeLabel = (type: string): string => {
+   274→    const translation = t(type as any, language)
+   275→    // If translation returns the key itself, it means no translation was found
+   276→    if (translation === type) {
+   277→      return type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+   278→    }
+   279→    return translation
+   280→  }
+   281→
+   282→  // Filter adjustments for the tab
+   283→  const filteredAdjustments = allAdjustments.filter(a => {
+   284→    // Search filter
+   285→    if (adjustmentSearch.trim()) {
+   286→      const searchLower = adjustmentSearch.trim().toLowerCase()
+   287→      const tenant = tenants.find(t => t.id === a.tenantId)
+   288→      const tenantName = tenant ? getNameByLang(tenant, language).toLowerCase() : ''
+   289→      const property = tenant?.property || (tenant ? tenants.find(t => t.id === a.tenantId) : null)
+   290→      const propData = useDataStore.getState().properties.find(p => p.id === a.propertyId)
+   291→      const propertyName = propData ? getNameByLang(propData, language).toLowerCase() : ''
+   292→      if (!tenantName.includes(searchLower) && !propertyName.includes(searchLower)) return false
+   293→    }
+   294→    // Property filter
+   295→    if (adjustmentPropertyFilter !== 'all' && a.propertyId !== adjustmentPropertyFilter) return false
+   296→    // Unit filter
+   297→    if (adjustmentUnitFilter !== 'all') {
+   298→      const tenant = tenants.find(t => t.id === a.tenantId)
+   299→      if (!tenant || tenant.unitNumber !== adjustmentUnitFilter) return false
+   300→    }
+   301→    // Adjustment type filter
+   302→    if (adjustmentTypeFilter !== 'all' && a.adjustmentType !== adjustmentTypeFilter) return false
+   303→    return true
+   304→  })
+   305→
+   306→  // Derive unique properties from adjustments
+   307→  const adjustmentProperties = Array.from(
+   308→    new Set(allAdjustments.map(a => a.propertyId))
+   309→  ).map(id => useDataStore.getState().properties.find(p => p.id === id)).filter(Boolean) as PropertyData[]
+   310→
+   311→  // Derive unique units from filtered adjustments
+   312→  const adjustmentUnits = Array.from(
+   313→    new Set(
+   314→      filteredAdjustments.map(a => {
+   315→        const tenant = tenants.find(t => t.id === a.tenantId)
+   316→        return tenant?.unitNumber
+   317→      }).filter(Boolean) as string[]
+   318→    )
+   319→  ).sort()
+   320→
+   321→  const openPayDialog = (tenant: TenantData) => {
+   322→    setPayingTenant(tenant)
+   323→    // CRITICAL: Exclude HISTORICAL_DEBT payments — they're already reflected in reduced openingBalance
+   324→    const paid = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear && p.allocationType !== 'HISTORICAL_DEBT').reduce((sum, p) => sum + p.amount, 0)
+   325→    const adjustments = getTenantAdjustments(tenant).reduce((sum, a) => sum + a.amount, 0)
+   326→    setPayForm({ amount: Math.max(0, tenant.rentAmount - paid - adjustments), method: 'cash', reference: '', notes: '', paymentDate: new Date().toISOString().split('T')[0] })
+   327→    setPayAllocationType('CURRENT_RENT')
+   328→    setPayDialogOpen(true)
+   329→  }
+   330→
+   331→  const openAdjustmentDialog = (tenant: TenantData) => {
+   332→    setAdjustmentTenant(tenant)
+   333→    setAdjustmentForm({
+   334→      amount: 0,
+   335→      adjustmentType: 'maintenance_delay',
+   336→      reason: '',
+   337→      notes: '',
+   338→      effectiveMonth: selectedMonth,
+   339→      effectiveYear: selectedYear,
+   340→      durationMonths: 1,
+   341→    })
+   342→    setAdjustmentError('')
+   343→    setAdjustmentDialogOpen(true)
+   344→  }
+   345→
+   346→  const handleCreateAdjustment = async () => {
+   347→    if (!adjustmentTenant) return
+   348→    setAdjustmentLoading(true)
+   349→    setAdjustmentError('')
+   350→    try {
+   351→      await useDataStore.getState().addAdjustment({
+   352→        tenantId: adjustmentTenant.id,
+   353→        propertyId: adjustmentTenant.propertyId,
+   354→        amount: adjustmentForm.amount,
+   355→        adjustmentType: adjustmentForm.adjustmentType,
+   356→        reason: adjustmentForm.reason,
+   357→        notes: adjustmentForm.notes || null,
+   358→        effectiveMonth: adjustmentForm.effectiveMonth,
+   359→        effectiveYear: adjustmentForm.effectiveYear,
+   360→        durationMonths: adjustmentForm.durationMonths,
+   361→        status: 'approved',
+   362→        createdBy: authUser?.id || '',
+   363→      })
+   364→      setAdjustmentDialogOpen(false)
+   365→      fetchData()
+   366→    } catch (error: any) {
+   367→      setAdjustmentError(error?.message || 'Failed to create adjustment')
+   368→    } finally {
+   369→      setAdjustmentLoading(false)
+   370→    }
+   371→  }
+   372→
+   373→  const openEditAdjustmentDialog = (adjustment: RentAdjustmentData) => {
+   374→    setEditAdjustmentTarget(adjustment)
+   375→    setEditAdjustmentForm({
+   376→      amount: adjustment.amount,
+   377→      adjustmentType: adjustment.adjustmentType,
+   378→      reason: adjustment.reason,
+   379→      notes: adjustment.notes || '',
+   380→      effectiveMonth: adjustment.effectiveMonth,
+   381→      effectiveYear: adjustment.effectiveYear,
+   382→      durationMonths: adjustment.durationMonths,
+   383→    })
+   384→    setAdjustmentError('')
+   385→    setEditAdjustmentDialogOpen(true)
+   386→  }
+   387→
+   388→  const handleEditAdjustment = async () => {
+   389→    if (!editAdjustmentTarget) return
+   390→    setAdjustmentLoading(true)
+   391→    setAdjustmentError('')
+   392→    try {
+   393→      await useDataStore.getState().updateAdjustment(editAdjustmentTarget.id, {
+   394→        amount: editAdjustmentForm.amount,
+   395→        adjustmentType: editAdjustmentForm.adjustmentType,
+   396→        reason: editAdjustmentForm.reason,
+   397→        notes: editAdjustmentForm.notes || null,
+   398→        effectiveMonth: editAdjustmentForm.effectiveMonth,
+   399→        effectiveYear: editAdjustmentForm.effectiveYear,
+   400→        durationMonths: editAdjustmentForm.durationMonths,
+   401→      })
+   402→      setEditAdjustmentDialogOpen(false)
+   403→      setEditAdjustmentTarget(null)
+   404→      fetchData()
+   405→    } catch (error: any) {
+   406→      setAdjustmentError(error?.message || 'Failed to update adjustment')
+   407→    } finally {
+   408→      setAdjustmentLoading(false)
+   409→    }
+   410→  }
+   411→
+   412→  const handleCancelAdjustment = async () => {
+   413→    if (!cancelAdjustmentTarget) return
+   414→    setAdjustmentLoading(true)
+   415→    setAdjustmentError('')
+   416→    try {
+   417→      await useDataStore.getState().cancelAdjustment(cancelAdjustmentTarget.id, cancelAdjustmentReason || undefined)
+   418→      setCancelAdjustmentDialogOpen(false)
+   419→      setCancelAdjustmentTarget(null)
+   420→      setCancelAdjustmentReason('')
+   421→      fetchData()
+   422→    } catch (error: any) {
+   423→      setAdjustmentError(error?.message || 'Failed to cancel adjustment')
+   424→    } finally {
+   425→      setAdjustmentLoading(false)
+   426→    }
+   427→  }
+   428→
+   429→  const openEditPaymentDialog = (payment: PaymentData) => {
+   430→    setSelectedPayment(payment)
+   431→    const paymentDate = payment.date ? new Date(payment.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
+   432→    setEditForm({
+   433→      amount: payment.amount,
+   434→      date: paymentDate,
+   435→      method: payment.method || 'cash',
+   436→      reference: payment.reference || '',
+   437→      notes: payment.notes || '',
+   438→      isLate: payment.isLate,
+   439→    })
+   440→    setPaymentError('')
+   441→    setEditPaymentDialog(true)
+   442→  }
+   443→
+   444→  const openDeletePaymentDialog = (payment: PaymentData) => {
+   445→    setSelectedPayment(payment)
+   446→    setDeleteReason('')
+   447→    setPaymentError('')
+   448→    setDeletePaymentDialog(true)
+   449→  }
+   450→
+   451→  const handleEditPayment = async () => {
+   452→    if (!selectedPayment) return
+   453→    setPaymentActionLoading(true)
+   454→    setPaymentError('')
+   455→    try {
+   456→      const paymentDateObj = new Date(editForm.date)
+   457→      const isLate = editForm.isLate || paymentDateObj.getDate() > 5
+   458→      const daysLate = isLate ? Math.max(0, paymentDateObj.getDate() - 5) : 0
+   459→
+   460→      await useDataStore.getState().updatePayment(selectedPayment.id, {
+   461→        amount: editForm.amount,
+   462→        date: paymentDateObj.toISOString(),
+   463→        method: editForm.method,
+   464→        reference: editForm.reference || null,
+   465→        notes: editForm.notes || null,
+   466→        isLate,
+   467→        daysLate,
+   468→      })
+   469→      setEditPaymentDialog(false)
+   470→      setSelectedPayment(null)
+   471→      fetchData()
+   472→    } catch (error: any) {
+   473→      setPaymentError(error?.message || 'Failed to update payment')
+   474→    } finally {
+   475→      setPaymentActionLoading(false)
+   476→    }
+   477→  }
+   478→
+   479→  const handleDeletePayment = async () => {
+   480→    if (!selectedPayment) return
+   481→    setPaymentActionLoading(true)
+   482→    setPaymentError('')
+   483→    try {
+   484→      await useDataStore.getState().deletePayment(selectedPayment.id, deleteReason || undefined)
+   485→      setDeletePaymentDialog(false)
+   486→      setSelectedPayment(null)
+   487→      setDeleteReason('')
+   488→      fetchData()
+   489→    } catch (error: any) {
+   490→      setPaymentError(error?.message || 'Failed to delete payment')
+   491→    } finally {
+   492→      setPaymentActionLoading(false)
+   493→    }
+   494→  }
+   495→
+   496→  const [payLoading, setPayLoading] = useState(false)
+   497→
+   498→  const handlePay = async () => {
+   499→    if (!payingTenant || payLoading) return
+   500→    setPayLoading(true)
+   501→    const paymentDateObj = new Date(payForm.paymentDate)
+   502→    const isLate = paymentDateObj.getDate() > 5
+   503→    const daysLate = isLate ? paymentDateObj.getDate() - 5 : 0
+   504→
+   505→    try {
+   506→      await useDataStore.getState().addPayment({
+   507→        tenantId: payingTenant.id,
+   508→        amount: payForm.amount,
+   509→        date: paymentDateObj.toISOString(),
+   510→        month: selectedMonth,
+   511→        year: selectedYear,
+   512→        method: payForm.method,
+   513→        reference: payForm.reference || null,
+   514→        receiptNumber: null,
+   515→        notes: payForm.notes || null,
+   516→        isLate,
+   517→        daysLate,
+   518→        allocationType: payAllocationType,
+   519→      })
+   520→      setPayDialogOpen(false)
+   521→      fetchData()
+   522→    } catch (error) {
+   523→      console.error('Failed to record payment:', error)
+   524→      alert('Failed to record payment. Please try again.')
+   525→    } finally {
+   526→      setPayLoading(false)
+   527→    }
+   528→  }
+   529→
+   530→  const prevMonth = () => {
+   531→    if (selectedMonth === 1) { setSelectedMonth(12); setSelectedYear(y => y - 1) }
+   532→    else setSelectedMonth(m => m - 1)
+   533→  }
+   534→
+   535→  const nextMonth = () => {
+   536→    const now = new Date()
+   537→    if (selectedMonth >= now.getMonth() + 1 && selectedYear >= now.getFullYear()) return
+   538→    if (selectedMonth === 12) { setSelectedMonth(1); setSelectedYear(y => y + 1) }
+   539→    else setSelectedMonth(m => m + 1)
+   540→  }
+   541→
+   542→  // WhatsApp language selection
+   543→  const openWhatsAppLangDialog = (tenant: TenantData) => {
+   544→    setWhatsappTargetTenant(tenant)
+   545→    setWhatsappRemindAll(false)
+   546→    setWhatsappLangDialogOpen(true)
+   547→  }
+   548→
+   549→  const openRemindAllDialog = () => {
+   550→    setWhatsappTargetTenant(null)
+   551→    setWhatsappRemindAll(true)
+   552→    setWhatsappLangDialogOpen(true)
+   553→  }
+   554→
+   555→  const sendAllRemindersWithLang = (lang: WhatsAppLanguage) => {
+   556→    const unpaid = activeTenants.filter(t => {
+   557→      const status = getTenantPaymentStatus(t)
+   558→      return status === 'overdue' || status === 'unpaid' || status === 'partial'
+   559→    })
+   560→    for (const tenant of unpaid) {
+   561→      const phone = tenant.whatsapp || tenant.phone
+   562→      window.open(getWhatsAppLink(phone, getNameByLang(tenant, language), tenant.rentAmount, selectedMonth, selectedYear, lang), '_blank')
+   563→    }
+   564→  }
+   565→
+   566→  if (loading) {
+   567→    return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-emerald" /></div>
+   568→  }
+   569→
+   570→  return (
+   571→    <div className="space-y-6">
+   572→      <div className="flex items-center justify-between flex-wrap gap-4">
+   573→        <div>
+   574→          <h1 className="text-2xl font-bold">{t('rentCollection', language)}</h1>
+   575→        </div>
+   576→        <div className="flex items-center gap-2">
+   577→          <div className="flex items-center gap-2 bg-white rounded-lg border px-2 py-1">
+   578→            <Search className="w-4 h-4 text-gray-400" />
+   579→            <input
+   580→              type="text"
+   581→              placeholder={t('searchInvoice', language) || 'Search Invoice #'}
+   582→              value={invoiceSearch}
+   583→              onChange={e => setInvoiceSearch(e.target.value)}
+   584→              onKeyDown={e => e.key === 'Enter' && searchInvoice()}
+   585→              className="border-0 outline-none text-sm w-32 lg:w-48 bg-transparent"
+   586→            />
+   587→            <Button size="sm" onClick={searchInvoice} disabled={invoiceSearching} className="h-7 px-2 bg-emerald hover:bg-emerald/90 text-white">
+   588→              {invoiceSearching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
+   589→            </Button>
+   590→          </div>
+   591→          <Button onClick={openRemindAllDialog} variant="outline" className="border-emerald text-emerald hover:bg-emerald/10">
+   592→            <MessageCircle className="w-4 h-4 mr-2" />
+   593→            {t('remindAllUnpaid', language)}
+   594→          </Button>
+   595→        </div>
+   596→      </div>
+   597→
+   598→      {/* Month Selector */}
+   599→      <div className="flex items-center justify-center gap-4">
+   600→        <Button variant="ghost" size="icon" onClick={prevMonth}>
+   601→          <ChevronLeft className="w-5 h-5" />
+   602→        </Button>
+   603→        <div className="text-center">
+   604→          <h2 className="text-xl font-bold">
+   605→            {getMonthName(selectedMonth, language)} {selectedYear}
+   606→          </h2>
+   607→          {canSeeRevenue && (
+   608→            <p className="text-sm text-muted-foreground">
+   609→              {stats.collectedRevenue.toLocaleString()} / {stats.expectedRevenue.toLocaleString()} AED {t('collected', language)}
+   610→            </p>
+   611→          )}
+   612→        </div>
+   613→        <Button variant="ghost" size="icon" onClick={nextMonth} disabled={selectedMonth >= new Date().getMonth() + 1 && selectedYear >= new Date().getFullYear()}>
+   614→          <ChevronRight className="w-5 h-5" />
+   615→        </Button>
+   616→      </div>
+   617→
+   618→      {/* Stats Row */}
+   619→      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+   620→        <Card className="card-hover">
+   621→          <CardContent className="p-4 text-center">
+   622→            <p className="text-xs text-muted-foreground">{t('activeTenants', language)}</p>
+   623→            <p className="text-2xl font-bold">{stats.total}</p>
+   624→          </CardContent>
+   625→        </Card>
+   626→        <Card className="card-hover border-l-4 border-l-emerald">
+   627→          <CardContent className="p-4 text-center">
+   628→            <p className="text-xs text-muted-foreground">{t('paid', language)}</p>
+   629→            <p className="text-2xl font-bold text-emerald">{stats.paid}</p>
+   630→          </CardContent>
+   631→        </Card>
+   632→        <Card className="card-hover border-l-4 border-l-amber-500">
+   633→          <CardContent className="p-4 text-center">
+   634→            <p className="text-xs text-muted-foreground">{t('partial', language)}</p>
+   635→            <p className="text-2xl font-bold text-amber-600">{stats.partial}</p>
+   636→          </CardContent>
+   637→        </Card>
+   638→        <Card className="card-hover border-l-4 border-l-orange-500">
+   639→          <CardContent className="p-4 text-center">
+   640→            <p className="text-xs text-muted-foreground">{t('unpaid', language)}</p>
+   641→            <p className="text-2xl font-bold text-orange-600">{stats.unpaid}</p>
+   642→          </CardContent>
+   643→        </Card>
+   644→        <Card className="card-hover border-l-4 border-l-red-500">
+   645→          <CardContent className="p-4 text-center">
+   646→            <p className="text-xs text-muted-foreground">{t('overdue', language)}</p>
+   647→            <p className="text-2xl font-bold text-red-600 overdue-pulse">{stats.overdue}</p>
+   648→          </CardContent>
+   649→        </Card>
+   650→        <Card className="card-hover border-l-4 border-l-teal-500">
+   651→          <CardContent className="p-4 text-center">
+   652→            <p className="text-xs text-muted-foreground">{t('adjustmentsTab', language)}</p>
+   653→            {canSeeRevenue ? (
+   654→              <p className="text-2xl font-bold text-teal-600">{formatAED(stats.adjustmentsTotal)}</p>
+   655→            ) : (
+   656→              <p className="text-2xl font-bold text-teal-600">{allAdjustments.length}</p>
+   657→            )}
+   658→          </CardContent>
+   659→        </Card>
+   660→      </div>
+   661→
+   662→      {/* Collection progress */}
+   663→      {canSeeRevenue && (
+   664→        <Card>
+   665→          <CardContent className="p-4">
+   666→            <div className="flex items-center justify-between mb-2">
+   667→              <span className="text-sm font-medium">{t('collectionProgress', language)}</span>
+   668→              <span className="text-sm font-bold text-emerald">
+   669→                {stats.expectedRevenue > 0 ? Math.round((stats.collectedRevenue / stats.expectedRevenue) * 100) : 0}%
+   670→              </span>
+   671→            </div>
+   672→            <div className="w-full bg-gray-200 rounded-full h-3">
+   673→              <div
+   674→                className="bg-emerald h-3 rounded-full transition-all"
+   675→                style={{ width: `${stats.expectedRevenue > 0 ? (stats.collectedRevenue / stats.expectedRevenue) * 100 : 0}%` }}
+   676→              />
+   677→            </div>
+   678→          </CardContent>
+   679→        </Card>
+   680→      )}
+   681→
+   682→      {/* Filter & Search */}
+   683→      <div className="flex gap-2 flex-wrap items-center">
+   684→        {(['all', 'paid', 'partial', 'unpaid', 'overdue', 'adjustments'] as const).map(f => (
+   685→          <Button
+   686→            key={f}
+   687→            variant={filter === f ? 'default' : 'outline'}
+   688→            size="sm"
+   689→            onClick={() => { setFilter(f); if (f !== 'paid' && f !== 'partial') setPaymentDateFilter('') }}
+   690→            className={filter === f ? 'bg-emerald hover:bg-emerald/90 text-white' : ''}
+   691→          >
+   692→            {f === 'all' && t('all', language)}
+   693→            {f === 'paid' && t('paid', language)}
+   694→            {f === 'partial' && t('partiallyPaid', language)}
+   695→            {f === 'unpaid' && t('unpaid', language)}
+   696→            {f === 'overdue' && t('overdue', language)}
+   697→            {f === 'adjustments' && t('adjustmentsTab', language)}
+   698→          </Button>
+   699→        ))}
+   700→        {filter !== 'adjustments' && (
+   701→          <>
+   702→            <Select value={unitFilter} onValueChange={v => setUnitFilter(v)}>
+   703→              <SelectTrigger className="w-[140px] h-9 text-sm">
+   704→                <SelectValue placeholder={t('allUnits', language) || 'All Units'} />
+   705→              </SelectTrigger>
+   706→              <SelectContent>
+   707→                <SelectItem value="all">{t('allUnits', language) || 'All Units'}</SelectItem>
+   708→                {uniqueUnitNumbers.map(unit => (
+   709→                  <SelectItem key={unit} value={unit}>{unit}</SelectItem>
+   710→                ))}
+   711→              </SelectContent>
+   712→            </Select>
+   713→            {(filter === 'paid' || filter === 'partial') && (
+   714→              <div className="flex items-center gap-1.5 bg-white rounded-lg border px-2 py-1">
+   715→                <Calendar className="w-4 h-4 text-gray-400" />
+   716→                <input
+   717→                  type="date"
+   718→                  value={paymentDateFilter}
+   719→                  onChange={e => setPaymentDateFilter(e.target.value)}
+   720→                  className="border-0 outline-none text-sm bg-transparent w-[130px] cursor-pointer"
+   721→                  title={t('paymentDate', language)}
+   722→                />
+   723→                {paymentDateFilter && (
+   724→                  <button onClick={() => setPaymentDateFilter('')} className="text-gray-400 hover:text-gray-600" title={t('clearFilter', language)}>
+   725→                    <X className="w-3.5 h-3.5" />
+   726→                  </button>
+   727→                )}
+   728→              </div>
+   729→            )}
+   730→            <div className="flex items-center gap-2 bg-white rounded-lg border px-2 py-1 ml-auto">
+   731→              <Search className="w-4 h-4 text-gray-400" />
+   732→              <input
+   733→                type="text"
+   734→                placeholder={t('searchTenant', language) || 'Search Tenant / Property'}
+   735→                value={tenantSearch}
+   736→                onChange={e => setTenantSearch(e.target.value)}
+   737→                className="border-0 outline-none text-sm w-36 lg:w-52 bg-transparent"
+   738→              />
+   739→              {tenantSearch && (
+   740→                <button onClick={() => setTenantSearch('')} className="text-gray-400 hover:text-gray-600">
+   741→                  <X className="w-3 h-3" />
+   742→                </button>
+   743→              )}
+   744→            </div>
+   745→          </>
+   746→        )}
+   747→        {filter === 'adjustments' && (
+   748→          <>
+   749→            <Select value={adjustmentPropertyFilter} onValueChange={v => { setAdjustmentPropertyFilter(v); setAdjustmentUnitFilter('all') }}>
+   750→              <SelectTrigger className="w-[160px] h-9 text-sm">
+   751→                <SelectValue placeholder={t('propertyName', language)} />
+   752→              </SelectTrigger>
+   753→              <SelectContent>
+   754→                <SelectItem value="all">{t('allProperties', language) || 'All Properties'}</SelectItem>
+   755→                {adjustmentProperties.map(p => (
+   756→                  <SelectItem key={p.id} value={p.id}>{getNameByLang(p, language)}</SelectItem>
+   757→                ))}
+   758→              </SelectContent>
+   759→            </Select>
+   760→            <Select value={adjustmentUnitFilter} onValueChange={setAdjustmentUnitFilter}>
+   761→              <SelectTrigger className="w-[120px] h-9 text-sm">
+   762→                <SelectValue placeholder={t('unitNumber', language)} />
+   763→              </SelectTrigger>
+   764→              <SelectContent>
+   765→                <SelectItem value="all">{t('allUnits', language) || 'All Units'}</SelectItem>
+   766→                {adjustmentUnits.map(unit => (
+   767→                  <SelectItem key={unit} value={unit}>{unit}</SelectItem>
+   768→                ))}
+   769→              </SelectContent>
+   770→            </Select>
+   771→            <Select value={adjustmentTypeFilter} onValueChange={setAdjustmentTypeFilter}>
+   772→              <SelectTrigger className="w-[160px] h-9 text-sm">
+   773→                <SelectValue placeholder={t('adjustmentTypeFilter', language)} />
+   774→              </SelectTrigger>
+   775→              <SelectContent>
+   776→                <SelectItem value="all">{t('allAdjustmentTypes', language)}</SelectItem>
+   777→                {adjustmentTypeOptions.map(type => (
+   778→                  <SelectItem key={type} value={type}>{getAdjustmentTypeLabel(type)}</SelectItem>
+   779→                ))}
+   780→              </SelectContent>
+   781→            </Select>
+   782→            <div className="flex items-center gap-2 bg-white rounded-lg border px-2 py-1 ml-auto">
+   783→              <Search className="w-4 h-4 text-gray-400" />
+   784→              <input
+   785→                type="text"
+   786→                placeholder={t('searchTenant', language) || 'Search Tenant / Property'}
+   787→                value={adjustmentSearch}
+   788→                onChange={e => setAdjustmentSearch(e.target.value)}
+   789→                className="border-0 outline-none text-sm w-36 lg:w-52 bg-transparent"
+   790→              />
+   791→              {adjustmentSearch && (
+   792→                <button onClick={() => setAdjustmentSearch('')} className="text-gray-400 hover:text-gray-600">
+   793→                  <X className="w-3 h-3" />
+   794→                </button>
+   795→              )}
+   796→            </div>
+   797→          </>
+   798→        )}
+   799→      </div>
+   800→
+   801→      {/* Tenant Payment Grid (hidden when adjustments tab is selected) */}
+   802→      {filter === 'adjustments' ? (
+   803→        <Card>
+   804→          <CardContent className="p-0">
+   805→            <div className="overflow-x-auto">
+   806→              <Table>
+   807→                <TableHeader>
+   808→                  <TableRow>
+   809→                    <TableHead>{t('tenantName', language) || 'Tenant'}</TableHead>
+   810→                    <TableHead>{t('propertyName', language)}</TableHead>
+   811→                    <TableHead>{t('unitNumber', language)}</TableHead>
+   812→                    <TableHead>{t('adjustmentAmount', language)}</TableHead>
+   813→                    <TableHead>{t('adjustmentType', language)}</TableHead>
+   814→                    <TableHead>{t('adjustmentReason', language)}</TableHead>
+   815→                    <TableHead>{t('duration', language) || 'Duration'}</TableHead>
+   816→                    <TableHead>{t('createdBy', language)}</TableHead>
+   817→                    <TableHead>{t('createdDate', language)}</TableHead>
+   818→                    <TableHead>{t('status', language)}</TableHead>
+   819→                  </TableRow>
+   820→                </TableHeader>
+   821→                <TableBody>
+   822→                  {filteredAdjustments.length === 0 ? (
+   823→                    <TableRow>
+   824→                      <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+   825→                        {t('noData', language)}
+   826→                      </TableCell>
+   827→                    </TableRow>
+   828→                  ) : (
+   829→                    filteredAdjustments.map(adj => {
+   830→                      const tenant = tenants.find(t => t.id === adj.tenantId)
+   831→                      const propData = useDataStore.getState().properties.find(p => p.id === adj.propertyId)
+   832→                      return (
+   833→                        <TableRow key={adj.id} className="hover:bg-muted/30">
+   834→                          <TableCell className="text-sm font-medium">
+   835→                            {tenant ? getNameByLang(tenant, language) : '—'}
+   836→                          </TableCell>
+   837→                          <TableCell className="text-sm">
+   838→                            {propData ? getNameByLang(propData, language) : '—'}
+   839→                          </TableCell>
+   840→                          <TableCell className="text-sm">
+   841→                            {tenant?.unitNumber || '—'}
+   842→                          </TableCell>
+   843→                          <TableCell className="text-sm font-semibold">
+   844→                            {canSeeRevenue ? formatAED(adj.amount) : '•••'}
+   845→                          </TableCell>
+   846→                          <TableCell>
+   847→                            <Badge variant="outline" className="text-xs">
+   848→                              {getAdjustmentTypeLabel(adj.adjustmentType)}
+   849→                            </Badge>
+   850→                          </TableCell>
+   851→                          <TableCell className="text-sm max-w-[200px] truncate" title={adj.reason}>
+   852→                            {adj.reason}
+   853→                          </TableCell>
+   854→                          <TableCell className="text-sm">
+   855→                            {adj.durationMonths} {adj.durationMonths === 1 ? (t('month', language) || 'mo') : (t('months', language) || 'mos')}
+   856→                          </TableCell>
+   857→                          <TableCell className="text-sm text-muted-foreground">
+   858→                            {adj.createdBy ? adj.createdBy.substring(0, 8) + '…' : '—'}
+   859→                          </TableCell>
+   860→                          <TableCell className="text-sm text-muted-foreground">
+   861→                            {new Date(adj.createdAt).toLocaleDateString()}
+   862→                          </TableCell>
+   863→                          <TableCell>
+   864→                            <Badge className={cn2(
+   865→                              'text-xs',
+   866→                              adj.status === 'approved' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' :
+   867→                              'bg-red-100 text-red-700 border-red-200'
+   868→                            )}>
+   869→                              {adj.status === 'approved' ? t('approved', language) : t('cancelled', language)}
+   870→                            </Badge>
+   871→                          </TableCell>
+   872→                        </TableRow>
+   873→                      )
+   874→                    })
+   875→                  )}
+   876→                </TableBody>
+   877→              </Table>
+   878→            </div>
+   879→          </CardContent>
+   880→        </Card>
+   881→      ) : (
+   882→      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger-children">
+   883→        {filteredTenants.map(tenant => {
+   884→          const status = getTenantPaymentStatus(tenant)
+   885→          // CRITICAL: Exclude HISTORICAL_DEBT payments from 'paid' because those payments
+   886→          // are already reflected in the reduced tenant.openingBalance. Including them here
+   887→          // would double-count: once via reduced openingBalance and once via paymentsReceived.
+   888→          // Formula: remaining = (reduced)openingBalance + currentCharges - creditBalance - currentRentPayments
+   889→          const paid = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear && p.allocationType !== 'HISTORICAL_DEBT').reduce((sum, p) => sum + p.amount, 0)
+   890→          const tenantAdjustments = getTenantAdjustments(tenant)
+   891→          const totalAdjustments = tenantAdjustments.reduce((sum, a) => sum + a.amount, 0)
+   892→          // Calculate true remaining balance including opening balance and credit balance
+   893→          const openingBalance = Number(tenant.openingBalance) || 0
+   894→          const creditBalance = Number(tenant.creditBalance) || 0
+   895→          const currentCharges = tenant.rentAmount - totalAdjustments
+   896→          const totalDue = openingBalance + currentCharges - creditBalance
+   897→          const remaining = totalDue - paid
+   898→          const tenantPayments = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear)
+   899→          const isExpanded = expandedTenant === tenant.id
+   900→
+   901→          return (
+   902→            <Card key={tenant.id} className={cn2('card-hover', (status === 'overdue' || status === 'unpaid') && 'ring-1 ring-red-300')}>
+   903→              <CardContent className="p-4">
+   904→                <div className="space-y-1.5">
+   905→                  <div className="flex items-start justify-between gap-2">
+   906→                    <div className="min-w-0 flex-1">
+   907→                      <h3 className="font-semibold text-sm truncate">
+   908→                        {getNameByLang(tenant, language)}
+   909→                      </h3>
+   910→                      <p className="text-xs text-muted-foreground truncate">
+   911→                        {tenant.property ? getNameByLang(tenant.property, language) : ''} - {tenant.unitNumber || '—'}
+   912→                      </p>
+   913→                    </div>
+   914→                    <Badge className={cn2('text-xs shrink-0', getPaymentStatusColor(status))}>
+   915→                      {status === 'paid' && t('paid', language)}
+   916→                      {status === 'partial' && t('partial', language)}
+   917→                      {status === 'overdue' && t('overdue', language)}
+   918→                      {status === 'unpaid' && t('unpaid', language)}
+   919→                      {status === 'due-soon' && t('dueSoon', language)}
+   920→                    </Badge>
+   921→                  </div>
+   922→                  {/* Secondary badges row */}
+   923→                  {(tenant.legalCase || tenant.status === 'notice' || (tenant.openingBalance || 0) > 0) && (
+   924→                    <div className="flex flex-wrap gap-1.5">
+   925→                      {tenant.legalCase && (
+   926→                        <Badge className="text-[10px] bg-red-100 text-red-700 border border-red-200 hover:bg-red-100 px-1.5 py-0 shrink-0">
+   927→                          <AlertTriangle className="w-3 h-3 mr-0.5" />
+   928→                          LEGAL
+   929→                        </Badge>
+   930→                      )}
+   931→                      {tenant.status === 'notice' && (
+   932→                        <Badge className="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-100 px-1.5 py-0 shrink-0">
+   933→                          {t('noticePeriod', language)}
+   934→                        </Badge>
+   935→                      )}
+   936→                      {(tenant.openingBalance || 0) > 0 && (
+   937→                        <Badge className="text-[10px] bg-amber-100 text-amber-700 border border-amber-200 hover:bg-amber-100 px-1.5 py-0 shrink-0">
+   938→                          {t('outstanding', language)}: {formatAED(tenant.openingBalance)}
+   939→                        </Badge>
+   940→                      )}
+   941→                    </div>
+   942→                  )}
+   943→                </div>
+   944→
+   945→                {canSeeRevenue && (
+   946→                  <div className="flex items-center justify-between mt-3">
+   947→                    <div>
+   948→                      <p className="text-xs text-muted-foreground">{t('currentCharges', language)}</p>
+   949→                      <p className="font-bold text-sm">{formatAED(currentCharges)}</p>
+   950→                    </div>
+   951→                    <div className="text-right">
+   952→                      <p className="text-xs text-muted-foreground">{t('remainingBalance', language)}</p>
+   953→                      <p className={cn2('font-bold text-sm', remaining > 0 ? 'text-red-600' : remaining === 0 ? 'text-emerald-600' : 'text-blue-600')}>
+   954→                        {formatAED(Math.max(0, remaining))}
+   955→                      </p>
+   956→                    </div>
+   957→                  </div>
+   958→                )}
+   959→
+   960→                {/* Financial breakdown */}
+   961→                {canSeeRevenue && (openingBalance > 0 || creditBalance > 0 || paid > 0 || totalAdjustments > 0) && (
+   962→                  <div className="mt-2 bg-muted/30 rounded-lg p-2 text-xs space-y-1">
+   963→                    {openingBalance > 0 && (
+   964→                      <div className="flex justify-between">
+   965→                        <span className="text-muted-foreground">{t('openingBalance', language)}</span>
+   966→                        <span className="font-medium text-amber-700">+{formatAED(openingBalance)}</span>
+   967→                      </div>
+   968→                    )}
+   969→                    <div className="flex justify-between">
+   970→                      <span className="text-muted-foreground">{t('currentCharges', language)}</span>
+   971→                      <span className="font-medium">+{formatAED(currentCharges)}</span>
+   972→                    </div>
+   973→                    {totalAdjustments > 0 && (
+   974→                      <div className="flex justify-between">
+   975→                        <span className="text-muted-foreground">{t('approvedAdjustments', language)}</span>
+   976→                        <span className="font-medium text-amber-600">-{formatAED(totalAdjustments)}</span>
+   977→                      </div>
+   978→                    )}
+   979→                    {creditBalance > 0 && (
+   980→                      <div className="flex justify-between">
+   981→                        <span className="text-muted-foreground">{t('creditBalance', language)}</span>
+   982→                        <span className="font-medium text-blue-600">-{formatAED(creditBalance)}</span>
+   983→                      </div>
+   984→                    )}
+   985→                    <div className="flex justify-between border-t pt-1">
+   986→                      <span className="text-muted-foreground font-medium">{t('totalDue', language)}</span>
+   987→                      <span className="font-semibold">{formatAED(Math.max(0, totalDue))}</span>
+   988→                    </div>
+   989→                    {paid > 0 && (
+   990→                      <div className="flex justify-between">
+   991→                        <span className="text-muted-foreground">{t('paymentsReceived', language)}</span>
+   992→                        <span className="font-medium text-emerald-600">-{formatAED(paid)}</span>
+   993→                      </div>
+   994→                    )}
+   995→                    <div className="flex justify-between border-t pt-1">
+   996→                      <span className="text-muted-foreground font-medium">{t('remainingBalance', language)}</span>
+   997→                      <span className={cn2('font-bold', remaining <= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatAED(Math.max(0, remaining))}</span>
+   998→                    </div>
+   999→                  </div>
+  1000→                )}
+  1001→
+  1002→                <div className="flex gap-2 mt-3">
+  1003→                  {status !== 'paid' && (
+  1004→                    <Button
+  1005→                      size="sm"
+  1006→                      onClick={() => openPayDialog(tenant)}
+  1007→                      className="flex-1 bg-emerald hover:bg-emerald/90 text-white h-8 text-xs"
+  1008→                    >
+  1009→                      <Check className="w-3 h-3 mr-1" />
+  1010→                      {t('markPaid', language)}
+  1011→                    </Button>
+  1012→                  )}
+  1013→                  {canSeeRevenue && (
+  1014→                    <button
+  1015→                      onClick={() => openAdjustmentDialog(tenant)}
+  1016→                      className="flex items-center justify-center gap-1 px-3 py-1 rounded-md text-xs border border-amber-300 text-amber-700 hover:bg-amber-50"
+  1017→                      title={t('createAdjustment', language)}
+  1018→                    >
+  1019→                      <MinusCircle className="w-3 h-3" />
+  1020→                    </button>
+  1021→                  )}
+  1022→                  {status !== 'paid' && (
+  1023→                    <button
+  1024→                      onClick={() => openWhatsAppLangDialog(tenant)}
+  1025→                      className="flex items-center justify-center gap-1 px-3 py-1 rounded-md text-xs border border-green-300 text-green-700 hover:bg-green-50"
+  1026→                      title={t('sendWhatsAppReminder', language)}
+  1027→                    >
+  1028→                      <MessageCircle className="w-3 h-3" />
+  1029→                    </button>
+  1030→                  )}
+  1031→                  <button
+  1032→                    onClick={() => { setBillTenant(tenant); setBillDialogOpen(true) }}
+  1033→                    className="flex items-center justify-center gap-1 px-3 py-1 rounded-md text-xs border border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+  1034→                    title={t('viewBill', language)}
+  1035→                  >
+  1036→                    <FileText className="w-3 h-3" />
+  1037→                  </button>
+  1038→                </div>
+  1039→
+  1040→                {/* Payment History Toggle */}
+  1041→                {(tenantPayments.length > 0 || tenantAdjustments.length > 0) && (
+  1042→                  <div className="mt-3 border-t pt-2">
+  1043→                    <button
+  1044→                      onClick={() => setExpandedTenant(isExpanded ? null : tenant.id)}
+  1045→                      className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors w-full"
+  1046→                    >
+  1047→                      {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+  1048→                      {tenantPayments.length + tenantAdjustments.length} {tenantPayments.length + tenantAdjustments.length === 1 ? (language === 'ar' ? 'عنصر' : language === 'bn' ? 'আইটেম' : language === 'ur' ? 'آئٹم' : 'item') : (language === 'ar' ? 'عناصر' : language === 'bn' ? 'আইটেমসমূহ' : language === 'ur' ? 'آئٹمز' : 'items')}
+  1049→                      {canSeeRevenue && (
+  1050→                        <span className="ml-auto font-medium text-emerald-600">
+  1051→                          {formatAED(paid)}
+  1052→                          {totalAdjustments > 0 && <span className="text-amber-600 ml-1">(-{formatAED(totalAdjustments)})</span>}
+  1053→                        </span>
+  1054→                      )}
+  1055→                    </button>
+  1056→
+  1057→                    {isExpanded && (
+  1058→                      <div className="mt-2 space-y-2">
+  1059→                        {/* Adjustments displayed first with amber styling */}
+  1060→                        {tenantAdjustments.filter(a => a.status === 'approved').map(adjustment => (
+  1061→                          <div key={adjustment.id} className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs">
+  1062→                            <div className="flex-1 min-w-0">
+  1063→                              <div className="flex items-center gap-2">
+  1064→                                {canSeeRevenue && <span className="font-semibold text-amber-700">-{formatAED(adjustment.amount)}</span>}
+  1065→                                <Badge variant="outline" className="text-[10px] px-1 py-0 border-amber-300 text-amber-700">
+  1066→                                  {t(adjustment.adjustmentType as any, language) || adjustment.adjustmentType}
+  1067→                                </Badge>
+  1068→                              </div>
+  1069→                              <p className="text-amber-600 mt-0.5 truncate text-[11px]">{adjustment.reason}</p>
+  1070→                              {adjustment.durationMonths > 1 && (
+  1071→                                <p className="text-amber-500 mt-0.5 text-[10px]">
+  1072→                                  {getMonthName(adjustment.effectiveMonth, language)} {adjustment.effectiveYear} — {adjustment.durationMonths} {t('months', language)}
+  1073→                                </p>
+  1074→                              )}
+  1075→                            </div>
+  1076→                            {canSeeRevenue && (
+  1077→                              <div className="flex items-center gap-1 ml-2">
+  1078→                                <button
+  1079→                                  onClick={(e) => { e.stopPropagation(); openEditAdjustmentDialog(adjustment) }}
+  1080→                                  className="p-1 hover:bg-white rounded transition-colors"
+  1081→                                  title={t('editAdjustment', language)}
+  1082→                                >
+  1083→                                  <Pencil className="w-3 h-3 text-blue-600" />
+  1084→                                </button>
+  1085→                                <button
+  1086→                                  onClick={(e) => { e.stopPropagation(); setCancelAdjustmentTarget(adjustment); setCancelAdjustmentReason(''); setCancelAdjustmentDialogOpen(true) }}
+  1087→                                  className="p-1 hover:bg-white rounded transition-colors"
+  1088→                                  title={t('cancelAdjustment', language)}
+  1089→                                >
+  1090→                                  <X className="w-3 h-3 text-red-500" />
+  1091→                                </button>
+  1092→                              </div>
+  1093→                            )}
+  1094→                          </div>
+  1095→                        ))}
+  1096→                        {tenantPayments.map(payment => (
+  1097→                          <div key={payment.id} className="flex items-center justify-between bg-muted/50 rounded-lg px-3 py-2 text-xs">
+  1098→                            <div className="flex-1 min-w-0">
+  1099→                              <div className="flex items-center gap-2">
+  1100→                                {canSeeRevenue && <span className="font-semibold">{formatAED(payment.amount)}</span>}
+  1101→                                <span className="text-muted-foreground">
+  1102→                                  {payment.date ? new Date(payment.date).toLocaleDateString(language === 'ar' ? 'ar-AE' : 'en-AE', { day: 'numeric', month: 'short' }) : ''}
+  1103→                                </span>
+  1104→                                {payment.method && (
+  1105→                                  <Badge variant="outline" className="text-[10px] px-1 py-0">
+  1106→                                    {payment.method}
+  1107→                                  </Badge>
+  1108→                                )}
+  1109→                                {payment.isLate && (
+  1110→                                  <Badge variant="outline" className="text-[10px] px-1 py-0 border-red-300 text-red-600">
+  1111→                                    {language === 'ar' ? 'متأخر' : language === 'bn' ? 'বিলম্বিত' : language === 'ur' ? 'دیر' : 'Late'}
+  1112→                                  </Badge>
+  1113→                                )}
+  1114→                                {payment.allocationType && payment.allocationType !== 'CURRENT_RENT' && (
+  1115→                                  <Badge variant="outline" className="text-[10px] px-1 py-0 border-blue-300 text-blue-600">
+  1116→                                    {payment.allocationType === 'HISTORICAL_DEBT' && t('historicalDebt', language)}
+  1117→                                    {payment.allocationType === 'ADVANCE_PAYMENT' && t('advancePayment', language)}
+  1118→                                  </Badge>
+  1119→                                )}
+  1120→                              </div>
+  1121→                              {payment.reference && (
+  1122→                                <p className="text-muted-foreground mt-0.5 truncate">
+  1123→                                  Ref: {payment.reference}
+  1124→                                </p>
+  1125→                              )}
+  1126→                            </div>
+  1127→                            {canSeeRevenue && (
+  1128→                              <div className="flex items-center gap-1 shrink-0 ml-2">
+  1129→                                <button
+  1130→                                  onClick={(e) => { e.stopPropagation(); openEditPaymentDialog(payment) }}
+  1131→                                  className="p-1 hover:bg-white rounded transition-colors"
+  1132→                                  title={language === 'ar' ? 'تعديل الدفعة' : language === 'bn' ? 'পেমেন্ট সম্পাদনা' : language === 'ur' ? 'ادائیگی میں ترمیم' : 'Edit payment'}
+  1133→                                >
+  1134→                                  <Pencil className="w-3 h-3 text-blue-600" />
+  1135→                                </button>
+  1136→                                <button
+  1137→                                  onClick={(e) => { e.stopPropagation(); openDeletePaymentDialog(payment) }}
+  1138→                                  className="p-1 hover:bg-white rounded transition-colors"
+  1139→                                  title={language === 'ar' ? 'حذف الدفعة' : language === 'bn' ? 'পেমেন্ট মুছুন' : language === 'ur' ? 'ادائیگی حذف کریں' : 'Delete payment'}
+  1140→                                >
+  1141→                                  <Trash2 className="w-3 h-3 text-red-600" />
+  1142→                                </button>
+  1143→                              </div>
+  1144→                            )}
+  1145→                          </div>
+  1146→                        ))}
+  1147→                      </div>
+  1148→                    )}
+  1149→                  </div>
+  1150→                )}
+  1151→              </CardContent>
+  1152→            </Card>
+  1153→          )
+  1154→        })}
+  1155→      </div>
+  1156→      )}
+  1157→
+  1158→      {filteredTenants.length === 0 && filter !== 'adjustments' && (
+  1159→        <div className="text-center py-12 text-muted-foreground">
+  1160→          {t('noTenantsMatchFilter', language)}
+  1161→        </div>
+  1162→      )}
+  1163→
+  1164→      {/* Pay Dialog */}
+  1165→      <Dialog open={payDialogOpen} onOpenChange={setPayDialogOpen}>
+  1166→        <DialogContent>
+  1167→          <DialogHeader>
+  1168→            <DialogTitle>
+  1169→              {t('recordPayment', language)} - {payingTenant && getNameByLang(payingTenant, language)}
+  1170→            </DialogTitle>
+  1171→          </DialogHeader>
+  1172→          <div className="space-y-4">
+  1173→            <div>
+  1174→              <Label>{t('amount', language)}</Label>
+  1175→              <Input type="number" value={payForm.amount} onChange={e => setPayForm({ ...payForm, amount: Number(e.target.value) })} />
+  1176→            </div>
+  1177→            <div>
+  1178→              <Label>{t('paymentDate', language)}</Label>
+  1179→              <Input type="date" value={payForm.paymentDate} onChange={e => setPayForm({ ...payForm, paymentDate: e.target.value })} />
+  1180→            </div>
+  1181→            <div>
+  1182→              <Label>{t('paymentMethod', language)}</Label>
+  1183→              <Select value={payForm.method} onValueChange={v => setPayForm({ ...payForm, method: v })}>
+  1184→                <SelectTrigger><SelectValue /></SelectTrigger>
+  1185→                <SelectContent>
+  1186→                  <SelectItem value="cash">{t('cash', language)}</SelectItem>
+  1187→                  <SelectItem value="transfer">{t('bankTransfer', language)}</SelectItem>
+  1188→                  <SelectItem value="cheque">{t('cheque', language)}</SelectItem>
+  1189→                </SelectContent>
+  1190→              </Select>
+  1191→            </div>
+  1192→            <div>
+  1193→              <Label>{t('allocationType', language)}</Label>
+  1194→              <Select value={payAllocationType} onValueChange={setPayAllocationType}>
+  1195→                <SelectTrigger><SelectValue /></SelectTrigger>
+  1196→                <SelectContent>
+  1197→                  <SelectItem value="CURRENT_RENT">{t('currentRent', language)}</SelectItem>
+  1198→                  <SelectItem value="HISTORICAL_DEBT">{t('historicalDebt', language)}</SelectItem>
+  1199→                  <SelectItem value="ADVANCE_PAYMENT">{t('advancePayment', language)}</SelectItem>
+  1200→                </SelectContent>
+  1201→              </Select>
+  1202→            </div>
+  1203→            <div>
+  1204→              <Label>{t('reference', language)}</Label>
+  1205→              <Input value={payForm.reference} onChange={e => setPayForm({ ...payForm, reference: e.target.value })} />
+  1206→            </div>
+  1207→            <div>
+  1208→              <Label>{t('notes', language)}</Label>
+  1209→              <Input value={payForm.notes} onChange={e => setPayForm({ ...payForm, notes: e.target.value })} />
+  1210→            </div>
+  1211→          </div>
+  1212→          <DialogFooter>
+  1213→            <Button variant="outline" onClick={() => setPayDialogOpen(false)}>{t('cancel', language)}</Button>
+  1214→            <Button onClick={handlePay} className="bg-emerald hover:bg-emerald/90 text-white" disabled={payForm.amount <= 0 || payLoading}>
+  1215→              {payLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Check className="w-4 h-4 mr-2" />}
+  1216→              {payLoading ? t('processingPayment', language) : t('confirmPayment', language)}
+  1217→            </Button>
+  1218→          </DialogFooter>
+  1219→        </DialogContent>
+  1220→      </Dialog>
+  1221→
+  1222→      {/* Bill Invoice Dialog */}
+  1223→      <Dialog open={billDialogOpen} onOpenChange={setBillDialogOpen}>
+  1224→        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+  1225→          <DialogHeader>
+  1226→            <DialogTitle>{t('viewBill', language)}</DialogTitle>
+  1227→          </DialogHeader>
+  1228→          {billTenant && (
+  1229→            <BillInvoice
+  1230→              tenant={billTenant}
+  1231→              property={billTenant.property || undefined}
+  1232→              month={selectedMonth}
+  1233→              year={selectedYear}
+  1234→              paymentStatus={getTenantPaymentStatus(billTenant)}
+  1235→              paidAmount={(billTenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear && p.allocationType !== 'HISTORICAL_DEBT').reduce((sum, p) => sum + p.amount, 0)}
+  1236→              language={language}
+  1237→            />
+  1238→          )}
+  1239→        </DialogContent>
+  1240→      </Dialog>
+  1241→
+  1242→      {/* WhatsApp Language Selection Dialog */}
+  1243→      <Dialog open={whatsappLangDialogOpen} onOpenChange={setWhatsappLangDialogOpen}>
+  1244→        <DialogContent className="sm:max-w-md">
+  1245→          <DialogHeader>
+  1246→            <DialogTitle className="flex items-center gap-2">
+  1247→              <MessageCircle className="w-5 h-5 text-green-600" />
+  1248→              {t('selectReminderLanguage', language)}
+  1249→            </DialogTitle>
+  1250→          </DialogHeader>
+  1251→          <div className="space-y-3 py-4">
+  1252→            <p className="text-sm text-muted-foreground">{t('reminderLanguageDesc', language)}</p>
+  1253→            <div className="space-y-2">
+  1254→              <Button
+  1255→                className="w-full justify-start bg-green-600 hover:bg-green-700 text-white"
+  1256→                onClick={() => {
+  1257→                  if (whatsappRemindAll) {
+  1258→                    sendAllRemindersWithLang('ar')
+  1259→                  } else if (whatsappTargetTenant) {
+  1260→                    window.open(getWhatsAppLink(whatsappTargetTenant.whatsapp || whatsappTargetTenant.phone, getNameByLang(whatsappTargetTenant, language), whatsappTargetTenant.rentAmount, selectedMonth, selectedYear, 'ar'), '_blank')
+  1261→                  }
+  1262→                  setWhatsappLangDialogOpen(false)
+  1263→                }}
+  1264→              >
+  1265→                {t('sendArabic', language)}
+  1266→              </Button>
+  1267→              <Button
+  1268→                className="w-full justify-start bg-blue-600 hover:bg-blue-700 text-white"
+  1269→                onClick={() => {
+  1270→                  if (whatsappRemindAll) {
+  1271→                    sendAllRemindersWithLang('en')
+  1272→                  } else if (whatsappTargetTenant) {
+  1273→                    window.open(getWhatsAppLink(whatsappTargetTenant.whatsapp || whatsappTargetTenant.phone, getNameByLang(whatsappTargetTenant, language), whatsappTargetTenant.rentAmount, selectedMonth, selectedYear, 'en'), '_blank')
+  1274→                  }
+  1275→                  setWhatsappLangDialogOpen(false)
+  1276→                }}
+  1277→              >
+  1278→                {t('sendEnglish', language)}
+  1279→              </Button>
+  1280→              <Button
+  1281→                className="w-full justify-start bg-teal-600 hover:bg-teal-700 text-white"
+  1282→                onClick={() => {
+  1283→                  if (whatsappRemindAll) {
+  1284→                    sendAllRemindersWithLang('ur')
+  1285→                  } else if (whatsappTargetTenant) {
+  1286→                    window.open(getWhatsAppLink(whatsappTargetTenant.whatsapp || whatsappTargetTenant.phone, getNameByLang(whatsappTargetTenant, language), whatsappTargetTenant.rentAmount, selectedMonth, selectedYear, 'ur'), '_blank')
+  1287→                  }
+  1288→                  setWhatsappLangDialogOpen(false)
+  1289→                }}
+  1290→              >
+  1291→                {t('sendUrdu', language)}
+  1292→              </Button>
+  1293→              <Button
+  1294→                className="w-full justify-start bg-orange-500 hover:bg-orange-600 text-white"
+  1295→                onClick={() => {
+  1296→                  if (whatsappRemindAll) {
+  1297→                    sendAllRemindersWithLang('hi')
+  1298→                  } else if (whatsappTargetTenant) {
+  1299→                    window.open(getWhatsAppLink(whatsappTargetTenant.whatsapp || whatsappTargetTenant.phone, getNameByLang(whatsappTargetTenant, language), whatsappTargetTenant.rentAmount, selectedMonth, selectedYear, 'hi'), '_blank')
+  1300→                  }
+  1301→                  setWhatsappLangDialogOpen(false)
+  1302→                }}
+  1303→              >
+  1304→                {t('sendHindi', language)}
+  1305→              </Button>
+  1306→              <Button
+  1307→                className="w-full justify-start bg-purple-600 hover:bg-purple-700 text-white"
+  1308→                onClick={() => {
+  1309→                  if (whatsappRemindAll) {
+  1310→                    sendAllRemindersWithLang('bn')
+  1311→                  } else if (whatsappTargetTenant) {
+  1312→                    window.open(getWhatsAppLink(whatsappTargetTenant.whatsapp || whatsappTargetTenant.phone, getNameByLang(whatsappTargetTenant, language), whatsappTargetTenant.rentAmount, selectedMonth, selectedYear, 'bn'), '_blank')
+  1313→                  }
+  1314→                  setWhatsappLangDialogOpen(false)
+  1315→                }}
+  1316→              >
+  1317→                {t('sendBengali', language)}
+  1318→              </Button>
+  1319→            </div>
+  1320→          </div>
+  1321→        </DialogContent>
+  1322→      </Dialog>
+  1323→
+  1324→      {/* Invoice Search Results Dialog */}
+  1325→      <Dialog open={invoiceSearchOpen} onOpenChange={setInvoiceSearchOpen}>
+  1326→        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+  1327→          <DialogHeader>
+  1328→            <DialogTitle className="flex items-center gap-2">
+  1329→              <Search className="w-5 h-5 text-emerald-600" />
+  1330→              {t('searchInvoice', language) || 'Invoice Search'} — {invoiceSearch}
+  1331→            </DialogTitle>
+  1332→          </DialogHeader>
+  1333→          <div className="space-y-3 py-2">
+  1334→            {invoiceSearchResults && invoiceSearchResults.length === 0 && (
+  1335→              <div className="text-center py-8">
+  1336→                <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-3">
+  1337→                  <Search className="w-6 h-6 text-gray-400" />
+  1338→                </div>
+  1339→                <p className="text-muted-foreground font-medium">
+  1340→                  {t('noInvoiceFound', language) || `No invoice found for "${invoiceSearch}"`}
+  1341→                </p>
+  1342→                <p className="text-xs text-muted-foreground mt-1">
+  1343→                  {t('tryDifferentSearch', language) || 'Try searching with a different invoice number (e.g. INV-202606-101)'}
+  1344→                </p>
+  1345→              </div>
+  1346→            )}
+  1347→            {invoiceSearchResults && invoiceSearchResults.map((result: any, idx: number) => (
+  1348→              <div key={idx} className="border rounded-lg p-3 hover:bg-gray-50 transition-colors">
+  1349→                <div className="flex items-start justify-between mb-2">
+  1350→                  <div>
+  1351→                    <div className="flex items-center gap-2">
+  1352→                      <Badge variant={result.type === 'tenant_invoice' ? 'default' : 'secondary'} className={result.type === 'tenant_invoice' ? 'bg-emerald text-white' : ''}>
+  1353→                        {result.type === 'tenant_invoice' ? t('invoice', language) || 'Invoice' : t('expenses', language) || 'Expense'}
+  1354→                      </Badge>
+  1355→                      <span className="font-mono font-bold text-sm">{result.invoiceNumber}</span>
+  1356→                    </div>
+  1357→                    <p className="text-sm text-gray-700 mt-1">{result.description}</p>
+  1358→                  </div>
+  1359→                  <div className="text-right">
+  1360→                    {canSeeRevenue && <p className="font-bold text-sm">{formatAED(result.amount)}</p>}
+  1361→                    <Badge className={cn2('text-xs', getPaymentStatusColor(result.paymentStatus))}>
+  1362→                      {result.paymentStatus === 'paid' && (t('paid', language) || 'Paid')}
+  1363→                      {result.paymentStatus === 'partial' && (t('partial', language) || 'Partial')}
+  1364→                      {result.paymentStatus === 'overdue' && (t('overdue', language) || 'Overdue')}
+  1365→                      {result.paymentStatus === 'unpaid' && (t('unpaid', language) || 'Unpaid')}
+  1366→                      {result.paymentStatus === 'due-soon' && (t('dueSoon', language) || 'Due Soon')}
+  1367→                    </Badge>
+  1368→                  </div>
+  1369→                </div>
+  1370→                <div className="flex items-center gap-4 text-xs text-muted-foreground">
+  1371→                  {result.tenantName && <span>{result.tenantName}</span>}
+  1372→                  {result.propertyName && <span>{result.propertyName}</span>}
+  1373→                  {result.unitNumber && <span>{t('unitNumber', language)}: {result.unitNumber}</span>}
+  1374→                  {result.vendor && <span>{t('vendor', language)}: {result.vendor}</span>}
+  1375→                  {result.building && <span>{result.building}</span>}
+  1376→                </div>
+  1377→                {result.paidAmount !== undefined && canSeeRevenue && (
+  1378→                  <div className="flex gap-4 mt-2 text-xs">
+  1379→                    <span className="text-emerald-600">{t('paid', language)}: {formatAED(result.paidAmount)}</span>
+  1380→                    {result.remaining > 0 && <span className="text-red-600">{t('remaining', language)}: {formatAED(result.remaining)}</span>}
+  1381→                  </div>
+  1382→                )}
+  1383→              </div>
+  1384→            ))}
+  1385→          </div>
+  1386→        </DialogContent>
+  1387→      </Dialog>
+  1388→
+  1389→      {/* Edit Payment Dialog */}
+  1390→      <Dialog open={editPaymentDialog} onOpenChange={setEditPaymentDialog}>
+  1391→        <DialogContent className="sm:max-w-lg">
+  1392→          <DialogHeader>
+  1393→            <DialogTitle className="flex items-center gap-2">
+  1394→              <Pencil className="w-5 h-5 text-blue-600" />
+  1395→              {language === 'ar' ? 'تعديل الدفعة' : language === 'bn' ? 'পেমেন্ট সম্পাদনা' : language === 'ur' ? 'ادائیگی میں ترمیم' : 'Edit Payment'}
+  1396→            </DialogTitle>
+  1397→          </DialogHeader>
+  1398→          <div className="space-y-4 py-2">
+  1399→            <div>
+  1400→              <Label>{t('amount', language)}</Label>
+  1401→              <Input type="number" value={editForm.amount} onChange={e => setEditForm({ ...editForm, amount: Number(e.target.value) })} />
+  1402→            </div>
+  1403→            <div>
+  1404→              <Label>{t('paymentDate', language)}</Label>
+  1405→              <Input type="date" value={editForm.date} onChange={e => setEditForm({ ...editForm, date: e.target.value })} />
+  1406→            </div>
+  1407→            <div>
+  1408→              <Label>{t('paymentMethod', language)}</Label>
+  1409→              <Select value={editForm.method} onValueChange={v => setEditForm({ ...editForm, method: v })}>
+  1410→                <SelectTrigger><SelectValue /></SelectTrigger>
+  1411→                <SelectContent>
+  1412→                  <SelectItem value="cash">{t('cash', language)}</SelectItem>
+  1413→                  <SelectItem value="transfer">{t('bankTransfer', language)}</SelectItem>
+  1414→                  <SelectItem value="cheque">{t('cheque', language)}</SelectItem>
+  1415→                </SelectContent>
+  1416→              </Select>
+  1417→            </div>
+  1418→            <div>
+  1419→              <Label>{t('reference', language)}</Label>
+  1420→              <Input value={editForm.reference} onChange={e => setEditForm({ ...editForm, reference: e.target.value })} />
+  1421→            </div>
+  1422→            <div>
+  1423→              <Label>{t('notes', language)}</Label>
+  1424→              <Input value={editForm.notes} onChange={e => setEditForm({ ...editForm, notes: e.target.value })} />
+  1425→            </div>
+  1426→            {selectedPayment?.allocationType && (
+  1427→              <div className="flex items-center gap-2">
+  1428→                <Label>{t('allocationType', language)}</Label>
+  1429→                <Badge variant="outline" className="text-xs px-2 py-0.5 border-emerald-300 text-emerald-700">
+  1430→                  {selectedPayment.allocationType === 'CURRENT_RENT' && t('currentRent', language)}
+  1431→                  {selectedPayment.allocationType === 'HISTORICAL_DEBT' && t('historicalDebt', language)}
+  1432→                  {selectedPayment.allocationType === 'ADVANCE_PAYMENT' && t('advancePayment', language)}
+  1433→                </Badge>
+  1434→              </div>
+  1435→            )}
+  1436→          </div>
+  1437→          {paymentError && (
+  1438→            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+  1439→              <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+  1440→              <p className="text-sm text-red-700">{paymentError}</p>
+  1441→            </div>
+  1442→          )}
+  1443→          <DialogFooter>
+  1444→            <Button variant="outline" onClick={() => { setEditPaymentDialog(false); setPaymentError('') }}>{t('cancel', language)}</Button>
+  1445→            <Button onClick={handleEditPayment} disabled={editForm.amount <= 0 || paymentActionLoading} className="bg-blue-600 hover:bg-blue-700 text-white">
+  1446→              {paymentActionLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Pencil className="w-4 h-4 mr-2" />}
+  1447→              {t('save', language)}
+  1448→            </Button>
+  1449→          </DialogFooter>
+  1450→        </DialogContent>
+  1451→      </Dialog>
+  1452→
+  1453→      {/* Delete Payment Dialog */}
+  1454→      <Dialog open={deletePaymentDialog} onOpenChange={setDeletePaymentDialog}>
+  1455→        <DialogContent className="sm:max-w-md">
+  1456→          <DialogHeader>
+  1457→            <DialogTitle className="flex items-center gap-2 text-red-600">
+  1458→              <Trash2 className="w-5 h-5" />
+  1459→              {language === 'ar' ? 'حذف الدفعة' : language === 'bn' ? 'পেমেন্ট মুছুন' : language === 'ur' ? 'ادائیگی حذف کریں' : 'Delete Payment'}
+  1460→            </DialogTitle>
+  1461→          </DialogHeader>
+  1462→          <div className="py-4">
+  1463→            <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+  1464→              <div className="flex items-start gap-3">
+  1465→                <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+  1466→                <div>
+  1467→                  <p className="text-sm text-red-800 font-medium">
+  1468→                    {language === 'ar' ? 'هل أنت متأكد من حذف هذه الدفعة؟' : language === 'bn' ? 'আপনি কি এই পেমেন্টটি মুছে ফেলতে চান?' : language === 'ur' ? 'کیا آپ یہ ادائیگی حذف کرنا چاہتے ہیں؟' : 'Are you sure you want to delete this payment?'}
+  1469→                  </p>
+  1470→                  {selectedPayment && canSeeRevenue && (
+  1471→                    <p className="text-sm text-red-600 mt-1">
+  1472→                      {formatAED(selectedPayment.amount)} — {selectedPayment.date ? new Date(selectedPayment.date).toLocaleDateString() : ''}
+  1473→                    </p>
+  1474→                  )}
+  1475→                  <p className="text-xs text-red-500 mt-1">
+  1476→                    {language === 'ar' ? 'سيتم تحديث حالة الدفع والإيرادات تلقائياً' : language === 'bn' ? 'পেমেন্ট স্ট্যাটাস এবং রেভিনিউ স্বয়ংক্রিয়ভাবে আপডেট হবে' : language === 'ur' ? 'ادائیگی کی حیثیت اور آمدنی خودکار طور پر اپ ڈیٹ ہوگی' : 'Payment status and revenue will be automatically recalculated.'}
+  1477→                  </p>
+  1478→                </div>
+  1479→              </div>
+  1480→            </div>
+  1481→            <div className="mt-4">
+  1482→              <Label>
+  1483→                {language === 'ar' ? 'سبب الحذف (اختياري)' : language === 'bn' ? 'মুছে ফেলার কারণ (ঐচ্ছিক)' : language === 'ur' ? 'حذف کرنے کی وجہ (اختیاری)' : 'Reason for deletion (optional)'}
+  1484→              </Label>
+  1485→              <Input
+  1486→                value={deleteReason}
+  1487→                onChange={e => setDeleteReason(e.target.value)}
+  1488→                placeholder={language === 'ar' ? 'أدخل سبب الحذف...' : language === 'bn' ? 'মুছে ফেলার কারণ লিখুন...' : language === 'ur' ? 'حذف کرنے کی وجہ درج کریں...' : 'Enter reason for deletion...'}
+  1489→                className="mt-1"
+  1490→              />
+  1491→            </div>
+  1492→          </div>
+  1493→          {paymentError && (
+  1494→            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+  1495→              <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+  1496→              <p className="text-sm text-red-700">{paymentError}</p>
+  1497→            </div>
+  1498→          )}
+  1499→          <DialogFooter>
+  1500→            <Button variant="outline" onClick={() => { setDeletePaymentDialog(false); setPaymentError('') }}>{t('cancel', language)}</Button>
+  1501→            <Button onClick={handleDeletePayment} disabled={paymentActionLoading} variant="destructive">
+  1502→              {paymentActionLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
+  1503→              {language === 'ar' ? 'حذف الدفعة' : language === 'bn' ? 'পেমেন্ট মুছুন' : language === 'ur' ? 'ادائیگی حذف کریں' : 'Delete Payment'}
+  1504→            </Button>
+  1505→          </DialogFooter>
+  1506→        </DialogContent>
+  1507→      </Dialog>
+  1508→
+  1509→      {/* Create Adjustment Dialog */}
+  1510→      <Dialog open={adjustmentDialogOpen} onOpenChange={setAdjustmentDialogOpen}>
+  1511→        <DialogContent className="sm:max-w-lg">
+  1512→          <DialogHeader>
+  1513→            <DialogTitle className="flex items-center gap-2">
+  1514→              <MinusCircle className="w-5 h-5 text-amber-600" />
+  1515→              {t('createAdjustment', language)} - {adjustmentTenant && getNameByLang(adjustmentTenant, language)}
+  1516→            </DialogTitle>
+  1517→          </DialogHeader>
+  1518→          <div className="space-y-4 py-2">
+  1519→            <div>
+  1520→              <Label>{t('adjustmentAmount', language)}</Label>
+  1521→              <Input type="number" value={adjustmentForm.amount} onChange={e => setAdjustmentForm({ ...adjustmentForm, amount: Number(e.target.value) })} />
+  1522→            </div>
+  1523→            <div>
+  1524→              <Label>{t('adjustmentType', language)}</Label>
+  1525→              <Select value={adjustmentForm.adjustmentType} onValueChange={v => setAdjustmentForm({ ...adjustmentForm, adjustmentType: v })}>
+  1526→                <SelectTrigger><SelectValue /></SelectTrigger>
+  1527→                <SelectContent>
+  1528→                  <SelectItem value="maintenance_delay">{t('maintenance_delay', language)}</SelectItem>
+  1529→                  <SelectItem value="flood_damage">{t('flood_damage', language)}</SelectItem>
+  1530→                  <SelectItem value="utility_failure">{t('utility_failure', language)}</SelectItem>
+  1531→                  <SelectItem value="goodwill">{t('goodwill', language)}</SelectItem>
+  1532→                  <SelectItem value="contract_amendment">{t('contract_amendment', language)}</SelectItem>
+  1533→                  <SelectItem value="owner_discount">{t('owner_discount', language)}</SelectItem>
+  1534→                  <SelectItem value="other">{t('other', language)}</SelectItem>
+  1535→                </SelectContent>
+  1536→              </Select>
+  1537→            </div>
+  1538→            <div>
+  1539→              <Label>{t('adjustmentReason', language)}</Label>
+  1540→              <Input value={adjustmentForm.reason} onChange={e => setAdjustmentForm({ ...adjustmentForm, reason: e.target.value })} placeholder={language === 'ar' ? 'أدخل السبب...' : language === 'bn' ? 'কারণ লিখুন...' : language === 'ur' ? 'وجہ درج کریں...' : 'Enter reason...'} />
+  1541→            </div>
+  1542→            <div>
+  1543→              <Label>{t('notes', language)}</Label>
+  1544→              <Input value={adjustmentForm.notes} onChange={e => setAdjustmentForm({ ...adjustmentForm, notes: e.target.value })} />
+  1545→            </div>
+  1546→            <div className="grid grid-cols-2 gap-4">
+  1547→              <div>
+  1548→                <Label>{t('effectiveMonth', language)}</Label>
+  1549→                <Select value={String(adjustmentForm.effectiveMonth)} onValueChange={v => setAdjustmentForm({ ...adjustmentForm, effectiveMonth: Number(v) })}>
+  1550→                  <SelectTrigger><SelectValue /></SelectTrigger>
+  1551→                  <SelectContent>
+  1552→                    {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+  1553→                      <SelectItem key={m} value={String(m)}>{getMonthName(m, language)}</SelectItem>
+  1554→                    ))}
+  1555→                  </SelectContent>
+  1556→                </Select>
+  1557→              </div>
+  1558→              <div>
+  1559→                <Label>{t('effectiveYear', language)}</Label>
+  1560→                <Select value={String(adjustmentForm.effectiveYear)} onValueChange={v => setAdjustmentForm({ ...adjustmentForm, effectiveYear: Number(v) })}>
+  1561→                  <SelectTrigger><SelectValue /></SelectTrigger>
+  1562→                  <SelectContent>
+  1563→                    <SelectItem value="2024">2024</SelectItem>
+  1564→                    <SelectItem value="2025">2025</SelectItem>
+  1565→                    <SelectItem value="2026">2026</SelectItem>
+  1566→                    <SelectItem value="2027">2027</SelectItem>
+  1567→                  </SelectContent>
+  1568→                </Select>
+  1569→              </div>
+  1570→            </div>
+  1571→            <div>
+  1572→              <Label>{t('durationMonths', language)}</Label>
+  1573→              <Input type="number" min={1} max={12} value={adjustmentForm.durationMonths} onChange={e => setAdjustmentForm({ ...adjustmentForm, durationMonths: Number(e.target.value) || 1 })} />
+  1574→            </div>
+  1575→          </div>
+  1576→          {adjustmentError && (
+  1577→            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+  1578→              <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+  1579→              <p className="text-sm text-red-700">{adjustmentError}</p>
+  1580→            </div>
+  1581→          )}
+  1582→          <DialogFooter>
+  1583→            <Button variant="outline" onClick={() => setAdjustmentDialogOpen(false)}>{t('cancel', language)}</Button>
+  1584→            <Button onClick={handleCreateAdjustment} disabled={adjustmentForm.amount <= 0 || !adjustmentForm.reason || adjustmentLoading} className="bg-amber-600 hover:bg-amber-700 text-white">
+  1585→              {adjustmentLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <MinusCircle className="w-4 h-4 mr-2" />}
+  1586→              {t('createAdjustment', language)}
+  1587→            </Button>
+  1588→          </DialogFooter>
+  1589→        </DialogContent>
+  1590→      </Dialog>
+  1591→
+  1592→      {/* Cancel Adjustment Dialog */}
+  1593→      <Dialog open={cancelAdjustmentDialogOpen} onOpenChange={setCancelAdjustmentDialogOpen}>
+  1594→        <DialogContent className="sm:max-w-md">
+  1595→          <DialogHeader>
+  1596→            <DialogTitle className="flex items-center gap-2 text-amber-600">
+  1597→              <MinusCircle className="w-5 h-5" />
+  1598→              {t('cancelAdjustment', language)}
+  1599→            </DialogTitle>
+  1600→          </DialogHeader>
+  1601→          <div className="py-4">
+  1602→            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+  1603→              <div className="flex items-start gap-3">
+  1604→                <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+  1605→                <div>
+  1606→                  <p className="text-sm text-amber-800 font-medium">
+  1607→                    {language === 'ar' ? 'هل أنت متأكد من إلغاء هذا التعديل؟' : language === 'bn' ? 'আপনি কি এই সমন্বয়টি বাতিল করতে চান?' : language === 'ur' ? 'کیا آپ یہ ایڈجسٹمنٹ منسوخ کرنا چاہتے ہیں؟' : 'Are you sure you want to cancel this adjustment?'}
+  1608→                  </p>
+  1609→                  {cancelAdjustmentTarget && canSeeRevenue && (
+  1610→                    <p className="text-sm text-amber-600 mt-1">
+  1611→                      {formatAED(cancelAdjustmentTarget.amount)} — {t(cancelAdjustmentTarget.adjustmentType as any, language) || cancelAdjustmentTarget.adjustmentType}
+  1612→                    </p>
+  1613→                  )}
+  1614→                  <p className="text-xs text-amber-500 mt-1">
+  1615→                    {language === 'ar' ? 'سيتم تحديث حالة الدفع تلقائياً' : language === 'bn' ? 'পেমেন্ট স্ট্যাটাস স্বয়ংক্রিয়ভাবে আপডেট হবে' : language === 'ur' ? 'ادائیگی کی حیثیت خودکار طور پر اپ ڈیٹ ہوگی' : 'Payment status will be automatically recalculated.'}
+  1616→                  </p>
+  1617→                </div>
+  1618→              </div>
+  1619→            </div>
+  1620→            <div className="mt-4">
+  1621→              <Label>{t('cancellationReason', language)}</Label>
+  1622→              <Input
+  1623→                value={cancelAdjustmentReason}
+  1624→                onChange={e => setCancelAdjustmentReason(e.target.value)}
+  1625→                placeholder={language === 'ar' ? 'أدخل سبب الإلغاء...' : language === 'bn' ? 'বাতিলের কারণ লিখুন...' : language === 'ur' ? 'منسوخ کرنے کی وجہ درج کریں...' : 'Enter cancellation reason...'}
+  1626→                className="mt-1"
+  1627→              />
+  1628→            </div>
+  1629→          </div>
+  1630→          {adjustmentError && (
+  1631→            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+  1632→              <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+  1633→              <p className="text-sm text-red-700">{adjustmentError}</p>
+  1634→            </div>
+  1635→          )}
+  1636→          <DialogFooter>
+  1637→            <Button variant="outline" onClick={() => { setCancelAdjustmentDialogOpen(false); setAdjustmentError('') }}>{t('cancel', language)}</Button>
+  1638→            <Button onClick={handleCancelAdjustment} disabled={adjustmentLoading} variant="destructive">
+  1639→              {adjustmentLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <X className="w-4 h-4 mr-2" />}
+  1640→              {t('cancelAdjustment', language)}
+  1641→            </Button>
+  1642→          </DialogFooter>
+  1643→        </DialogContent>
+  1644→      </Dialog>
+  1645→
+  1646→      {/* Edit Adjustment Dialog */}
+  1647→      <Dialog open={editAdjustmentDialogOpen} onOpenChange={setEditAdjustmentDialogOpen}>
+  1648→        <DialogContent className="sm:max-w-md">
+  1649→          <DialogHeader>
+  1650→            <DialogTitle className="flex items-center gap-2 text-amber-600">
+  1651→              <Pencil className="w-5 h-5" />
+  1652→              {t('editAdjustment', language)}
+  1653→            </DialogTitle>
+  1654→          </DialogHeader>
+  1655→          <div className="space-y-4 py-2">
+  1656→            <div>
+  1657→              <Label>{t('adjustmentAmount', language)}</Label>
+  1658→              <Input type="number" min={1} value={editAdjustmentForm.amount} onChange={e => setEditAdjustmentForm({ ...editAdjustmentForm, amount: Number(e.target.value) || 0 })} />
+  1659→            </div>
+  1660→            <div>
+  1661→              <Label>{t('adjustmentType', language)}</Label>
+  1662→              <Select value={editAdjustmentForm.adjustmentType} onValueChange={v => setEditAdjustmentForm({ ...editAdjustmentForm, adjustmentType: v })}>
+  1663→                <SelectTrigger><SelectValue /></SelectTrigger>
+  1664→                <SelectContent>
+  1665→                  <SelectItem value="maintenance_delay">{t('maintenance_delay', language)}</SelectItem>
+  1666→                  <SelectItem value="flood_damage">{t('flood_damage', language)}</SelectItem>
+  1667→                  <SelectItem value="utility_failure">{t('utility_failure', language)}</SelectItem>
+  1668→                  <SelectItem value="goodwill">{t('goodwill', language)}</SelectItem>
+  1669→                  <SelectItem value="contract_amendment">{t('contract_amendment', language)}</SelectItem>
+  1670→                  <SelectItem value="owner_discount">{t('owner_discount', language)}</SelectItem>
+  1671→                  <SelectItem value="other">{t('other', language)}</SelectItem>
+  1672→                </SelectContent>
+  1673→              </Select>
+  1674→            </div>
+  1675→            <div>
+  1676→              <Label>{t('adjustmentReason', language)}</Label>
+  1677→              <Input value={editAdjustmentForm.reason} onChange={e => setEditAdjustmentForm({ ...editAdjustmentForm, reason: e.target.value })} />
+  1678→            </div>
+  1679→            <div>
+  1680→              <Label>{t('notes', language)}</Label>
+  1681→              <Input value={editAdjustmentForm.notes} onChange={e => setEditAdjustmentForm({ ...editAdjustmentForm, notes: e.target.value })} />
+  1682→            </div>
+  1683→            <div className="grid grid-cols-2 gap-4">
+  1684→              <div>
+  1685→                <Label>{t('effectiveMonth', language)}</Label>
+  1686→                <Input type="number" min={1} max={12} value={editAdjustmentForm.effectiveMonth} onChange={e => setEditAdjustmentForm({ ...editAdjustmentForm, effectiveMonth: Number(e.target.value) || 1 })} />
+  1687→              </div>
+  1688→              <div>
+  1689→                <Label>{t('effectiveYear', language)}</Label>
+  1690→                <Input type="number" min={2020} max={2030} value={editAdjustmentForm.effectiveYear} onChange={e => setEditAdjustmentForm({ ...editAdjustmentForm, effectiveYear: Number(e.target.value) || 2026 })} />
+  1691→              </div>
+  1692→            </div>
+  1693→            <div>
+  1694→              <Label>{t('durationMonths', language)}</Label>
+  1695→              <Input type="number" min={1} max={12} value={editAdjustmentForm.durationMonths} onChange={e => setEditAdjustmentForm({ ...editAdjustmentForm, durationMonths: Number(e.target.value) || 1 })} />
+  1696→            </div>
+  1697→          </div>
+  1698→          {adjustmentError && (
+  1699→            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+  1700→              <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+  1701→              <p className="text-sm text-red-700">{adjustmentError}</p>
+  1702→            </div>
+  1703→          )}
+  1704→          <DialogFooter>
+  1705→            <Button variant="outline" onClick={() => { setEditAdjustmentDialogOpen(false); setAdjustmentError('') }}>{t('cancel', language)}</Button>
+  1706→            <Button onClick={handleEditAdjustment} disabled={editAdjustmentForm.amount <= 0 || !editAdjustmentForm.reason || adjustmentLoading} className="bg-amber-600 hover:bg-amber-700 text-white">
+  1707→              {adjustmentLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Pencil className="w-4 h-4 mr-2" />}
+  1708→              {t('save', language)}
+  1709→            </Button>
+  1710→          </DialogFooter>
+  1711→        </DialogContent>
+  1712→      </Dialog>
+  1713→    </div>
+  1714→  )
+  1715→}
+  1716→
