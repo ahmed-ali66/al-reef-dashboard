@@ -6,6 +6,7 @@ import {
   errorResponse,
 } from '@/lib/api-utils'
 import { Prisma } from '@prisma/client'
+import { calculateEffectivePaymentsReceived } from '@/lib/financial-utils'
 
 // GET /api/invoices/search?q=INV-202506-101 — Search invoices by invoice number
 export async function GET(request: Request) {
@@ -89,7 +90,9 @@ export async function GET(request: Request) {
         if (invoiceNumber.toLowerCase() === query.toLowerCase() ||
             (query.length >= 3 && invoiceNumber.toLowerCase().includes(query.toLowerCase()))) {
           const payments = tenant.payments.filter(p => p.month === m && p.year === y && p.allocationType !== 'HISTORICAL_DEBT')
-          const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount), 0)
+          // Use effective payments to avoid double-counting ADVANCE_PAYMENT excess
+          // that is already reflected in tenant.creditBalance.
+          const totalPaid = calculateEffectivePaymentsReceived(payments, Number(tenant.rentAmount), 0, 0)
           const rentAmount = Number(tenant.rentAmount)
 
           let paymentStatus: 'paid' | 'partial' | 'overdue' | 'unpaid' | 'due-soon' = 'unpaid'
@@ -117,7 +120,8 @@ export async function GET(request: Request) {
             propertyName: tenant.property?.name || null,
             unitNumber: tenant.unitNumber,
             paidAmount: canSeeFinancials ? totalPaid : 0,
-            // CRITICAL: totalPaid already excludes HISTORICAL_DEBT (reflected in reduced openingBalance)
+            // CRITICAL: totalPaid uses effective payments (ADVANCE_PAYMENT excess excluded;
+            // it is already in creditBalance). HISTORICAL_DEBT excluded (reflected in openingBalance).
             remaining: canSeeFinancials ? Math.max(0, (Number(tenant.openingBalance) || 0) + rentAmount - (Number(tenant.creditBalance) || 0) - totalPaid) : 0,
           })
 

@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Building2, Plus, Pencil, Trash2, Users, Loader2, Archive, ArchiveRestore } from 'lucide-react'
+import { calculateEffectivePaymentsReceived } from '@/lib/financial-utils'
 
 export default function Properties() {
   const { language, authUser, setCurrentPage, setSelectedPropertyId } = useAppStore()
@@ -147,9 +148,15 @@ export default function Properties() {
           const currentMonth = now.getMonth() + 1
           const currentYear = now.getFullYear()
           const collectedAmount = activeTenantList.reduce((s, tenant) => {
-            // CRITICAL: Exclude HISTORICAL_DEBT payments — they're already reflected in reduced openingBalance
-            const paid = (tenant.payments || []).filter(p => p.month === currentMonth && p.year === currentYear && p.allocationType !== 'HISTORICAL_DEBT').reduce((sum, p) => sum + p.amount, 0)
-            return s + Math.min(paid, tenant.rentAmount)
+            // CRITICAL: Avoid double-counting ADVANCE_PAYMENT excess.
+            // - HISTORICAL_DEBT reduces openingBalance (excluded here).
+            // - ADVANCE_PAYMENT excess is mirrored into tenant.creditBalance when recorded.
+            //   Use effective payments (advance capped at current charges) so the excess
+            //   is only ever counted once — via creditBalance — across months.
+            const monthPayments = (tenant.payments || []).filter(p => p.month === currentMonth && p.year === currentYear && p.allocationType !== 'HISTORICAL_DEBT')
+            const effectivePaid = calculateEffectivePaymentsReceived(monthPayments, tenant.rentAmount, Number(tenant.municipalityFee) || 0, 0)
+            const currentCharges = tenant.rentAmount + (Number(tenant.municipalityFee) || 0)
+            return s + Math.min(effectivePaid, Math.max(0, currentCharges))
           }, 0)
           const outstandingAmount = Math.max(0, totalRent - collectedAmount)
 

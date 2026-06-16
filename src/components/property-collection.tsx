@@ -5,7 +5,7 @@ import type { TenantData, PropertyData, PaymentData, RentAdjustmentData, TenantG
 import { useAppStore, isOwnerOrAdmin } from '@/lib/store'
 import { useDataStore } from '@/lib/data-store'
 import { formatAED, getPaymentStatusColor, cn2, isFinanciallyActive } from '@/lib/utils'
-import { calculateFinancials } from '@/lib/financial-utils'
+import { calculateFinancials, calculateEffectivePaymentsReceived } from '@/lib/financial-utils'
 import { t, getMonthName, getNameByLang } from '@/lib/i18n'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -112,12 +112,19 @@ export default function PropertyCollection() {
   // Get financial details for a tenant
   const getTenantFinancials = (tenant: TenantData) => {
     const payments = (tenant.payments || []).filter(p => p.month === selectedMonth && p.year === selectedYear && p.allocationType !== 'HISTORICAL_DEBT')
-    const paymentsReceived = payments.reduce((sum, p) => sum + p.amount, 0)
     const tenantAdjustments = getTenantAdjustments(tenant)
     const totalAdjustments = tenantAdjustments.reduce((sum, a) => sum + a.amount, 0)
+    // Use effective payments to avoid double-counting ADVANCE_PAYMENT excess
+    // that is already mirrored into tenant.creditBalance when recorded.
+    const paymentsReceived = calculateEffectivePaymentsReceived(
+      payments,
+      tenant.rentAmount,
+      Number(tenant.municipalityFee) || 0,
+      totalAdjustments,
+    )
     return calculateFinancials({
       rentAmount: tenant.rentAmount,
-      municipalityFee: tenant.municipalityFee,
+      municipalityFee: tenant.municipalityFee ?? undefined,
       adjustments: totalAdjustments,
       openingBalance: tenant.openingBalance,
       creditBalance: tenant.creditBalance,
@@ -153,8 +160,13 @@ export default function PropertyCollection() {
   const currentMonth = now.getMonth() + 1
   const currentYear = now.getFullYear()
   const collectedAmount = activeTenants.reduce((s, tenant) => {
-    const paid = (tenant.payments || []).filter(p => p.month === currentMonth && p.year === currentYear && p.allocationType !== 'HISTORICAL_DEBT').reduce((sum, p) => sum + p.amount, 0)
-    return s + Math.min(paid, tenant.rentAmount)
+    const adj = getTenantAdjustments(tenant).reduce((sum, a) => sum + a.amount, 0)
+    const monthPayments = (tenant.payments || []).filter(p => p.month === currentMonth && p.year === currentYear && p.allocationType !== 'HISTORICAL_DEBT')
+    // Effective payments exclude ADVANCE_PAYMENT excess (already in creditBalance)
+    const effectivePaid = calculateEffectivePaymentsReceived(monthPayments, tenant.rentAmount, Number(tenant.municipalityFee) || 0, adj)
+    // Cap at current charges for the current-month collection progress bar
+    const currentCharges = tenant.rentAmount + (Number(tenant.municipalityFee) || 0) - adj
+    return s + Math.min(effectivePaid, Math.max(0, currentCharges))
   }, 0)
   const outstandingAmount = Math.max(0, totalRent - collectedAmount)
   const occupancy = property && property.totalUnits > 0 ? Math.round((activeTenants.length / property.totalUnits) * 100) : 0

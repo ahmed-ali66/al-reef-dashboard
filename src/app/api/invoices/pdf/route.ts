@@ -4,6 +4,7 @@ import {
   errorResponse,
   unauthorizedResponse,
 } from '@/lib/api-utils'
+import { calculateEffectivePaymentsReceived } from '@/lib/financial-utils'
 import PDFDocument from 'pdfkit'
 import path from 'path'
 import fs from 'fs'
@@ -40,9 +41,11 @@ export async function GET(request: Request) {
     if (!tenant) return errorResponse('Tenant not found', 404)
 
     // Fetch payments for this tenant/month/year
-    // CRITICAL: Exclude HISTORICAL_DEBT payments from paidAmount because those payments
-    // are already reflected in the reduced tenant.openingBalance. Including them would
-    // double-count the payment (once via reduced openingBalance, once via paymentsReceived).
+    // CRITICAL: Avoid double-counting ADVANCE_PAYMENT excess.
+    // - HISTORICAL_DEBT payments reduce openingBalance (excluded here).
+    // - ADVANCE_PAYMENT excess is mirrored into tenant.creditBalance when recorded.
+    //   Use effective payments (advance capped at current charges) so the excess
+    //   is only ever counted once — via creditBalance — across months.
     const payments = await prisma.payment.findMany({
       where: {
         tenantId: tenant.id,
@@ -53,12 +56,13 @@ export async function GET(request: Request) {
       orderBy: { date: 'desc' },
     })
 
-    const paidAmount = payments.reduce((sum, p) => sum + Number(p.amount), 0)
     const rentAmount = Number(tenant.rentAmount)
     const openingBalance = Number(tenant.openingBalance) || 0
     const creditBalance = Number(tenant.creditBalance) || 0
     const muniFee = includeMuniFee ? Number(tenant.municipalityFee) || 0 : 0
     const currentCharges = rentAmount + muniFee
+    // Effective payments cap ADVANCE_PAYMENT contribution at current charges
+    const paidAmount = calculateEffectivePaymentsReceived(payments, rentAmount, muniFee, 0)
     const totalDue = openingBalance + currentCharges - creditBalance
     const remaining = totalDue - paidAmount
 
