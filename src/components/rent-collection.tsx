@@ -221,14 +221,14 @@ export default function RentCollection() {
     return t.propertyId === propertyFilter
   })
 
-  // Derive unique properties from status-filtered tenants
+  // Derive unique properties from status-filtered tenants (sorted A-Z)
   const uniqueProperties = Array.from(
     new Map(
       propertyFiltered
         .filter(t => t.property)
         .map(t => [t.property!.id, t.property!])
     ).values()
-  ) as PropertyData[]
+  ).sort((a, b) => (getNameByLang(a, language) || '').localeCompare(getNameByLang(b, language) || '')) as PropertyData[]
 
   // Derive unique unit numbers from property-filtered tenants (context-aware)
   const uniqueUnitNumbers = Array.from(

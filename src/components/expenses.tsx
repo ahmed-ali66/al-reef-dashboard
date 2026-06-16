@@ -57,7 +57,13 @@ export default function Expenses() {
     setLoading(true)
     try {
       const store = useDataStore.getState()
-      setProperties(store.getPropertiesWithTenants())
+      // Sort properties A-Z by display name for the property dropdown
+      const lang = language
+      setProperties(
+        store.getPropertiesWithTenants().sort((a, b) =>
+          (getNameByLang(a, lang) || '').localeCompare(getNameByLang(b, lang) || '')
+        )
+      )
 
       // Build query params for server-side date filtering
       const params = new URLSearchParams()
