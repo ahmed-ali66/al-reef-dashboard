@@ -43,6 +43,9 @@ export async function GET(
             nameUr: true,
           },
         },
+        group: {
+          select: { id: true, name: true, status: true },
+        },
       },
     })
 
@@ -128,6 +131,7 @@ export async function PUT(
     if (body.depositAppliedAmount !== undefined) data.depositAppliedAmount = safeDecimal(body.depositAppliedAmount)
     if (body.depositPaymentDate !== undefined) data.depositPaymentDate = body.depositPaymentDate ? new Date(body.depositPaymentDate) : null
     if (body.emiratesId !== undefined) data.emiratesId = body.emiratesId || null
+    if (body.groupId !== undefined) data.groupId = body.groupId || null
 
     // Use OCC-protected update
     const occVersion = parseOCCVersion(body)
@@ -153,6 +157,9 @@ export async function PUT(
             nameBn: true,
             nameUr: true,
           },
+        },
+        group: {
+          select: { id: true, name: true, status: true },
         },
       },
     })
@@ -247,6 +254,7 @@ export async function PATCH(
               nameUr: true,
             },
           },
+          group: { select: { id: true, name: true, status: true } },
         },
       })
 
@@ -278,6 +286,7 @@ export async function PATCH(
               nameUr: true,
             },
           },
+          group: { select: { id: true, name: true, status: true } },
         },
       })
 

@@ -14,7 +14,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
-import { Building2, ArrowLeft, Search, Banknote, Loader2, X, ChevronDown, ChevronUp, Users, Link2 } from 'lucide-react'
+import { Building2, ArrowLeft, Search, Banknote, Loader2, X, ChevronDown, ChevronUp, Users, Link2, Pencil, Trash2 } from 'lucide-react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 export default function PropertyCollection() {
@@ -46,7 +46,83 @@ export default function PropertyCollection() {
   // Expanded tenant payment history
   const [expandedTenant, setExpandedTenant] = useState<string | null>(null)
 
+  // Payment edit/delete state (mirrors rent-collection.tsx)
+  const [editPaymentDialog, setEditPaymentDialog] = useState(false)
+  const [deletePaymentDialog, setDeletePaymentDialog] = useState(false)
+  const [selectedPayment, setSelectedPayment] = useState<PaymentData | null>(null)
+  const [editForm, setEditForm] = useState({ amount: 0, date: '', method: 'cash', reference: '', notes: '', isLate: false })
+  const [deleteReason, setDeleteReason] = useState('')
+  const [paymentActionLoading, setPaymentActionLoading] = useState(false)
+  const [paymentError, setPaymentError] = useState('')
+
   const canSeeRevenue = isOwnerOrAdmin(authUser?.role || '')
+
+  const openEditPaymentDialog = (payment: PaymentData) => {
+    setSelectedPayment(payment)
+    const paymentDate = payment.date ? new Date(payment.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
+    setEditForm({
+      amount: payment.amount,
+      date: paymentDate,
+      method: payment.method || 'cash',
+      reference: payment.reference || '',
+      notes: payment.notes || '',
+      isLate: payment.isLate,
+    })
+    setPaymentError('')
+    setEditPaymentDialog(true)
+  }
+
+  const openDeletePaymentDialog = (payment: PaymentData) => {
+    setSelectedPayment(payment)
+    setDeleteReason('')
+    setPaymentError('')
+    setDeletePaymentDialog(true)
+  }
+
+  const handleEditPayment = async () => {
+    if (!selectedPayment) return
+    setPaymentActionLoading(true)
+    setPaymentError('')
+    try {
+      const paymentDateObj = new Date(editForm.date)
+      const isLate = editForm.isLate || paymentDateObj.getDate() > 5
+      const daysLate = isLate ? Math.max(0, paymentDateObj.getDate() - 5) : 0
+
+      await useDataStore.getState().updatePayment(selectedPayment.id, {
+        amount: editForm.amount,
+        date: paymentDateObj.toISOString(),
+        method: editForm.method,
+        reference: editForm.reference || null,
+        notes: editForm.notes || null,
+        isLate,
+        daysLate,
+      })
+      setEditPaymentDialog(false)
+      setSelectedPayment(null)
+      fetchData()
+    } catch (error: any) {
+      setPaymentError(error?.message || 'Failed to update payment')
+    } finally {
+      setPaymentActionLoading(false)
+    }
+  }
+
+  const handleDeletePayment = async () => {
+    if (!selectedPayment) return
+    setPaymentActionLoading(true)
+    setPaymentError('')
+    try {
+      await useDataStore.getState().deletePayment(selectedPayment.id, deleteReason || undefined)
+      setDeletePaymentDialog(false)
+      setSelectedPayment(null)
+      setDeleteReason('')
+      fetchData()
+    } catch (error: any) {
+      setPaymentError(error?.message || 'Failed to delete payment')
+    } finally {
+      setPaymentActionLoading(false)
+    }
+  }
 
   const fetchData = useCallback(() => {
     try {
@@ -707,7 +783,7 @@ export default function PropertyCollection() {
                           <div className="space-y-1">
                             {tenantPayments.map(p => (
                               <div key={p.id} className="flex items-center justify-between text-xs bg-muted/50 rounded px-2 py-1.5">
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 flex-1 min-w-0">
                                   <span className="font-medium">{formatAED(p.amount)}</span>
                                   <Badge variant="outline" className="text-[10px] px-1 py-0">
                                     {(p.method || 'cash').replace('_', ' ')}
@@ -717,8 +793,36 @@ export default function PropertyCollection() {
                                       {p.allocationType.replace('_', ' ')}
                                     </Badge>
                                   )}
+                                  {p.isLate && (
+                                    <Badge variant="outline" className="text-[10px] px-1 py-0 border-red-300 text-red-600">
+                                      {language === 'ar' ? 'متأخر' : language === 'bn' ? 'বিলম্বিত' : language === 'ur' ? 'دیر' : 'Late'}
+                                    </Badge>
+                                  )}
+                                  <span className="text-muted-foreground text-[10px]">
+                                    {p.date ? new Date(p.date).toLocaleDateString(language === 'ar' ? 'ar-AE' : 'en-AE', { day: 'numeric', month: 'short' }) : (language === 'ar' ? 'بدون تاريخ' : language === 'bn' ? 'তারিখ নেই' : language === 'ur' ? 'تاریخ نہیں' : 'No date')}
+                                  </span>
+                                  {p.reference && (
+                                    <span className="text-muted-foreground text-[10px] truncate">Ref: {p.reference}</span>
+                                  )}
                                 </div>
-                                <span className="text-muted-foreground">{new Date(p.date).toLocaleDateString()}</span>
+                                {canSeeRevenue && (
+                                  <div className="flex items-center gap-0.5 shrink-0 ml-1.5">
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); openEditPaymentDialog(p) }}
+                                      className="p-0.5 hover:bg-white rounded transition-colors"
+                                      title={language === 'ar' ? 'تعديل الدفعة' : language === 'bn' ? 'পেমেন্ট সম্পাদনা' : language === 'ur' ? 'ادائیگی میں ترمیم' : 'Edit payment'}
+                                    >
+                                      <Pencil className="w-3 h-3 text-blue-600" />
+                                    </button>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); openDeletePaymentDialog(p) }}
+                                      className="p-0.5 hover:bg-white rounded transition-colors"
+                                      title={language === 'ar' ? 'حذف الدفعة' : language === 'bn' ? 'পেমেন্ট মুছুন' : language === 'ur' ? 'ادائیگی حذف کریں' : 'Delete payment'}
+                                    >
+                                      <Trash2 className="w-3 h-3 text-red-600" />
+                                    </button>
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>

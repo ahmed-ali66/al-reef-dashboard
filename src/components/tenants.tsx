@@ -146,15 +146,28 @@ export default function Tenants() {
   const [overrideReason, setOverrideReason] = useState('')
   const [overrideSaving, setOverrideSaving] = useState(false)
 
+  // Group dialog (link existing tenants into a new group)
+  const [groupDialogOpen, setGroupDialogOpen] = useState(false)
+  const [groupForm, setGroupForm] = useState({
+    groupName: '',
+    groupNameAr: '',
+    propertyId: '',
+    selectedTenantIds: [] as string[],
+    notes: '',
+  })
+  const [groupSaving, setGroupSaving] = useState(false)
+
   const isPrivileged = authUser ? isOwnerOrAdmin(authUser.role) : true
   // Staff can create tenants but not edit/delete (isPrivileged = owner/admin only for edit/delete)
   const canCreate = true // All authenticated users can create tenants
 
+  const [tenantGroups, setTenantGroups] = useState<any[]>([])
   const fetchData = useCallback(() => {
     try {
       const store = useDataStore.getState()
       setTenants(store.getTenantsWithRelations())
       setProperties(store.getPropertiesWithTenants())
+      setTenantGroups(store.tenantGroups || [])
     } catch (e) {
       console.error(e)
     } finally {
@@ -168,6 +181,57 @@ export default function Tenants() {
     setEditing(null)
     setForm({ ...emptyForm, propertyId: properties[0]?.id || '' })
     setDialogOpen(true)
+  }
+
+  // ─── Group Management ─────────────────────────────────────────────────────
+  const openGroupDialog = () => {
+    setGroupForm({ groupName: '', groupNameAr: '', propertyId: properties[0]?.id || '', selectedTenantIds: [], notes: '' })
+    setGroupDialogOpen(true)
+  }
+
+  const handleCreateTenantGroup = async () => {
+    if (!groupForm.groupName) return alert('Group name is required')
+    if (!groupForm.propertyId) return alert('Property is required')
+    if (groupForm.selectedTenantIds.length < 2) return alert(t('selectAtLeastTwoUnits', language))
+    setGroupSaving(true)
+    try {
+      await useDataStore.getState().addTenantGroup({
+        propertyId: groupForm.propertyId,
+        name: groupForm.groupName,
+        nameAr: groupForm.groupNameAr || undefined,
+        billingMode: 'consolidated',
+        notes: groupForm.notes || undefined,
+        tenantIds: groupForm.selectedTenantIds,
+      })
+      setGroupDialogOpen(false)
+      fetchData()
+    } catch (error: any) {
+      alert(error.message || 'Failed to create group')
+    } finally {
+      setGroupSaving(false)
+    }
+  }
+
+  const handleDissolveTenantGroup = async (groupId: string) => {
+    if (!confirm(t('confirmDissolveGroup', language))) return
+    try {
+      await useDataStore.getState().deleteTenantGroup(groupId)
+      fetchData()
+    } catch (error: any) {
+      alert(error.message || 'Failed to dissolve group')
+    }
+  }
+
+  const handleRemoveTenantFromGroup = async (tenantId: string, groupId: string) => {
+    try {
+      await useDataStore.getState().updateTenantGroup(groupId, {
+        tenantIds: [tenantId],
+        action: 'remove',
+      } as any)
+      fetchData()
+    } catch (error: any) {
+      alert(error.message || 'Failed to remove tenant from group')
+    }
   }
 
   const openEdit = (tenant: TenantData) => {
@@ -415,10 +479,18 @@ export default function Tenants() {
             {activeCount} {t('activeTenants', language).toLowerCase()}
           </p>
         </div>
-        <Button onClick={openNew} className="bg-emerald-600 hover:bg-emerald-700 text-white">
-          <Plus className="w-4 h-4 mr-2" />
-          {t('addTenant', language)}
-        </Button>
+        <div className="flex items-center gap-2">
+          {isPrivileged && (
+            <Button onClick={openGroupDialog} variant="outline" className="border-indigo-300 text-indigo-700 hover:bg-indigo-50">
+              <Users className="w-4 h-4 mr-2" />
+              {t('manageGroups', language)}
+            </Button>
+          )}
+          <Button onClick={openNew} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+            <Plus className="w-4 h-4 mr-2" />
+            {t('addTenant', language)}
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -1600,6 +1672,183 @@ export default function Tenants() {
               </div>
             )}
           </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── MANAGE GROUPS DIALOG ── */}
+      <Dialog open={groupDialogOpen} onOpenChange={setGroupDialogOpen}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Users className="w-5 h-5 text-indigo-600" />
+              {t('manageGroups', language)}
+            </DialogTitle>
+            <p className="text-xs text-muted-foreground">
+              {language === 'ar' ? 'إنشاء مجموعة تربط عدة مستأجرين تحت حساب واحد (مثل حساب RES)' :
+               language === 'bn' ? 'একাধিক ভাড়াটিয়াকে একটি অ্যাকাউন্টে যুক্ত করে গ্রুপ তৈরি করুন (যেমন RES অ্যাকাউন্ট)' :
+               language === 'ur' ? 'متعدد کرایہ داروں کو ایک اکاؤنٹ میں جوڑ کر گروپ بنائیں (جیسے RES اکاؤنٹ)' :
+               'Create a group linking multiple tenants under one account (like the RES Account)'}
+            </p>
+          </DialogHeader>
+
+          <ScrollArea className="max-h-[70vh] pr-2">
+            <div className="space-y-5 pb-4">
+              {/* Existing groups list */}
+              {tenantGroups.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                    <Users className="w-4 h-4 text-indigo-600" />
+                    {t('linkedToGroup', language)} ({tenantGroups.length})
+                  </h3>
+                  <div className="space-y-2">
+                    {tenantGroups.map((g: any) => {
+                      const memberCount = (g.tenants?.length || 0) + (g.reservations?.length || 0)
+                      const prop = properties.find(p => p.id === g.propertyId)
+                      return (
+                        <div key={g.id} className="border rounded-lg p-3 bg-indigo-50/30">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-sm">{g.name}</span>
+                                <Badge variant="outline" className="text-[10px] border-indigo-300 text-indigo-700">
+                                  {memberCount} {language === 'ar' ? 'أعضاء' : language === 'bn' ? 'সদস্য' : language === 'ur' ? 'ممبران' : 'members'}
+                                </Badge>
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                {prop ? getNameByLang(prop, language) : '—'}
+                                {g.tenants && g.tenants.length > 0 && (
+                                  <span className="ml-2">
+                                    · {language === 'ar' ? 'الوحدات' : language === 'bn' ? 'ইউনিট' : language === 'ur' ? 'یونٹس' : 'Units'}: {g.tenants.map((t: any) => t.unitNumber).filter(Boolean).join(', ')}
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="border-red-300 text-red-600 hover:bg-red-50"
+                              onClick={() => handleDissolveTenantGroup(g.id)}
+                            >
+                              <Trash2 className="w-3 h-3 mr-1" />
+                              {t('dissolveGroup', language)}
+                            </Button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <Separator />
+
+              {/* Create new group */}
+              <div>
+                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                  <Plus className="w-4 h-4 text-indigo-600" />
+                  {t('createNewGroup', language)}
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>{t('groupAccountName', language)} *</Label>
+                    <Input
+                      value={groupForm.groupName}
+                      onChange={e => setGroupForm(prev => ({ ...prev, groupName: e.target.value }))}
+                      placeholder={t('groupAccountNamePlaceholder', language)}
+                    />
+                  </div>
+                  <div>
+                    <Label>{t('nameArabic', language)}</Label>
+                    <Input
+                      value={groupForm.groupNameAr}
+                      onChange={e => setGroupForm(prev => ({ ...prev, groupNameAr: e.target.value }))}
+                      dir="rtl"
+                    />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <Label>{t('propertyName', language)} *</Label>
+                  <Select
+                    value={groupForm.propertyId}
+                    onValueChange={v => setGroupForm(prev => ({ ...prev, propertyId: v, selectedTenantIds: [] }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={t('selectProperty', language)} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {properties.map(p => (
+                        <SelectItem key={p.id} value={p.id}>{getNameByLang(p, language)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Tenant multi-select (checkbox list) */}
+                {groupForm.propertyId && (
+                  <div className="mt-3">
+                    <Label>{t('groupMembers', language)} * ({groupForm.selectedTenantIds.length} {language === 'ar' ? 'محدد' : language === 'bn' ? 'নির্বাচিত' : language === 'ur' ? 'منتخب' : 'selected'})</Label>
+                    <div className="border rounded-md max-h-60 overflow-y-auto mt-1">
+                      {tenants
+                        .filter(tn => tn.propertyId === groupForm.propertyId && !tn.groupId && tn.status === 'active')
+                        .map(tn => (
+                          <label key={tn.id} className="flex items-center gap-3 p-2 hover:bg-muted/50 cursor-pointer border-b last:border-b-0">
+                            <input
+                              type="checkbox"
+                              checked={groupForm.selectedTenantIds.includes(tn.id)}
+                              onChange={e => {
+                                setGroupForm(prev => ({
+                                  ...prev,
+                                  selectedTenantIds: e.target.checked
+                                    ? [...prev.selectedTenantIds, tn.id]
+                                    : prev.selectedTenantIds.filter(id => id !== tn.id),
+                                }))
+                              }}
+                              className="w-4 h-4"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">{getNameByLang(tn, language)}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {t('unitNumber', language)}: {tn.unitNumber || '—'} · {formatAED(tn.rentAmount)}
+                              </p>
+                            </div>
+                          </label>
+                        ))
+                      }
+                      {tenants.filter(tn => tn.propertyId === groupForm.propertyId && !tn.groupId && tn.status === 'active').length === 0 && (
+                        <div className="p-4 text-center text-sm text-muted-foreground">
+                          {language === 'ar' ? 'لا يوجد مستأجرون متاحون' :
+                           language === 'bn' ? 'কোনো উপলভ্য ভাড়াটিয়া নেই' :
+                           language === 'ur' ? 'کوئی دستیاب کرایہ دار نہیں' :
+                           'No available tenants (all are already grouped or inactive)'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-3">
+                  <Label>{t('notes', language)}</Label>
+                  <Textarea
+                    value={groupForm.notes}
+                    onChange={e => setGroupForm(prev => ({ ...prev, notes: e.target.value }))}
+                    rows={2}
+                  />
+                </div>
+              </div>
+            </div>
+          </ScrollArea>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setGroupDialogOpen(false)}>{t('cancel', language)}</Button>
+            <Button
+              onClick={handleCreateTenantGroup}
+              disabled={!groupForm.groupName || !groupForm.propertyId || groupForm.selectedTenantIds.length < 2 || groupSaving}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+            >
+              {groupSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Users className="w-4 h-4 mr-2" />}
+              {t('createNewGroup', language)}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

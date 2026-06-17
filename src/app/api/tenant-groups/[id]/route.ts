@@ -31,6 +31,9 @@ export async function GET(
             adjustments: { where: { status: 'approved' } },
           },
         },
+        reservations: {
+          where: { deletedAt: null },
+        },
         property: {
           select: { id: true, name: true, nameAr: true, nameBn: true, nameUr: true },
         },
@@ -47,6 +50,10 @@ export async function GET(
 }
 
 // PUT /api/tenant-groups/[id] — update a tenant group
+// Body: { name?, nameAr?, nameBn?, nameUr?, billingMode?, notes?, status?, tenantIds?: string[], reservationIds?: string[] }
+// - If tenantIds is provided, REPLACES the tenant membership (existing members are unlinked)
+// - If reservationIds is provided, REPLACES the reservation membership
+// - Use action: 'add' | 'remove' to add/remove individual members without replacing the whole set
 export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -58,7 +65,7 @@ export async function PUT(
 
     const { id } = await params
     const body = await request.json()
-    const { name, nameAr, nameBn, nameUr, billingMode, notes, status, tenantIds } = body
+    const { name, nameAr, nameBn, nameUr, billingMode, notes, status, tenantIds, reservationIds, action } = body
 
     // Verify group exists and belongs to company
     const existing = await prisma.tenantGroup.findFirst({
@@ -81,21 +88,52 @@ export async function PUT(
         },
       })
 
-      // If tenantIds provided, update the group membership
-      if (tenantIds !== undefined) {
-        // Remove all existing group assignments for this group
+      // If tenantIds provided with no action, REPLACE the membership
+      if (tenantIds !== undefined && action === undefined) {
         await tx.tenant.updateMany({
           where: { groupId: id, companyId: user.companyId },
           data: { groupId: null },
         })
-
-        // Assign new tenants to the group
         if (tenantIds.length > 0) {
           await tx.tenant.updateMany({
             where: { id: { in: tenantIds }, companyId: user.companyId },
             data: { groupId: id },
           })
         }
+      } else if (tenantIds && action === 'add') {
+        await tx.tenant.updateMany({
+          where: { id: { in: tenantIds }, companyId: user.companyId },
+          data: { groupId: id },
+        })
+      } else if (tenantIds && action === 'remove') {
+        await tx.tenant.updateMany({
+          where: { id: { in: tenantIds }, groupId: id, companyId: user.companyId },
+          data: { groupId: null },
+        })
+      }
+
+      // Same logic for reservations
+      if (reservationIds !== undefined && action === undefined) {
+        await tx.reservation.updateMany({
+          where: { groupId: id, companyId: user.companyId },
+          data: { groupId: null },
+        })
+        if (reservationIds.length > 0) {
+          await tx.reservation.updateMany({
+            where: { id: { in: reservationIds }, companyId: user.companyId },
+            data: { groupId: id },
+          })
+        }
+      } else if (reservationIds && action === 'add') {
+        await tx.reservation.updateMany({
+          where: { id: { in: reservationIds }, companyId: user.companyId },
+          data: { groupId: id },
+        })
+      } else if (reservationIds && action === 'remove') {
+        await tx.reservation.updateMany({
+          where: { id: { in: reservationIds }, groupId: id, companyId: user.companyId },
+          data: { groupId: null },
+        })
       }
 
       return group
@@ -107,7 +145,7 @@ export async function PUT(
       entityId: id,
       userId: user.id,
       companyId: user.companyId,
-      details: { name, billingMode, status, tenantIds },
+      details: { name, billingMode, status, tenantIds, reservationIds, action },
     })
 
     return successResponse(serialize(updated))
@@ -117,7 +155,7 @@ export async function PUT(
   }
 }
 
-// DELETE /api/tenant-groups/[id] — soft delete a tenant group
+// DELETE /api/tenant-groups/[id] — soft delete a tenant group (dissolves group; tenants & reservations remain, just unlinked)
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -137,6 +175,12 @@ export async function DELETE(
     await prisma.$transaction(async (tx) => {
       // Unlink all tenants from this group
       await tx.tenant.updateMany({
+        where: { groupId: id, companyId: user.companyId },
+        data: { groupId: null },
+      })
+
+      // Unlink all reservations from this group
+      await tx.reservation.updateMany({
         where: { groupId: id, companyId: user.companyId },
         data: { groupId: null },
       })

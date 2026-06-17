@@ -97,6 +97,7 @@ export async function POST(
         data: {
           companyId: user.companyId,
           propertyId: reservation.propertyId,
+          groupId: reservation.groupId, // inherit group from reservation (if grouped)
           name: reservation.prospectName,
           nameAr: reservation.prospectNameAr,
           nameBn: reservation.prospectNameBn,

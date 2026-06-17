@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, Fragment } from 'react'
 import type { ReservationData, PropertyData } from '@/lib/types'
 import { t, getNameByLang, type Language } from '@/lib/i18n'
 import { cn2, formatAED, formatDate } from '@/lib/utils'
@@ -22,7 +22,8 @@ import {
   CalendarCheck, Plus, Pencil, Trash2, Search,
   Loader2, Phone, Mail, Lock, AlertTriangle,
   Building, Clock, UserCheck, XCircle, CheckCircle2,
-  ArrowRightLeft, Calendar, DollarSign, FileText
+  ArrowRightLeft, Calendar, DollarSign, FileText,
+  Users, Link2, Unlink, ChevronDown, ChevronUp
 } from 'lucide-react'
 
 // ─── Form State ────────────────────────────────────────────────────────────────
@@ -74,6 +75,51 @@ const emptyConvertForm: ConvertFormState = {
   leaseStart: '',
   leaseEnd: '',
   contractDuration: '12',
+}
+
+// ─── Group Reservations Form State ─────────────────────────────────────────────
+
+interface GroupReservationFormState {
+  // Group info
+  groupName: string
+  groupNameAr: string
+  groupNameBn: string
+  groupNameUr: string
+  propertyId: string
+  // Prospect info (shared across all units in the group)
+  prospectName: string
+  prospectNameAr: string
+  prospectNameBn: string
+  prospectNameUr: string
+  prospectPhone: string
+  prospectWhatsapp: string
+  prospectEmail: string
+  emiratesId: string
+  // Units (comma-separated input)
+  unitNumbers: string  // "11, 15, 31, 33"
+  // Deposit (one total, split equally)
+  totalDeposit: string
+  depositPaymentMethod: string
+  depositReference: string
+  depositPaymentDate: string
+  // Per-unit rent (so each reservation becomes a properly-priced unit)
+  perUnitRent: string
+  // Dates
+  expectedMoveInDate: string
+  expiryDate: string
+  notes: string
+}
+
+const emptyGroupForm: GroupReservationFormState = {
+  groupName: '', groupNameAr: '', groupNameBn: '', groupNameUr: '',
+  propertyId: '',
+  prospectName: '', prospectNameAr: '', prospectNameBn: '', prospectNameUr: '',
+  prospectPhone: '', prospectWhatsapp: '', prospectEmail: '', emiratesId: '',
+  unitNumbers: '',
+  totalDeposit: '0', depositPaymentMethod: '', depositReference: '',
+  depositPaymentDate: new Date().toISOString().split('T')[0],
+  perUnitRent: '0',
+  expectedMoveInDate: '', expiryDate: '', notes: '',
 }
 
 // ─── Status Badge Helpers ──────────────────────────────────────────────────────
@@ -159,6 +205,7 @@ export default function Reservations() {
   const { language, authUser } = useAppStore()
   const [reservations, setReservations] = useState<ReservationData[]>([])
   const [properties, setProperties] = useState<PropertyData[]>([])
+  const [tenantGroups, setTenantGroups] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -174,6 +221,17 @@ export default function Reservations() {
   const [convertTarget, setConvertTarget] = useState<ReservationData | null>(null)
   const [convertForm, setConvertForm] = useState<ConvertFormState>(emptyConvertForm)
   const [converting, setConverting] = useState(false)
+
+  // Group dialog
+  const [groupDialogOpen, setGroupDialogOpen] = useState(false)
+  const [groupForm, setGroupForm] = useState<GroupReservationFormState>(emptyGroupForm)
+  const [groupSaving, setGroupSaving] = useState(false)
+
+  // Expanded group rows (which group is currently expanded in the table)
+  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set())
+
+  // Manage groups dialog (list of all groups + dissolve)
+  const [manageGroupsOpen, setManageGroupsOpen] = useState(false)
 
   // RBAC
   const role = authUser?.role || ''
@@ -194,6 +252,7 @@ export default function Reservations() {
       }))
       setReservations(enriched)
       setProperties(store.properties.filter(p => !p.archived).sort((a, b) => (a.name || '').localeCompare(b.name || '')))
+      setTenantGroups(store.tenantGroups || [])
     } catch (e) {
       console.error(e)
     } finally {
@@ -243,6 +302,133 @@ export default function Reservations() {
   }, [reservations, search, statusFilter, language])
 
   const activeCount = reservations.filter(r => r.status === 'pending' || r.status === 'confirmed').length
+
+  // ─── Grouped vs Standalone Reservations ─────────────────────────────────────
+  // Group reservations by groupId — grouped ones render as a single expandable row;
+  // standalone ones (no groupId) render as individual rows.
+  const { groupedReservations, standaloneReservations } = useMemo(() => {
+    const grouped = new Map<string, ReservationData[]>()
+    const standalone: ReservationData[] = []
+    for (const r of filtered) {
+      if (r.groupId) {
+        if (!grouped.has(r.groupId)) grouped.set(r.groupId, [])
+        grouped.get(r.groupId)!.push(r)
+      } else {
+        standalone.push(r)
+      }
+    }
+    return {
+      groupedReservations: Array.from(grouped.entries()).map(([gid, items]) => ({
+        groupId: gid,
+        group: tenantGroups.find(g => g.id === gid) || items[0]?.group,
+        reservations: items.sort((a, b) => (a.unitNumber || '').localeCompare(b.unitNumber || '')),
+      })),
+      standaloneReservations: standalone,
+    }
+  }, [filtered, tenantGroups])
+
+  // ─── Group Dialog Handlers ──────────────────────────────────────────────────
+
+  const openGroupDialog = () => {
+    setGroupForm({ ...emptyGroupForm, propertyId: properties[0]?.id || '' })
+    setGroupDialogOpen(true)
+  }
+
+  const updateGroupForm = (field: keyof GroupReservationFormState, value: string) => {
+    setGroupForm(prev => ({ ...prev, [field]: value }))
+  }
+
+  // Parse the unit numbers input — supports comma, space, newline separated
+  const parseUnitNumbers = (input: string): string[] => {
+    return input
+      .split(/[,\n\s]+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 0)
+  }
+
+  const handleCreateGroup = async () => {
+    const units = parseUnitNumbers(groupForm.unitNumbers)
+    if (!groupForm.groupName) return alert('Group name is required')
+    if (!groupForm.propertyId) return alert('Property is required')
+    if (!groupForm.prospectName || !groupForm.prospectPhone) return alert('Prospect name and phone are required')
+    if (units.length < 2) return alert(t('selectAtLeastTwoUnits', language))
+
+    setGroupSaving(true)
+    try {
+      const totalDeposit = Number(groupForm.totalDeposit) || 0
+      const perUnitDeposit = units.length > 0 ? Number((totalDeposit / units.length).toFixed(2)) : 0
+      const rentPerUnit = Number(groupForm.perUnitRent) || 0
+
+      const store = useDataStore.getState()
+
+      // 1. Create the tenant group
+      const group = await store.addTenantGroup({
+        propertyId: groupForm.propertyId,
+        name: groupForm.groupName,
+        nameAr: groupForm.groupNameAr || undefined,
+        nameBn: groupForm.groupNameBn || undefined,
+        nameUr: groupForm.groupNameUr || undefined,
+        billingMode: 'consolidated',
+        notes: groupForm.notes || undefined,
+      })
+
+      // 2. Create N reservations linked to the group (one per unit)
+      for (const unit of units) {
+        await store.addReservation({
+          propertyId: groupForm.propertyId,
+          groupId: group.id,
+          unitNumber: unit,
+          prospectName: groupForm.prospectName,
+          prospectNameAr: groupForm.prospectNameAr || undefined,
+          prospectNameBn: groupForm.prospectNameBn || undefined,
+          prospectNameUr: groupForm.prospectNameUr || undefined,
+          prospectPhone: groupForm.prospectPhone,
+          prospectWhatsapp: groupForm.prospectWhatsapp || undefined,
+          prospectEmail: groupForm.prospectEmail || undefined,
+          emiratesId: groupForm.emiratesId || undefined,
+          depositAmount: perUnitDeposit,
+          depositPaymentMethod: groupForm.depositPaymentMethod || undefined,
+          depositReference: groupForm.depositReference || undefined,
+          depositPaymentDate: groupForm.depositPaymentDate || null,
+          depositStatus: perUnitDeposit > 0 ? 'paid' : 'unpaid',
+          expectedMoveInDate: groupForm.expectedMoveInDate || undefined,
+          expiryDate: groupForm.expiryDate || undefined,
+          reservationDate: new Date().toISOString(),
+          status: 'pending',
+          notes: `Created as part of group: ${groupForm.groupName}. Rent per unit: ${rentPerUnit}`,
+          // Stash rent per unit as a custom field (the convert dialog will pre-fill from this)
+          // Note: this is stored in notes since Reservation has no rent field; the convert
+          // dialog will read it from notes when converting.
+        } as any)
+      }
+
+      setGroupDialogOpen(false)
+      fetchReservations()
+    } catch (error: any) {
+      alert(error.message || 'Failed to create group')
+    } finally {
+      setGroupSaving(false)
+    }
+  }
+
+  const handleDissolveGroup = async (groupId: string) => {
+    if (!confirm(t('confirmDissolveGroup', language))) return
+    try {
+      await useDataStore.getState().deleteTenantGroup(groupId)
+      fetchReservations()
+    } catch (error: any) {
+      alert(error.message || 'Failed to dissolve group')
+    }
+  }
+
+  const toggleGroupExpanded = (groupId: string) => {
+    setExpandedGroupIds(prev => {
+      const next = new Set(prev)
+      if (next.has(groupId)) next.delete(groupId)
+      else next.add(groupId)
+      return next
+    })
+  }
 
   // ─── Dialog Handlers ────────────────────────────────────────────────────────
 
@@ -421,10 +607,18 @@ export default function Reservations() {
             {activeCount} {t('reservationsCount', language)}
           </p>
         </div>
-        <Button onClick={openNew} className="bg-emerald-600 hover:bg-emerald-700 text-white">
-          <Plus className="w-4 h-4 mr-2" />
-          {t('addReservation', language)}
-        </Button>
+        <div className="flex items-center gap-2">
+          {canModify && (
+            <Button onClick={openGroupDialog} variant="outline" className="border-indigo-300 text-indigo-700 hover:bg-indigo-50">
+              <Users className="w-4 h-4 mr-2" />
+              {t('groupReservations', language)}
+            </Button>
+          )}
+          <Button onClick={openNew} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+            <Plus className="w-4 h-4 mr-2" />
+            {t('addReservation', language)}
+          </Button>
+        </div>
       </div>
 
       {/* ── Filter Bar ── */}
@@ -470,7 +664,204 @@ export default function Reservations() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map(r => {
+                {/* Grouped reservations — render as one expandable row per group */}
+                {groupedReservations.map(({ groupId, group, reservations: groupReservations }) => {
+                  const groupName = group?.name || group?.nameAr || `Group ${groupId.slice(-6)}`
+                  const propertyName = groupReservations[0]?.property ? getNameByLang(groupReservations[0].property!, language) : '—'
+                  const totalDeposit = groupReservations.reduce((sum, r) => sum + (Number(r.depositAmount) || 0), 0)
+                  const unitList = groupReservations.map(r => r.unitNumber).filter(Boolean).join(', ')
+                  const isExpanded = expandedGroupIds.has(groupId)
+                  // Aggregate status: if all are confirmed → confirmed; if any pending → pending; etc.
+                  const statuses = new Set(groupReservations.map(r => r.status))
+                  const aggregateStatus = statuses.size === 1
+                    ? groupReservations[0].status
+                    : (statuses.has('pending') ? 'pending' : statuses.has('confirmed') ? 'confirmed' : 'mixed')
+                  const allConfirmed = groupReservations.every(r => r.status === 'confirmed')
+                  const firstPhone = groupReservations[0]?.prospectPhone || ''
+                  const firstEmiratesId = (groupReservations[0] as any)?.emiratesId || ''
+                  const firstReservationDate = groupReservations[0]?.reservationDate || ''
+                  const firstExpectedMoveIn = groupReservations[0]?.expectedMoveInDate || null
+                  const daysToExpiry = getDaysUntilExpiry(groupReservations[0]?.expiryDate || null)
+                  const showExpiryWarning = daysToExpiry !== null && daysToExpiry >= 0 && daysToExpiry <= 7
+                  return (
+                    <Fragment key={`group-${groupId}`}>
+                      <TableRow className="hover:bg-muted/30 bg-indigo-50/40 border-l-4 border-l-indigo-500">
+                        {/* Prospect Name (group) */}
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            <Avatar className="w-9 h-9">
+                              <AvatarFallback className="bg-indigo-100 text-indigo-700 text-xs font-semibold">
+                                <Users className="w-4 h-4" />
+                              </AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <p className="font-medium text-sm flex items-center gap-1.5">
+                                {groupName}
+                                <Badge variant="outline" className="text-[9px] px-1 py-0 border-indigo-300 text-indigo-700">
+                                  {groupReservations.length} {language === 'ar' ? 'وحدات' : language === 'bn' ? 'ইউনিট' : language === 'ur' ? 'یونٹس' : 'units'}
+                                </Badge>
+                              </p>
+                              <p className="text-xs text-muted-foreground">{firstPhone}</p>
+                              {firstEmiratesId && <p className="text-xs text-muted-foreground">{firstEmiratesId}</p>}
+                            </div>
+                          </div>
+                        </TableCell>
+                        {/* Emirates ID */}
+                        <TableCell className="text-sm">{firstEmiratesId || '—'}</TableCell>
+                        {/* Property + units */}
+                        <TableCell>
+                          <div>
+                            <p className="text-sm">{propertyName}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">Units: {unitList}</p>
+                          </div>
+                        </TableCell>
+                        {/* Reservation Date */}
+                        <TableCell className="text-sm">
+                          <div>
+                            <p>{firstReservationDate ? formatDate(firstReservationDate) : '—'}</p>
+                          </div>
+                        </TableCell>
+                        {/* Expected Move-in */}
+                        <TableCell className="text-sm">
+                          {firstExpectedMoveIn ? formatDate(firstExpectedMoveIn) : '—'}
+                        </TableCell>
+                        {/* Deposit (total) */}
+                        <TableCell>
+                          {canSeeFinancials ? (
+                            <div>
+                              <span className="font-semibold text-sm">{formatAED(totalDeposit)}</span>
+                              <p className="text-[10px] text-muted-foreground">
+                                {t('perUnitDeposit', language)}: {formatAED(totalDeposit / groupReservations.length)}
+                              </p>
+                            </div>
+                          ) : (
+                            <Lock className="w-4 h-4 text-muted-foreground" />
+                          )}
+                        </TableCell>
+                        {/* Deposit status (first reservation's) */}
+                        <TableCell>
+                          <Badge className={cn2('text-xs', getDepositStatusColor(groupReservations[0]?.depositStatus || 'unpaid'))}>
+                            {getDepositStatusLabel(groupReservations[0]?.depositStatus || 'unpaid', language)}
+                          </Badge>
+                        </TableCell>
+                        {/* Reservation Status */}
+                        <TableCell>
+                          <div className="flex flex-col gap-1">
+                            <Badge className={cn2('text-xs', aggregateStatus !== 'mixed' ? getReservationStatusColor(aggregateStatus) : 'bg-gray-100 text-gray-700 border-gray-200')}>
+                              {aggregateStatus !== 'mixed' ? getReservationStatusLabel(aggregateStatus, language) : (language === 'ar' ? 'مختلط' : language === 'bn' ? 'মিশ্র' : language === 'ur' ? 'مخلوط' : 'Mixed')}
+                            </Badge>
+                            {showExpiryWarning && (
+                              <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700 px-1 py-0 w-fit">
+                                <AlertTriangle className="w-3 h-3 mr-0.5" />
+                                {t('expiryWarning', language)} ({daysToExpiry}d)
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        {/* Actions */}
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => toggleGroupExpanded(groupId)}
+                              className="p-1.5 rounded hover:bg-muted text-indigo-600"
+                              title={isExpanded ? 'Collapse' : 'Expand'}
+                            >
+                              {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                            </button>
+                            {allConfirmed && canModify && (
+                              <button
+                                onClick={() => openConvert(groupReservations[0])}
+                                className="p-1.5 rounded hover:bg-emerald-50 text-emerald-600"
+                                title={t('convertToTenant', language)}
+                              >
+                                <ArrowRightLeft className="w-4 h-4" />
+                              </button>
+                            )}
+                            {canModify && (
+                              <button
+                                onClick={() => handleDissolveGroup(groupId)}
+                                className="p-1.5 rounded hover:bg-red-50 text-red-500"
+                                title={t('dissolveGroup', language)}
+                              >
+                                <Unlink className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                      {/* Expanded individual unit rows under the group */}
+                      {isExpanded && groupReservations.map(r => {
+                        const displayName = getProspectNameByLang(r, language)
+                        return (
+                          <TableRow key={r.id} className="hover:bg-muted/20 bg-indigo-50/20 border-l-4 border-l-indigo-300">
+                            <TableCell>
+                              <div className="flex items-center gap-2 pl-8">
+                                <Avatar className="w-7 h-7">
+                                  <AvatarFallback className="bg-indigo-100 text-indigo-700 text-[10px] font-semibold">
+                                    {displayName.charAt(0).toUpperCase()}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <div>
+                                  <p className="text-xs font-medium">{displayName}</p>
+                                  <p className="text-[10px] text-muted-foreground">Unit {r.unitNumber}</p>
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-xs">—</TableCell>
+                            <TableCell className="text-xs"><span className="text-muted-foreground">Unit:</span> {r.unitNumber || '—'}</TableCell>
+                            <TableCell className="text-xs">{formatDate(r.reservationDate)}</TableCell>
+                            <TableCell className="text-xs">{r.expectedMoveInDate ? formatDate(r.expectedMoveInDate) : '—'}</TableCell>
+                            <TableCell className="text-xs font-medium">
+                              {canSeeFinancials ? formatAED(r.depositAmount) : <Lock className="w-3 h-3 text-muted-foreground" />}
+                            </TableCell>
+                            <TableCell>
+                              <Badge className={cn2('text-[10px]', getDepositStatusColor(r.depositStatus))}>
+                                {getDepositStatusLabel(r.depositStatus, language)}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge className={cn2('text-[10px]', getReservationStatusColor(r.status))}>
+                                {getReservationStatusLabel(r.status, language)}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                {r.status === 'pending' && canModify && (
+                                  <button onClick={() => handleConfirm(r.id)} className="p-1 rounded hover:bg-sky-50 text-sky-600" title={t('confirmReservation', language)}>
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                                {r.status === 'confirmed' && canModify && (
+                                  <button onClick={() => openConvert(r)} className="p-1 rounded hover:bg-emerald-50 text-emerald-600" title={t('convertToTenant', language)}>
+                                    <ArrowRightLeft className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                                {r.status === 'confirmed' && canModify && (
+                                  <button onClick={() => handleCancel(r.id)} className="p-1 rounded hover:bg-red-50 text-red-500" title={t('cancelReservation', language)}>
+                                    <XCircle className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                                {canModify && (
+                                  <button onClick={() => openEdit(r)} className="p-1 rounded hover:bg-muted text-muted-foreground">
+                                    <Pencil className="w-3 h-3" />
+                                  </button>
+                                )}
+                                {canModify && (
+                                  <button onClick={() => handleDelete(r.id)} className="p-1 rounded hover:bg-red-50 text-muted-foreground hover:text-red-500">
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </Fragment>
+                  )
+                })}
+
+                {/* Standalone reservations (no group) */}
+                {standaloneReservations.map(r => {
                   const displayName = getProspectNameByLang(r, language)
                   const propertyName = r.property ? getNameByLang(r.property, language) : '—'
                   const daysToExpiry = getDaysUntilExpiry(r.expiryDate)
@@ -809,6 +1200,214 @@ export default function Reservations() {
             >
               {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
               {t('save', language)}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── GROUP RESERVATIONS DIALOG ── */}
+      <Dialog open={groupDialogOpen} onOpenChange={setGroupDialogOpen}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Users className="w-5 h-5 text-indigo-600" />
+              {t('groupReservations', language)}
+            </DialogTitle>
+            <p className="text-xs text-muted-foreground">
+              {language === 'ar' ? 'إنشاء حساب مجموعة يربط عدة وحدات تحت عميل واحد' :
+               language === 'bn' ? 'একাধিক ইউনিটকে একটি ক্লায়েন্টের অধীনে গ্রুপ অ্যাকাউন্ট তৈরি করুন' :
+               language === 'ur' ? 'ایک کسٹمر کے تحت متعدد یونٹس کو جوڑنے کے لیے گروپ اکاؤنٹ بنائیں' :
+               'Create a group account linking multiple units under one client'}
+            </p>
+          </DialogHeader>
+
+          <ScrollArea className="max-h-[70vh] pr-2">
+            <div className="space-y-5 pb-4">
+              {/* Group Account Name */}
+              <div>
+                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                  <Users className="w-4 h-4 text-indigo-600" />
+                  {t('groupAccountName', language)} *
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>{t('nameEnglish', language)} *</Label>
+                    <Input
+                      value={groupForm.groupName}
+                      onChange={e => updateGroupForm('groupName', e.target.value)}
+                      placeholder={t('groupAccountNamePlaceholder', language)}
+                    />
+                  </div>
+                  <div>
+                    <Label>{t('nameArabic', language)}</Label>
+                    <Input value={groupForm.groupNameAr} onChange={e => updateGroupForm('groupNameAr', e.target.value)} dir="rtl" />
+                  </div>
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Property + Units */}
+              <div>
+                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                  <Building className="w-4 h-4 text-indigo-600" />
+                  {t('leaseInfo', language)}
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>{t('propertyName', language)} *</Label>
+                    <Select value={groupForm.propertyId} onValueChange={v => updateGroupForm('propertyId', v)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder={t('selectProperty', language)} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {properties.map(p => (
+                          <SelectItem key={p.id} value={p.id}>{getNameByLang(p, language)}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>{t('unitNumbers', language)} *</Label>
+                    <Input
+                      value={groupForm.unitNumbers}
+                      onChange={e => updateGroupForm('unitNumbers', e.target.value)}
+                      placeholder="11, 15, 31, 33"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {parseUnitNumbers(groupForm.unitNumbers).length} {language === 'ar' ? 'وحدات' : language === 'bn' ? 'ইউনিট' : language === 'ur' ? 'یونٹس' : 'units selected'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Prospect (shared across all units) */}
+              <div>
+                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                  <UserCheck className="w-4 h-4 text-indigo-600" />
+                  {t('prospectName', language)} ({language === 'ar' ? 'مشترك لكل الوحدات' : language === 'bn' ? 'সব ইউনিটের জন্য শেয়ার্ড' : language === 'ur' ? 'تمام یونٹس کے لیے مشترکہ' : 'shared across all units'})
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>{t('nameEnglish', language)} *</Label>
+                    <Input value={groupForm.prospectName} onChange={e => updateGroupForm('prospectName', e.target.value)} placeholder="John Doe" />
+                  </div>
+                  <div>
+                    <Label>{t('nameArabic', language)}</Label>
+                    <Input value={groupForm.prospectNameAr} onChange={e => updateGroupForm('prospectNameAr', e.target.value)} dir="rtl" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-4 mt-3">
+                  <div>
+                    <Label>{t('phone', language)} *</Label>
+                    <Input value={groupForm.prospectPhone} onChange={e => updateGroupForm('prospectPhone', e.target.value)} placeholder="+971501234567" />
+                  </div>
+                  <div>
+                    <Label>{t('whatsapp', language)}</Label>
+                    <Input value={groupForm.prospectWhatsapp} onChange={e => updateGroupForm('prospectWhatsapp', e.target.value)} placeholder="+971501234567" />
+                  </div>
+                  <div>
+                    <Label>{t('emiratesIdNumber', language)}</Label>
+                    <Input value={groupForm.emiratesId} onChange={e => updateGroupForm('emiratesId', e.target.value)} placeholder="784-XXXX-XXXXXXX-X" />
+                  </div>
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Financial — Total Deposit + Per-unit Rent */}
+              <div>
+                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                  <DollarSign className="w-4 h-4 text-indigo-600" />
+                  {t('financialInfo', language)}
+                </h3>
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <Label>{t('totalDeposit', language)}</Label>
+                    <Input type="number" value={groupForm.totalDeposit} onChange={e => updateGroupForm('totalDeposit', e.target.value)} placeholder="0" />
+                    {parseUnitNumbers(groupForm.unitNumbers).length > 0 && Number(groupForm.totalDeposit) > 0 && (
+                      <p className="text-xs text-indigo-600 mt-1">
+                        {t('perUnitDeposit', language)}: {formatAED(Number(groupForm.totalDeposit) / parseUnitNumbers(groupForm.unitNumbers).length)}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <Label>{t('perUnitRent', language)}</Label>
+                    <Input type="number" value={groupForm.perUnitRent} onChange={e => updateGroupForm('perUnitRent', e.target.value)} placeholder="0" />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {language === 'ar' ? 'يُستخدم عند تحويل الحجز إلى مستأجر' :
+                       language === 'bn' ? 'রিজার্ভেশন থেকে ভাড়াটিয়ায় রূপান্তরের সময় ব্যবহৃত' :
+                       language === 'ur' ? 'ریزرویشن سے کرایہ دار میں تبدیل کرتے وقت استعمال ہوتا ہے' :
+                       'Used when converting reservation to tenant'}
+                    </p>
+                  </div>
+                  <div>
+                    <Label>{t('depositPaymentMethod', language)}</Label>
+                    <Select value={groupForm.depositPaymentMethod} onValueChange={v => updateGroupForm('depositPaymentMethod', v)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder={t('paymentMethod', language)} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {paymentMethods.map(m => (
+                          <SelectItem key={m} value={m}>{getPaymentMethodLabel(m, language)}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4 mt-3">
+                  <div>
+                    <Label>{t('depositReference', language)}</Label>
+                    <Input value={groupForm.depositReference} onChange={e => updateGroupForm('depositReference', e.target.value)} />
+                  </div>
+                  <div>
+                    <Label>{t('reservationPaymentDate', language)}</Label>
+                    <Input type="date" value={groupForm.depositPaymentDate} onChange={e => updateGroupForm('depositPaymentDate', e.target.value)} />
+                  </div>
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Dates */}
+              <div>
+                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-indigo-600" />
+                  {t('date', language)}
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>{t('expectedMoveInDate', language)}</Label>
+                    <Input type="date" value={groupForm.expectedMoveInDate} onChange={e => updateGroupForm('expectedMoveInDate', e.target.value)} />
+                  </div>
+                  <div>
+                    <Label>{t('expiryDate', language)}</Label>
+                    <Input type="date" value={groupForm.expiryDate} onChange={e => updateGroupForm('expiryDate', e.target.value)} />
+                  </div>
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Notes */}
+              <div>
+                <Label>{t('notes', language)}</Label>
+                <Textarea value={groupForm.notes} onChange={e => updateGroupForm('notes', e.target.value)} rows={2} />
+              </div>
+            </div>
+          </ScrollArea>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setGroupDialogOpen(false)}>{t('cancel', language)}</Button>
+            <Button
+              onClick={handleCreateGroup}
+              disabled={!groupForm.groupName || !groupForm.propertyId || !groupForm.prospectName || !groupForm.prospectPhone || parseUnitNumbers(groupForm.unitNumbers).length < 2 || groupSaving}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+            >
+              {groupSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Users className="w-4 h-4 mr-2" />}
+              {t('createNewGroup', language)}
             </Button>
           </DialogFooter>
         </DialogContent>

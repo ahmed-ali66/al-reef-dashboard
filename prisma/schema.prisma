@@ -118,6 +118,7 @@ model TenantGroup {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   tenants       Tenant[]
+  reservations  Reservation[]
 
   @@index([companyId])
   @@index([propertyId])
@@ -317,6 +318,8 @@ model Reservation {
   company             Company   @relation(fields: [companyId], references: [id])
   propertyId          String
   property            Property  @relation(fields: [propertyId], references: [id])
+  groupId             String?
+  group               TenantGroup? @relation(fields: [groupId], references: [id])
   unitNumber          String?
   prospectName        String
   prospectNameAr      String?
@@ -347,6 +350,7 @@ model Reservation {
   @@index([propertyId])
   @@index([status])
   @@index([depositStatus])
+  @@index([groupId])
   @@map("reservations")
 }
 

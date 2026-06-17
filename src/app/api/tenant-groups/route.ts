@@ -44,6 +44,17 @@ export async function GET(request: Request) {
             status: true,
           },
         },
+        reservations: {
+          where: { deletedAt: null },
+          select: {
+            id: true,
+            prospectName: true,
+            unitNumber: true,
+            depositAmount: true,
+            depositStatus: true,
+            status: true,
+          },
+        },
         property: {
           select: { id: true, name: true, nameAr: true, nameBn: true, nameUr: true },
         },
@@ -59,6 +70,10 @@ export async function GET(request: Request) {
 }
 
 // POST /api/tenant-groups — create a new tenant group
+// Body: { propertyId, name, nameAr?, nameBn?, nameUr?, billingMode?, notes?, tenantIds?: string[], reservationIds?: string[] }
+// - tenantIds: existing tenants to link to this group
+// - reservationIds: existing reservations to link to this group
+// - If neither is provided, an empty group is created (members can be added later)
 export async function POST(request: Request) {
   try {
     const user = await getAuthUser()
@@ -66,7 +81,7 @@ export async function POST(request: Request) {
     if (!isFinancialUser(user.role)) return forbiddenResponse()
 
     const body = await request.json()
-    const { propertyId, name, nameAr, nameBn, nameUr, billingMode, notes, tenantIds } = body
+    const { propertyId, name, nameAr, nameBn, nameUr, billingMode, notes, tenantIds, reservationIds } = body
 
     if (!propertyId) return errorResponse('propertyId is required')
     if (!name) return errorResponse('name is required')
@@ -97,6 +112,25 @@ export async function POST(request: Request) {
       }
     }
 
+    // Validate reservationIds if provided
+    if (reservationIds && reservationIds.length > 0) {
+      const reservations = await prisma.reservation.findMany({
+        where: {
+          id: { in: reservationIds },
+          companyId: user.companyId,
+          propertyId,
+          deletedAt: null,
+        },
+      })
+      if (reservations.length !== reservationIds.length) {
+        return errorResponse('One or more reservations not found or do not belong to this property')
+      }
+      const alreadyGrouped = reservations.filter(r => r.groupId !== null)
+      if (alreadyGrouped.length > 0) {
+        return errorResponse(`Reservations already in a group`)
+      }
+    }
+
     const group = await prisma.$transaction(async (tx) => {
       const created = await tx.tenantGroup.create({
         data: {
@@ -120,10 +154,18 @@ export async function POST(request: Request) {
         })
       }
 
+      // Link reservations to the group
+      if (reservationIds && reservationIds.length > 0) {
+        await tx.reservation.updateMany({
+          where: { id: { in: reservationIds }, companyId: user.companyId },
+          data: { groupId: created.id },
+        })
+      }
+
       return created
     })
 
-    // Fetch the full group with tenants for the response
+    // Fetch the full group with tenants and reservations for the response
     const fullGroup = await prisma.tenantGroup.findUnique({
       where: { id: group.id },
       include: {
@@ -134,6 +176,16 @@ export async function POST(request: Request) {
             name: true,
             unitNumber: true,
             rentAmount: true,
+          },
+        },
+        reservations: {
+          where: { deletedAt: null },
+          select: {
+            id: true,
+            prospectName: true,
+            unitNumber: true,
+            depositAmount: true,
+            status: true,
           },
         },
         property: {
@@ -148,10 +200,10 @@ export async function POST(request: Request) {
       entityId: group.id,
       userId: user.id,
       companyId: user.companyId,
-      details: { name, propertyId, tenantIds },
+      details: { name, propertyId, tenantIds, reservationIds },
     })
 
-    return successResponse(serialize(fullGroup), 201)
+    return successResponse(serialize(fullGroup!), 201)
   } catch (error) {
     console.error('Error creating tenant group:', error)
     return errorResponse('Failed to create tenant group', 500)

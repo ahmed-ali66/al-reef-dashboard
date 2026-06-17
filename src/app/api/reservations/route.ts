@@ -54,6 +54,16 @@ export async function GET(request: Request) {
               nameUr: true,
             },
           },
+          group: {
+            select: {
+              id: true,
+              name: true,
+              nameAr: true,
+              nameBn: true,
+              nameUr: true,
+              status: true,
+            },
+          },
         },
         orderBy: { createdAt: 'desc' },
         skip: pagination.skip,
@@ -127,6 +137,7 @@ export async function POST(request: Request) {
       data: {
         companyId: user.companyId,
         propertyId: body.propertyId,
+        groupId: body.groupId || null,
         unitNumber: body.unitNumber || null,
         prospectName: body.prospectName,
         prospectNameAr: body.prospectNameAr || null,
@@ -155,6 +166,9 @@ export async function POST(request: Request) {
             nameBn: true,
             nameUr: true,
           },
+        },
+        group: {
+          select: { id: true, name: true, status: true },
         },
       },
     })

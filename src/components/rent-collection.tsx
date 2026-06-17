@@ -1237,6 +1237,84 @@ export default function RentCollection() {
                                   )}
                                 </div>
                               )}
+
+                              {/* Individual payment rows with edit/delete buttons (mirrors ungrouped view) */}
+                              {canSeeRevenue && tPayments.length > 0 && (
+                                <div className="mt-1.5 pt-1.5 border-t space-y-1">
+                                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{t('viewPaymentHistory', language)}</p>
+                                  {tPayments.map(payment => (
+                                    <div key={payment.id} className="flex items-center justify-between bg-muted/50 rounded-lg px-2 py-1.5 text-[11px]">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span className="font-semibold">{formatAED(payment.amount)}</span>
+                                          <span className="text-muted-foreground">
+                                            {payment.date ? new Date(payment.date).toLocaleDateString(language === 'ar' ? 'ar-AE' : 'en-AE', { day: 'numeric', month: 'short' }) : (language === 'ar' ? 'بدون تاريخ' : language === 'bn' ? 'তারিখ নেই' : language === 'ur' ? 'تاریخ نہیں' : 'No date')}
+                                          </span>
+                                          {payment.method && (
+                                            <Badge variant="outline" className="text-[9px] px-1 py-0">
+                                              {payment.method}
+                                            </Badge>
+                                          )}
+                                          {payment.isLate && (
+                                            <Badge variant="outline" className="text-[9px] px-1 py-0 border-red-300 text-red-600">
+                                              {language === 'ar' ? 'متأخر' : language === 'bn' ? 'বিলম্বিত' : language === 'ur' ? 'دیر' : 'Late'}
+                                            </Badge>
+                                          )}
+                                          {payment.allocationType && payment.allocationType !== 'CURRENT_RENT' && (
+                                            <Badge variant="outline" className="text-[9px] px-1 py-0 border-blue-300 text-blue-600">
+                                              {payment.allocationType === 'HISTORICAL_DEBT' && t('historicalDebt', language)}
+                                              {payment.allocationType === 'ADVANCE_PAYMENT' && t('advancePayment', language)}
+                                            </Badge>
+                                          )}
+                                        </div>
+                                        {payment.reference && (
+                                          <p className="text-muted-foreground mt-0.5 truncate">
+                                            Ref: {payment.reference}
+                                          </p>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-0.5 shrink-0 ml-1.5">
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); openEditPaymentDialog(payment) }}
+                                          className="p-0.5 hover:bg-white rounded transition-colors"
+                                          title={language === 'ar' ? 'تعديل الدفعة' : language === 'bn' ? 'পেমেন্ট সম্পাদনা' : language === 'ur' ? 'ادائیگی میں ترمیم' : 'Edit payment'}
+                                        >
+                                          <Pencil className="w-3 h-3 text-blue-600" />
+                                        </button>
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); openDeletePaymentDialog(payment) }}
+                                          className="p-0.5 hover:bg-white rounded transition-colors"
+                                          title={language === 'ar' ? 'حذف الدفعة' : language === 'bn' ? 'পেমেন্ট মুছুন' : language === 'ur' ? 'ادائیگی حذف کریں' : 'Delete payment'}
+                                        >
+                                          <Trash2 className="w-3 h-3 text-red-600" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Adjustments list */}
+                              {canSeeRevenue && tAdjList.length > 0 && (
+                                <div className="mt-1.5 pt-1.5 border-t space-y-1">
+                                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{t('approvedAdjustments', language)}</p>
+                                  {tAdjList.map(adj => (
+                                    <div key={adj.id} className="flex items-center justify-between bg-amber-50 rounded-lg px-2 py-1.5 text-[11px]">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="font-semibold text-amber-700">-{formatAED(adj.amount)}</span>
+                                          <span className="text-muted-foreground">
+                                            {adj.effectiveMonth && adj.effectiveYear ? `${adj.effectiveMonth}/${adj.effectiveYear}` : ''}
+                                          </span>
+                                        </div>
+                                        {adj.reason && (
+                                          <p className="text-muted-foreground mt-0.5 truncate">{adj.reason}</p>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           )
                         })}
@@ -1504,7 +1582,7 @@ export default function RentCollection() {
                                 <div className="flex items-center gap-2">
                                   {canSeeRevenue && <span className="font-semibold">{formatAED(payment.amount)}</span>}
                                   <span className="text-muted-foreground">
-                                    {payment.date ? new Date(payment.date).toLocaleDateString(language === 'ar' ? 'ar-AE' : 'en-AE', { day: 'numeric', month: 'short' }) : ''}
+                                    {payment.date ? new Date(payment.date).toLocaleDateString(language === 'ar' ? 'ar-AE' : 'en-AE', { day: 'numeric', month: 'short' }) : (language === 'ar' ? 'بدون تاريخ' : language === 'bn' ? 'তারিখ নেই' : language === 'ur' ? 'تاریخ نہیں' : 'No date')}
                                   </span>
                                   {payment.method && (
                                     <Badge variant="outline" className="text-[10px] px-1 py-0">

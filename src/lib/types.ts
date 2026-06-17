@@ -250,6 +250,7 @@ export interface ReservationData {
   id: string
   companyId: string
   propertyId: string
+  groupId: string | null
   unitNumber: string | null
   prospectName: string
   prospectNameAr: string | null
@@ -274,6 +275,7 @@ export interface ReservationData {
   notes: string | null
   createdAt: string
   property?: { id: string; name: string; nameAr: string | null; nameBn: string | null; nameUr: string | null }
+  group?: TenantGroupData
 }
 
 export interface RecurringBillData {
