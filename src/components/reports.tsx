@@ -214,8 +214,11 @@ export default function Reports() {
         pdf.text(value, margin + contentWidth - 8, rowY, { align: 'right' })
       })
 
-      // ── Credit Table: Income by Tenant ──
-      // Get monthly payments for the credit table
+      // ── Page 2: Building Performance Summary (per-property overview) ──
+      // NOTE: Per-tenant/client breakdowns are intentionally omitted from the monthly
+      // report. That level of detail belongs in the daily report. The monthly report
+      // focuses on portfolio-level clarity: per-building expected vs collected vs remaining,
+      // reservations, and recurring bills.
       const { payments: allPayments, tenants: allTenants, properties: allProperties, reservations: allReservations, tenantGroups: allTenantGroups } = store
       const monthPayments = allPayments.filter(p => p.month === selectedMonth && p.year === selectedYear)
 
@@ -229,7 +232,7 @@ export default function Reports() {
         }
       }
 
-      // Build income items for the month (rent payments)
+      // Build income items (rent + reservation deposits) — used ONLY for payment-method totals
       interface MonthlyIncomeItem {
         tenantName: string
         propertyName: string
@@ -260,7 +263,7 @@ export default function Reports() {
         }
       })
 
-      // Add reservation deposits as income items for the selected month
+      // Include reservation deposits as income items for the selected month
       const activeReservations = (allReservations || []).filter((r: any) =>
         r.status !== 'cancelled' && !r.deletedAt && (r.depositStatus === 'paid' || r.depositStatus === 'partial')
       )
@@ -291,7 +294,7 @@ export default function Reports() {
         }
       }
 
-      // ─── Consolidate linked-unit (group) payments ───
+      // Consolidate linked-unit (group) payments — needed for accurate method totals
       const consolidatedMonthlyItems: MonthlyIncomeItem[] = []
       const groupBuckets = new Map<string, MonthlyIncomeItem[]>()
       for (const item of monthlyIncomeItems) {
@@ -324,133 +327,221 @@ export default function Reports() {
         }
       }
 
-      // Sort: method priority (Cash → Bank Transfer → Cheque), then tenant name
+      // Sort by method priority then tenant name (kept for consistency)
       consolidatedMonthlyItems.sort((a, b) => {
         const methodDiff = getMethodSortPriority(a.method) - getMethodSortPriority(b.method)
         if (methodDiff !== 0) return methodDiff
         return a.tenantName.localeCompare(b.tenantName)
       })
 
+      // ── Compute per-building performance metrics ──
+      interface BuildingPerf {
+        name: string
+        totalUnits: number
+        occupied: number
+        expected: number
+        collected: number
+        remaining: number
+        collectionRate: number // 0-100
+      }
+      const buildingPerf: BuildingPerf[] = allProperties
+        .filter(p => !p.archived)
+        .map(property => {
+          const propTenants = allTenants.filter(t => t.propertyId === property.id && isFinanciallyActive(t.status))
+          const expected = propTenants.reduce((sum, t) => sum + (t.rentAmount || 0), 0)
+          const collected = monthPayments
+            .filter(p => propTenants.some(t => t.id === p.tenantId))
+            .reduce((sum, p) => sum + p.amount, 0)
+          const remaining = Math.max(0, expected - collected)
+          const collectionRate = expected > 0 ? Math.round((collected / expected) * 100) : 0
+          return {
+            name: getNameByLang(property, lang) || 'Unnamed',
+            totalUnits: property.totalUnits || 0,
+            occupied: propTenants.length,
+            expected,
+            collected,
+            remaining,
+            collectionRate,
+          }
+        })
+        .filter(b => b.totalUnits > 0 || b.occupied > 0 || b.expected > 0)
+        .sort((a, b) => b.expected - a.expected)
+
+      const totalExpected = buildingPerf.reduce((s, b) => s + b.expected, 0)
+      const totalCollected = buildingPerf.reduce((s, b) => s + b.collected, 0)
+      const totalRemaining = buildingPerf.reduce((s, b) => s + b.remaining, 0)
+      const totalUnitsAll = buildingPerf.reduce((s, b) => s + b.totalUnits, 0)
+      const totalOccupiedAll = buildingPerf.reduce((s, b) => s + b.occupied, 0)
+      const overallRate = totalExpected > 0 ? Math.round((totalCollected / totalExpected) * 100) : 0
+
+      // ── Fetch recurring bills summary for the month ──
+      let recurringBillsSummary: any = null
+      try {
+        const resp = await fetch(`/api/recurring-bills/summary?month=${selectedMonth}&year=${selectedYear}`, { credentials: 'include' })
+        if (resp.ok) {
+          const json = await resp.json()
+          recurringBillsSummary = json?.data || json
+        }
+      } catch { /* graceful skip */ }
+
+      // ── Render Building Performance Summary page ──
       pdf.addPage()
       let creditY = 18
-      // Mini header
+      // Mini header bar
       pdf.setFillColor(13, 124, 61)
       pdf.rect(0, 0, pageWidth, 14, 'F')
       pdf.setTextColor(255, 255, 255)
       pdf.setFontSize(9)
+      pdf.setFont('helvetica', 'bold')
       pdf.text('Al Reef Al Madeena', margin, 9)
+      pdf.setFont('helvetica', 'normal')
       pdf.setFontSize(8)
-      pdf.text(`${t('financialSummary', lang)} — ${monthName} ${selectedYear}`, pageWidth - margin, 9, { align: 'right' })
+      pdf.text(`Building Performance — ${monthName} ${selectedYear}`, pageWidth - margin, 9, { align: 'right' })
       creditY = 22
 
-      // Credit table title
+      // Section title + description
       pdf.setTextColor(13, 124, 61)
-      pdf.setFontSize(12)
-      pdf.text(`${t('income', lang)} — ${t('rentCollected', lang)}`, margin, creditY)
-
-      // Income total badge
-      pdf.setFillColor('#E8F5E9')
-      const mBadgeW = 45
-      pdf.roundedRect(pageWidth - margin - mBadgeW, creditY - 5, mBadgeW, 8, 2, 2, 'F')
-      pdf.setTextColor(13, 124, 61)
-      pdf.setFontSize(9)
-      pdf.text(formatAED(data.cashCollected), pageWidth - margin - mBadgeW + 3, creditY)
+      pdf.setFontSize(13)
+      pdf.setFont('helvetica', 'bold')
+      pdf.text('Building Performance Summary', margin, creditY)
+      creditY += 5
+      pdf.setFont('helvetica', 'normal')
+      pdf.setFontSize(8)
+      pdf.setTextColor(110, 110, 110)
+      pdf.text('Per-property rent collection analysis — expected, collected and outstanding for the month.', margin, creditY)
       creditY += 6
 
-      // Credit table header - No Time or Status columns
-      pdf.setFillColor(13, 124, 61)
-      pdf.rect(margin, creditY, contentWidth, 8, 'F')
-      pdf.setTextColor(255, 255, 255)
-      pdf.setFontSize(7.5)
-      pdf.text('#', margin + 3, creditY + 5.5)
-      pdf.text(t('tenantName', lang), margin + 8, creditY + 5.5)
-      pdf.text(t('property', lang), margin + 58, creditY + 5.5)
-      pdf.text(t('unitNumber', lang), margin + 92, creditY + 5.5)
-      pdf.text(t('amount', lang), margin + 106, creditY + 5.5)
-      pdf.text(t('paymentMethod', lang), margin + 142, creditY + 5.5)
-      creditY += 8
+      // Summary KPI strip (3 tiles): Expected | Collected | Remaining
+      const tileW = (contentWidth - 8) / 3 // 4mm gap between tiles
+      const tileH = 14
+      const drawKPITile = (x: number, label: string, value: string, accentHex: [number, number, number]) => {
+        pdf.setFillColor(248, 250, 252)
+        pdf.roundedRect(x, creditY, tileW, tileH, 2, 2, 'F')
+        pdf.setFillColor(accentHex[0], accentHex[1], accentHex[2])
+        pdf.rect(x, creditY, 1.5, tileH, 'F')
+        pdf.setFontSize(7)
+        pdf.setTextColor(110, 110, 110)
+        pdf.setFont('helvetica', 'normal')
+        pdf.text(label.toUpperCase(), x + 4, creditY + 5)
+        pdf.setFontSize(11)
+        pdf.setFont('helvetica', 'bold')
+        pdf.setTextColor(accentHex[0], accentHex[1], accentHex[2])
+        pdf.text(value, x + 4, creditY + 11)
+        pdf.setFont('helvetica', 'normal')
+      }
+      drawKPITile(margin, 'Expected Rent', formatAED(totalExpected), [13, 124, 61])
+      drawKPITile(margin + tileW + 4, 'Collected', formatAED(totalCollected), [10, 92, 78])
+      drawKPITile(margin + (tileW + 4) * 2, 'Remaining', formatAED(totalRemaining), [194, 65, 58])
+      creditY += tileH + 6
 
-      // Credit rows
-      for (let i = 0; i < consolidatedMonthlyItems.length; i++) {
-        if (creditY > pageHeight - 25) {
+      // Table header — column positions tuned for A4 portrait (210mm) with 15mm margins
+      // Building name gets ~50mm; remaining/collected/expected get ~24mm each for "X,XXX,XXX AED"
+      const colX = {
+        idx: margin + 3,            // 18 — '#' column
+        name: margin + 9,            // 24 — Building name (~50mm wide)
+        units: margin + 60,          // 75 — Units count
+        occ: margin + 72,            // 87 — Occupied count
+        expected: margin + 84,       // 99 — Expected rent
+        collected: margin + 114,     // 129 — Collected
+        remaining: margin + 144,     // 159 — Remaining
+        rate: margin + contentWidth - 4, // 191 right-aligned — Collection rate %
+      }
+      const drawBuildingTableHeader = (startY: number) => {
+        pdf.setFillColor(13, 124, 61)
+        pdf.rect(margin, startY, contentWidth, 8, 'F')
+        pdf.setTextColor(255, 255, 255)
+        pdf.setFontSize(7.5)
+        pdf.setFont('helvetica', 'bold')
+        pdf.text('#', colX.idx, startY + 5.5)
+        pdf.text('Building', colX.name, startY + 5.5)
+        pdf.text('Units', colX.units, startY + 5.5)
+        pdf.text('Occupied', colX.occ, startY + 5.5)
+        pdf.text('Expected (AED)', colX.expected, startY + 5.5)
+        pdf.text('Collected (AED)', colX.collected, startY + 5.5)
+        pdf.text('Remaining (AED)', colX.remaining, startY + 5.5)
+        pdf.text('Rate %', colX.rate, startY + 5.5, { align: 'right' })
+        pdf.setFont('helvetica', 'normal')
+        return startY + 8
+      }
+      creditY = drawBuildingTableHeader(creditY)
+
+      // Building rows
+      for (let i = 0; i < buildingPerf.length; i++) {
+        if (creditY > pageHeight - 30) {
           pdf.addPage()
           creditY = 18
           pdf.setFillColor(13, 124, 61)
           pdf.rect(0, 0, pageWidth, 14, 'F')
           pdf.setTextColor(255, 255, 255)
           pdf.setFontSize(9)
+          pdf.setFont('helvetica', 'bold')
           pdf.text('Al Reef Al Madeena', margin, 9)
+          pdf.setFont('helvetica', 'normal')
           pdf.setFontSize(8)
-          pdf.text(`${t('income', lang)} (cont.) — ${monthName} ${selectedYear}`, pageWidth - margin, 9, { align: 'right' })
+          pdf.text(`Building Performance (cont.) — ${monthName} ${selectedYear}`, pageWidth - margin, 9, { align: 'right' })
           creditY = 22
-          // Re-draw header
-          pdf.setFillColor(13, 124, 61)
-          pdf.rect(margin, creditY, contentWidth, 8, 'F')
-          pdf.setTextColor(255, 255, 255)
-          pdf.setFontSize(7.5)
-          pdf.text('#', margin + 3, creditY + 5.5)
-          pdf.text(t('tenantName', lang), margin + 8, creditY + 5.5)
-          pdf.text(t('property', lang), margin + 58, creditY + 5.5)
-          pdf.text(t('unitNumber', lang), margin + 92, creditY + 5.5)
-          pdf.text(t('amount', lang), margin + 106, creditY + 5.5)
-          pdf.text(t('paymentMethod', lang), margin + 142, creditY + 5.5)
-          creditY += 8
+          creditY = drawBuildingTableHeader(creditY)
         }
-        const item = consolidatedMonthlyItems[i]
-        const rowBg = item.isConsolidated ? '#EEF2FF' : (i % 2 === 0 ? '#FFFFFF' : '#F9FAFB')
+        const b = buildingPerf[i]
+        const rowBg = i % 2 === 0 ? '#FFFFFF' : '#F8FAFC'
         pdf.setFillColor(rowBg)
         pdf.rect(margin, creditY, contentWidth, 7, 'F')
 
-        // Late indicator
-        if (item.isLate) {
-          pdf.setFillColor('#FFEBEE')
-          pdf.rect(margin, creditY, contentWidth, 7, 'F')
-          pdf.setFillColor('#D32F2F')
-          pdf.rect(margin, creditY, 1.5, 7, 'F')
-        }
+        // Collection-rate color stripe on left of row
+        let stripe: [number, number, number]
+        if (b.collectionRate >= 80) stripe = [13, 124, 61]      // green
+        else if (b.collectionRate >= 50) stripe = [197, 160, 40] // amber
+        else stripe = [194, 65, 58]                              // red
+        pdf.setFillColor(stripe[0], stripe[1], stripe[2])
+        pdf.rect(margin, creditY, 1.2, 7, 'F')
 
-        // Indigo left border for consolidated entries
-        if (item.isConsolidated) {
-          pdf.setFillColor('#6366F1') // indigo
-          pdf.rect(margin, creditY, 1.5, 7, 'F')
-        }
-
-        pdf.setTextColor(item.isLate ? 180 : 40, item.isLate ? 40 : 40, item.isLate ? 40 : 40)
         pdf.setFontSize(7.5)
-        pdf.text(String(i + 1), margin + 3, creditY + 5)
-        pdf.text(item.tenantName.substring(0, 35), margin + 8, creditY + 5)
-        pdf.text(item.propertyName.substring(0, 24), margin + 58, creditY + 5)
-        pdf.text((item.unitNumber || '-').substring(0, 20), margin + 92, creditY + 5)
+        pdf.setTextColor(40, 40, 40)
+        pdf.text(String(i + 1), colX.idx, creditY + 5)
+        const nameStr = b.name.length > 28 ? b.name.substring(0, 27) + '…' : b.name
+        pdf.text(nameStr, colX.name, creditY + 5)
+        pdf.text(String(b.totalUnits), colX.units, creditY + 5)
+        pdf.text(String(b.occupied), colX.occ, creditY + 5)
+        pdf.text(formatAED(b.expected), colX.expected, creditY + 5)
         pdf.setTextColor(13, 124, 61)
-        pdf.text(formatAED(item.amount), margin + 106, creditY + 5)
-        pdf.setTextColor(item.isLate ? 180 : 40, item.isLate ? 40 : 40, item.isLate ? 40 : 40)
-        pdf.text((item.method || '-').substring(0, 18), margin + 142, creditY + 5)
-        // Show linked-unit indicator for consolidated entries
-        if (item.isConsolidated) {
-          pdf.setFontSize(6)
-          pdf.setTextColor(99, 102, 241) // indigo
-          pdf.text('Linked Units', margin + 142, creditY + 5 + 3.5)
-          pdf.setFontSize(7.5)
+        pdf.text(formatAED(b.collected), colX.collected, creditY + 5)
+        // Remaining in red if > 0, otherwise muted
+        if (b.remaining > 0) {
+          pdf.setTextColor(194, 65, 58)
+        } else {
+          pdf.setTextColor(110, 110, 110)
         }
+        pdf.text(formatAED(b.remaining), colX.remaining, creditY + 5)
+        // Rate % badge style — colored text
+        pdf.setTextColor(stripe[0], stripe[1], stripe[2])
+        pdf.setFont('helvetica', 'bold')
+        pdf.text(`${b.collectionRate}%`, colX.rate, creditY + 5, { align: 'right' })
+        pdf.setFont('helvetica', 'normal')
         creditY += 7
       }
 
-      // Income total row
+      // TOTAL row
       if (creditY > pageHeight - 25) { pdf.addPage(); creditY = 22 }
-      pdf.setFillColor('#E8F5E9')
-      pdf.rect(margin, creditY, contentWidth, 7, 'F')
+      pdf.setFillColor(232, 245, 233)
+      pdf.rect(margin, creditY, contentWidth, 8, 'F')
       pdf.setTextColor(13, 124, 61)
       pdf.setFontSize(8)
       pdf.setFont('helvetica', 'bold')
-      pdf.text(`TOTAL INCOME: ${formatAED(data.cashCollected)}`, margin + 10, creditY + 5)
-      pdf.text(`${consolidatedMonthlyItems.length} entries`, margin + 142, creditY + 5)
+      pdf.text('PORTFOLIO TOTAL', colX.name, creditY + 5.5)
+      pdf.text(String(totalUnitsAll), colX.units, creditY + 5.5)
+      pdf.text(String(totalOccupiedAll), colX.occ, creditY + 5.5)
+      pdf.text(formatAED(totalExpected), colX.expected, creditY + 5.5)
+      pdf.text(formatAED(totalCollected), colX.collected, creditY + 5.5)
+      pdf.setTextColor(194, 65, 58)
+      pdf.text(formatAED(totalRemaining), colX.remaining, creditY + 5.5)
+      pdf.setTextColor(13, 124, 61)
+      pdf.text(`${overallRate}%`, colX.rate, creditY + 5.5, { align: 'right' })
       pdf.setFont('helvetica', 'normal')
-      creditY += 10
+      creditY += 12
 
-      // ── Payment Method Totals ──
+      // ── Payment Method Summary box (kept) ──
       const monthMethodTotals: Record<string, number> = {}
       for (const p of consolidatedMonthlyItems) {
-        // Normalize method names: 'bank_transfer' and 'transfer' → 'transfer'
         let method = (p.method || 'other').toLowerCase()
         if (method === 'bank_transfer') method = 'transfer'
         monthMethodTotals[method] = (monthMethodTotals[method] || 0) + p.amount
@@ -460,7 +551,6 @@ export default function Reports() {
       const mTotalCheque = monthMethodTotals['cheque'] || 0
 
       if (creditY > pageHeight - 35) { pdf.addPage(); creditY = 22 }
-      // Payment Method Summary box
       pdf.setFillColor(245, 253, 244)
       pdf.roundedRect(margin, creditY, contentWidth, 26, 3, 3, 'F')
       pdf.setFillColor(13, 124, 61)
@@ -484,6 +574,176 @@ export default function Reports() {
       pdf.setTextColor(13, 124, 61)
       pdf.text(formatAED(mTotalCheque), margin + 55, creditY + 24)
       creditY += 30
+
+      // ── Page 3: Reservations & Recurring Bills Overview ──
+      pdf.addPage()
+      let ovY = 18
+      pdf.setFillColor(13, 124, 61)
+      pdf.rect(0, 0, pageWidth, 14, 'F')
+      pdf.setTextColor(255, 255, 255)
+      pdf.setFontSize(9)
+      pdf.setFont('helvetica', 'bold')
+      pdf.text('Al Reef Al Madeena', margin, 9)
+      pdf.setFont('helvetica', 'normal')
+      pdf.setFontSize(8)
+      pdf.text(`Reservations & Recurring Bills — ${monthName} ${selectedYear}`, pageWidth - margin, 9, { align: 'right' })
+      ovY = 22
+
+      // ─ Section A: Reservations Overview ─
+      pdf.setTextColor(13, 124, 61)
+      pdf.setFontSize(13)
+      pdf.setFont('helvetica', 'bold')
+      pdf.text('Reservations Overview', margin, ovY)
+      ovY += 5
+      pdf.setFont('helvetica', 'normal')
+      pdf.setFontSize(8)
+      pdf.setTextColor(110, 110, 110)
+      pdf.text('Pipeline of reservation activity for the selected month.', margin, ovY)
+      ovY += 6
+
+      // Compute reservation metrics
+      const allActiveRes = (allReservations || []).filter((r: any) => r.status !== 'cancelled' && !r.deletedAt)
+      const newThisMonth = allActiveRes.filter((r: any) => {
+        if (!r.reservationDate) return false
+        const d = new Date(r.reservationDate)
+        return d.getMonth() + 1 === selectedMonth && d.getFullYear() === selectedYear
+      }).length
+      const depositsThisMonthArr = allActiveRes.filter((r: any) => {
+        if (r.depositStatus !== 'paid' && r.depositStatus !== 'partial') return false
+        const dateStr = r.depositPaymentDate || r.reservationDate
+        if (!dateStr) return false
+        const d = new Date(dateStr)
+        return d.getMonth() + 1 === selectedMonth && d.getFullYear() === selectedYear
+      })
+      const depositsCollectedAmount = depositsThisMonthArr.reduce((s: number, r: any) => s + (r.depositAmount || 0), 0)
+      const pendingCount = allActiveRes.filter((r: any) => (r.status || '').toLowerCase() === 'pending').length
+      const confirmedCount = allActiveRes.filter((r: any) => (r.status || '').toLowerCase() === 'confirmed').length
+      const convertedCount = allActiveRes.filter((r: any) => (r.status || '').toLowerCase() === 'converted').length
+
+      // 4-tile KPI strip for reservations
+      const resTiles = [
+        { label: 'New This Month', value: String(newThisMonth), accent: [13, 124, 61] as [number, number, number] },
+        { label: 'Deposits Collected', value: formatAED(depositsCollectedAmount), accent: [10, 92, 78] as [number, number, number] },
+        { label: 'Pending', value: String(pendingCount), accent: [197, 160, 40] as [number, number, number] },
+        { label: 'Confirmed', value: String(confirmedCount), accent: [13, 124, 61] as [number, number, number] },
+      ]
+      const resTileW = (contentWidth - 12) / 4
+      resTiles.forEach((tile, i) => {
+        const x = margin + i * (resTileW + 4)
+        pdf.setFillColor(248, 250, 252)
+        pdf.roundedRect(x, ovY, resTileW, 16, 2, 2, 'F')
+        pdf.setFillColor(tile.accent[0], tile.accent[1], tile.accent[2])
+        pdf.rect(x, ovY, 1.5, 16, 'F')
+        pdf.setFontSize(7)
+        pdf.setTextColor(110, 110, 110)
+        pdf.setFont('helvetica', 'normal')
+        pdf.text(tile.label.toUpperCase(), x + 4, ovY + 5)
+        pdf.setFontSize(11)
+        pdf.setFont('helvetica', 'bold')
+        pdf.setTextColor(tile.accent[0], tile.accent[1], tile.accent[2])
+        pdf.text(tile.value, x + 4, ovY + 12)
+        pdf.setFont('helvetica', 'normal')
+      })
+      ovY += 22
+
+      // Reservations status mini-table
+      pdf.setFontSize(8)
+      pdf.setTextColor(40, 40, 40)
+      pdf.setFont('helvetica', 'bold')
+      pdf.text(`Converted to Tenants:`, margin, ovY + 4)
+      pdf.setFont('helvetica', 'normal')
+      pdf.setTextColor(13, 124, 61)
+      pdf.text(String(convertedCount), margin + 50, ovY + 4)
+      pdf.setTextColor(40, 40, 40)
+      pdf.setFont('helvetica', 'bold')
+      pdf.text(`Total Active Reservations:`, margin + 80, ovY + 4)
+      pdf.setFont('helvetica', 'normal')
+      pdf.setTextColor(13, 124, 61)
+      pdf.text(String(allActiveRes.length), margin + 140, ovY + 4)
+      ovY += 12
+
+      // ─ Section B: Recurring Bills Overview ─
+      if (ovY > pageHeight - 70) { pdf.addPage(); ovY = 22 }
+      ovY += 4
+      pdf.setTextColor(13, 124, 61)
+      pdf.setFontSize(13)
+      pdf.setFont('helvetica', 'bold')
+      pdf.text('Recurring Bills Overview', margin, ovY)
+      ovY += 5
+      pdf.setFont('helvetica', 'normal')
+      pdf.setFontSize(8)
+      pdf.setTextColor(110, 110, 110)
+      pdf.text('Utility & service bills — outstanding, paid and overdue for the month.', margin, ovY)
+      ovY += 6
+
+      // Recurring bills KPI strip (4 tiles)
+      const rbTotalOutstanding = recurringBillsSummary?.totalOutstanding ?? 0
+      const rbPaidThisMonth = recurringBillsSummary?.totalPaidThisMonth ?? 0
+      const rbTotalBills = recurringBillsSummary?.totalBills ?? 0
+      const rbOverdueCount = recurringBillsSummary?.overdueCount ?? 0
+      const rbTiles = [
+        { label: 'Total Bills', value: String(rbTotalBills), accent: [13, 124, 61] as [number, number, number] },
+        { label: 'Paid This Month', value: formatAED(rbPaidThisMonth), accent: [10, 92, 78] as [number, number, number] },
+        { label: 'Outstanding', value: formatAED(rbTotalOutstanding), accent: [197, 160, 40] as [number, number, number] },
+        { label: 'Overdue', value: String(rbOverdueCount), accent: [194, 65, 58] as [number, number, number] },
+      ]
+      rbTiles.forEach((tile, i) => {
+        const x = margin + i * (resTileW + 4)
+        pdf.setFillColor(248, 250, 252)
+        pdf.roundedRect(x, ovY, resTileW, 16, 2, 2, 'F')
+        pdf.setFillColor(tile.accent[0], tile.accent[1], tile.accent[2])
+        pdf.rect(x, ovY, 1.5, 16, 'F')
+        pdf.setFontSize(7)
+        pdf.setTextColor(110, 110, 110)
+        pdf.setFont('helvetica', 'normal')
+        pdf.text(tile.label.toUpperCase(), x + 4, ovY + 5)
+        pdf.setFontSize(11)
+        pdf.setFont('helvetica', 'bold')
+        pdf.setTextColor(tile.accent[0], tile.accent[1], tile.accent[2])
+        pdf.text(tile.value, x + 4, ovY + 12)
+        pdf.setFont('helvetica', 'normal')
+      })
+      ovY += 22
+
+      // Recurring bills mini-table by service type (if available)
+      const breakdown: Array<{ serviceType: string; count: number; totalOutstanding: number }> | undefined =
+        recurringBillsSummary?.serviceTypeBreakdown
+      if (Array.isArray(breakdown) && breakdown.length > 0) {
+        if (ovY > pageHeight - 40) { pdf.addPage(); ovY = 22 }
+        pdf.setFontSize(10)
+        pdf.setTextColor(13, 124, 61)
+        pdf.setFont('helvetica', 'bold')
+        pdf.text('Outstanding by Service Type', margin, ovY)
+        ovY += 6
+        // header
+        pdf.setFillColor(13, 124, 61)
+        pdf.rect(margin, ovY, contentWidth, 7, 'F')
+        pdf.setTextColor(255, 255, 255)
+        pdf.setFontSize(7.5)
+        pdf.setFont('helvetica', 'bold')
+        pdf.text('Service Type', margin + 3, ovY + 5)
+        pdf.text('Bills', margin + 100, ovY + 5)
+        pdf.text('Outstanding (AED)', pageWidth - margin - 3, ovY + 5, { align: 'right' })
+        pdf.setFont('helvetica', 'normal')
+        ovY += 7
+        breakdown
+          .slice()
+          .sort((a, b) => (b.totalOutstanding || 0) - (a.totalOutstanding || 0))
+          .forEach((row, i) => {
+            if (ovY > pageHeight - 25) { pdf.addPage(); ovY = 22 }
+            const bg = i % 2 === 0 ? '#FFFFFF' : '#F8FAFC'
+            pdf.setFillColor(bg)
+            pdf.rect(margin, ovY, contentWidth, 6.5, 'F')
+            pdf.setTextColor(40, 40, 40)
+            pdf.setFontSize(7.5)
+            const stLabel = (row.serviceType || 'other').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+            pdf.text(stLabel.substring(0, 40), margin + 3, ovY + 4.5)
+            pdf.text(String(row.count || 0), margin + 100, ovY + 4.5)
+            pdf.setTextColor(197, 160, 40)
+            pdf.text(formatAED(row.totalOutstanding || 0), pageWidth - margin - 3, ovY + 4.5, { align: 'right' })
+            ovY += 6.5
+          })
+      }
 
       // ── Page 2: Charts ──
       // Track Y position manually for reliable placement
