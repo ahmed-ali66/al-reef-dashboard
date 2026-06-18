@@ -5,6 +5,7 @@ import type { ReportData, PaymentData } from '@/lib/types'
 import { useAppStore, isOwnerOrAdmin } from '@/lib/store'
 import { useDataStore } from '@/lib/data-store'
 import { formatAED, formatDate, getCategoryIcon, isFinanciallyActive } from '@/lib/utils'
+import { calculateEffectivePaymentsReceived } from '@/lib/financial-utils'
 import { t, getMonthName, getExpenseCategoryLabel, getNameByLang, type Language } from '@/lib/i18n'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -335,31 +336,66 @@ export default function Reports() {
       })
 
       // ── Compute per-building performance metrics ──
+      // CRITICAL: "Collected" must reflect ONLY the portion of payments that applies to
+      // THIS MONTH'S expected rent. Otherwise advance payments (e.g. a tenant paying
+      // 3 months in advance) and historical-debt repayments inflate the collection rate
+      // above 100% and mask underperforming buildings.
+      //
+      // Methodology (consistent with rent-collection.tsx and financial-utils.ts):
+      //   - HISTORICAL_DEBT payments → EXCLUDED (already reflected in reduced openingBalance)
+      //   - ADVANCE_PAYMENT payments → CAPPED at the tenant's current-month charges;
+      //     the excess is the tenant's creditBalance and is tracked separately as `surplus`
+      //   - CURRENT_RENT (and untyped) payments → fully counted
+      //
+      // Result: collectionRate never exceeds 100%, and `surplus` shows the real extra
+      // cash received from advance payments (displayed as a small footnote per building).
       interface BuildingPerf {
         name: string
         totalUnits: number
         occupied: number
         expected: number
-        collected: number
+        collected: number      // effective collected (capped at current-month charges)
+        rawCollected: number   // actual cash received (includes advances + historical debt)
+        surplus: number        // advance portion exceeding current-month charges (real cash, but not counted in rate)
         remaining: number
-        collectionRate: number // 0-100
+        collectionRate: number // 0-100, never exceeds 100
       }
       const buildingPerf: BuildingPerf[] = allProperties
         .filter(p => !p.archived)
         .map(property => {
           const propTenants = allTenants.filter(t => t.propertyId === property.id && isFinanciallyActive(t.status))
           const expected = propTenants.reduce((sum, t) => sum + (t.rentAmount || 0), 0)
-          const collected = monthPayments
-            .filter(p => propTenants.some(t => t.id === p.tenantId))
-            .reduce((sum, p) => sum + p.amount, 0)
+
+          // Per-tenant effective collected (capped at current charges; excludes historical debt)
+          let collected = 0
+          let rawCollected = 0
+          for (const tenant of propTenants) {
+            const tenantMonthPayments = monthPayments.filter(p => p.tenantId === tenant.id)
+            // Raw sum of ALL payments received this month (real cash, regardless of allocation)
+            const tenantRaw = tenantMonthPayments.reduce((s, p) => s + p.amount, 0)
+            rawCollected += tenantRaw
+            // Effective collected (applies allocation convention)
+            const tenantEffective = calculateEffectivePaymentsReceived(
+              tenantMonthPayments,
+              tenant.rentAmount || 0,
+              0, // municipalityFee — not part of "Expected Rent" column, so excluded for consistency
+              0, // adjustments — would need tenant-level lookup; keep 0 to match Expected definition
+            )
+            collected += tenantEffective
+          }
+
+          // Surplus = real cash received minus effective collected (advance payments above current charges)
+          const surplus = Math.max(0, rawCollected - collected)
           const remaining = Math.max(0, expected - collected)
-          const collectionRate = expected > 0 ? Math.round((collected / expected) * 100) : 0
+          const collectionRate = expected > 0 ? Math.min(100, Math.round((collected / expected) * 100)) : 0
           return {
             name: getNameByLang(property, lang) || 'Unnamed',
             totalUnits: property.totalUnits || 0,
             occupied: propTenants.length,
             expected,
             collected,
+            rawCollected,
+            surplus,
             remaining,
             collectionRate,
           }
@@ -374,10 +410,12 @@ export default function Reports() {
 
       const totalExpected = buildingPerf.reduce((s, b) => s + b.expected, 0)
       const totalCollected = buildingPerf.reduce((s, b) => s + b.collected, 0)
+      const totalRawCollected = buildingPerf.reduce((s, b) => s + b.rawCollected, 0)
+      const totalSurplus = buildingPerf.reduce((s, b) => s + b.surplus, 0)
       const totalRemaining = buildingPerf.reduce((s, b) => s + b.remaining, 0)
       const totalUnitsAll = buildingPerf.reduce((s, b) => s + b.totalUnits, 0)
       const totalOccupiedAll = buildingPerf.reduce((s, b) => s + b.occupied, 0)
-      const overallRate = totalExpected > 0 ? Math.round((totalCollected / totalExpected) * 100) : 0
+      const overallRate = totalExpected > 0 ? Math.min(100, Math.round((totalCollected / totalExpected) * 100)) : 0
 
       // ── Fetch recurring bills summary for the month ──
       let recurringBillsSummary: any = null
@@ -413,11 +451,15 @@ export default function Reports() {
       pdf.setFont('helvetica', 'normal')
       pdf.setFontSize(8)
       pdf.setTextColor(110, 110, 110)
-      pdf.text('Per-property rent collection — sorted from lowest to highest collection rate to surface underperformers.', margin, creditY)
+      pdf.text('Per-property rent collection — sorted from lowest to highest collection rate.', margin, creditY)
+      creditY += 4
+      pdf.setFontSize(7)
+      pdf.setTextColor(140, 140, 140)
+      pdf.text('Collected reflects only current-month rent. Advance payments & historical-debt repayments are excluded from the rate (shown separately as surplus).', margin, creditY)
       creditY += 6
 
-      // Summary KPI strip (3 tiles): Expected | Collected | Remaining
-      const tileW = (contentWidth - 8) / 3 // 4mm gap between tiles
+      // Summary KPI strip (4 tiles): Expected | Collected | Remaining | Advance/Surplus
+      const tileW = (contentWidth - 12) / 4 // 4mm gap between tiles
       const tileH = 14
       const drawKPITile = (x: number, label: string, value: string, accentHex: [number, number, number]) => {
         pdf.setFillColor(248, 250, 252)
@@ -435,8 +477,9 @@ export default function Reports() {
         pdf.setFont('helvetica', 'normal')
       }
       drawKPITile(margin, 'Expected Rent', formatAED(totalExpected), [13, 124, 61])
-      drawKPITile(margin + tileW + 4, 'Collected', formatAED(totalCollected), [10, 92, 78])
+      drawKPITile(margin + (tileW + 4), 'Collected (Current Mth)', formatAED(totalCollected), [10, 92, 78])
       drawKPITile(margin + (tileW + 4) * 2, 'Remaining', formatAED(totalRemaining), [194, 65, 58])
+      drawKPITile(margin + (tileW + 4) * 3, 'Advance / Surplus', formatAED(totalSurplus), [109, 109, 196])
       creditY += tileH + 6
 
       // Table header — column positions tuned for A4 portrait (210mm) with 15mm margins
@@ -488,9 +531,11 @@ export default function Reports() {
           creditY = drawBuildingTableHeader(creditY)
         }
         const b = buildingPerf[i]
+        // Rows with surplus need 9mm height (extra line for "+X advance" indicator)
+        const rowH = b.surplus > 0 ? 9 : 7
         const rowBg = i % 2 === 0 ? '#FFFFFF' : '#F8FAFC'
         pdf.setFillColor(rowBg)
-        pdf.rect(margin, creditY, contentWidth, 7, 'F')
+        pdf.rect(margin, creditY, contentWidth, rowH, 'F')
 
         // Collection-rate color stripe on left of row
         let stripe: [number, number, number]
@@ -498,31 +543,42 @@ export default function Reports() {
         else if (b.collectionRate >= 50) stripe = [197, 160, 40] // amber
         else stripe = [194, 65, 58]                              // red
         pdf.setFillColor(stripe[0], stripe[1], stripe[2])
-        pdf.rect(margin, creditY, 1.2, 7, 'F')
+        pdf.rect(margin, creditY, 1.2, rowH, 'F')
 
+        const textY = creditY + 5
         pdf.setFontSize(7.5)
         pdf.setTextColor(40, 40, 40)
-        pdf.text(String(i + 1), colX.idx, creditY + 5)
+        pdf.text(String(i + 1), colX.idx, textY)
         const nameStr = b.name.length > 28 ? b.name.substring(0, 27) + '…' : b.name
-        pdf.text(nameStr, colX.name, creditY + 5)
-        pdf.text(String(b.totalUnits), colX.units, creditY + 5)
-        pdf.text(String(b.occupied), colX.occ, creditY + 5)
-        pdf.text(formatAED(b.expected), colX.expected, creditY + 5)
+        pdf.text(nameStr, colX.name, textY)
+        pdf.text(String(b.totalUnits), colX.units, textY)
+        pdf.text(String(b.occupied), colX.occ, textY)
+        pdf.text(formatAED(b.expected), colX.expected, textY)
         pdf.setTextColor(13, 124, 61)
-        pdf.text(formatAED(b.collected), colX.collected, creditY + 5)
+        pdf.text(formatAED(b.collected), colX.collected, textY)
         // Remaining in red if > 0, otherwise muted
         if (b.remaining > 0) {
           pdf.setTextColor(194, 65, 58)
         } else {
           pdf.setTextColor(110, 110, 110)
         }
-        pdf.text(formatAED(b.remaining), colX.remaining, creditY + 5)
+        pdf.text(formatAED(b.remaining), colX.remaining, textY)
         // Rate % badge style — colored text
         pdf.setTextColor(stripe[0], stripe[1], stripe[2])
         pdf.setFont('helvetica', 'bold')
-        pdf.text(`${b.collectionRate}%`, colX.rate, creditY + 5, { align: 'right' })
+        pdf.text(`${b.collectionRate}%`, colX.rate, textY, { align: 'right' })
         pdf.setFont('helvetica', 'normal')
-        creditY += 7
+
+        // Surplus indicator — show "+X AED advance" below the rate when surplus > 0
+        // This makes it clear why a building with advance payments still shows < 100% rate
+        if (b.surplus > 0) {
+          pdf.setFontSize(6)
+          pdf.setTextColor(109, 109, 196) // muted indigo for "advance" flag
+          pdf.setFont('helvetica', 'italic')
+          pdf.text(`+${formatAED(b.surplus)} advance`, colX.rate, textY + 3.5, { align: 'right' })
+          pdf.setFont('helvetica', 'normal')
+        }
+        creditY += rowH
       }
 
       // TOTAL row
@@ -542,7 +598,21 @@ export default function Reports() {
       pdf.setTextColor(13, 124, 61)
       pdf.text(`${overallRate}%`, colX.rate, creditY + 5.5, { align: 'right' })
       pdf.setFont('helvetica', 'normal')
-      creditY += 12
+      creditY += 11
+
+      // Methodology footnote
+      if (totalSurplus > 0) {
+        if (creditY > pageHeight - 20) { pdf.addPage(); creditY = 22 }
+        pdf.setFontSize(6.5)
+        pdf.setTextColor(120, 120, 120)
+        pdf.setFont('helvetica', 'italic')
+        pdf.text(
+          `Note: ${formatAED(totalSurplus)} in advance/historical payments received this month is excluded from collection rate (counted as tenant credit). Total cash received: ${formatAED(totalRawCollected)}.`,
+          margin, creditY, { maxWidth: contentWidth },
+        )
+        pdf.setFont('helvetica', 'normal')
+        creditY += 6
+      }
 
       // ── Payment Method Summary box (kept) ──
       const monthMethodTotals: Record<string, number> = {}
