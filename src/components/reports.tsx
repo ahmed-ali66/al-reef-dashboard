@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, type RefObject } from 'react'
 import type { ReportData, PaymentData } from '@/lib/types'
 import { useAppStore, isOwnerOrAdmin } from '@/lib/store'
 import { useDataStore } from '@/lib/data-store'
@@ -365,7 +365,12 @@ export default function Reports() {
           }
         })
         .filter(b => b.totalUnits > 0 || b.occupied > 0 || b.expected > 0)
-        .sort((a, b) => b.expected - a.expected)
+        // Sort by collection rate ASCENDING (lowest collection % first → highlights underperformers at top)
+        .sort((a, b) => {
+          if (a.collectionRate !== b.collectionRate) return a.collectionRate - b.collectionRate
+          // Tiebreaker: highest remaining amount first (biggest outstanding $ on top within same rate)
+          return b.remaining - a.remaining
+        })
 
       const totalExpected = buildingPerf.reduce((s, b) => s + b.expected, 0)
       const totalCollected = buildingPerf.reduce((s, b) => s + b.collected, 0)
@@ -408,7 +413,7 @@ export default function Reports() {
       pdf.setFont('helvetica', 'normal')
       pdf.setFontSize(8)
       pdf.setTextColor(110, 110, 110)
-      pdf.text('Per-property rent collection analysis — expected, collected and outstanding for the month.', margin, creditY)
+      pdf.text('Per-property rent collection — sorted from lowest to highest collection rate to surface underperformers.', margin, creditY)
       creditY += 6
 
       // Summary KPI strip (3 tiles): Expected | Collected | Remaining
@@ -574,6 +579,136 @@ export default function Reports() {
       pdf.setTextColor(13, 124, 61)
       pdf.text(formatAED(mTotalCheque), margin + 55, creditY + 24)
       creditY += 30
+
+      // ── Page: Profit & Loss Statement + Expense Breakdown ──
+      pdf.addPage()
+      let plY = 18
+      pdf.setFillColor(13, 124, 61)
+      pdf.rect(0, 0, pageWidth, 14, 'F')
+      pdf.setTextColor(255, 255, 255)
+      pdf.setFontSize(9)
+      pdf.setFont('helvetica', 'bold')
+      pdf.text('Al Reef Al Madeena', margin, 9)
+      pdf.setFont('helvetica', 'normal')
+      pdf.setFontSize(8)
+      pdf.text(`Profit & Loss — ${monthName} ${selectedYear}`, pageWidth - margin, 9, { align: 'right' })
+      plY = 22
+
+      // Section title
+      pdf.setTextColor(13, 124, 61)
+      pdf.setFontSize(13)
+      pdf.setFont('helvetica', 'bold')
+      pdf.text('Profit & Loss Statement', margin, plY)
+      plY += 5
+      pdf.setFont('helvetica', 'normal')
+      pdf.setFontSize(8)
+      pdf.setTextColor(110, 110, 110)
+      pdf.text('Revenue, adjustments, vacancy and bad debt flowing through to net income for the month.', margin, plY)
+      plY += 7
+
+      // P&L items in a styled table-like layout
+      const plItems: Array<[string, string, 'normal' | 'bold' | 'green' | 'red']> = [
+        [t('rentalIncome', lang), formatAED(data.rentalIncome), 'normal'],
+        [t('otherIncome', lang), formatAED(data.otherIncome), 'normal'],
+        [t('grossRevenue', lang), formatAED(data.grossRevenue), 'bold'],
+        [t('adjustmentsTotal', lang), `-${formatAED(data.adjustmentTotal)}`, 'red'],
+        [t('netRevenue', lang), formatAED(data.netRevenue), data.netRevenue >= 0 ? 'green' : 'red'],
+        [t('vacancyLoss', lang), `-${formatAED(data.vacancyLoss)}`, 'red'],
+        [t('badDebt', lang), `-${formatAED(data.badDebt)}`, 'red'],
+        [t('grossProfit', lang), formatAED(data.grossProfit), data.grossProfit >= 0 ? 'green' : 'red'],
+        [t('operatingExpenses', lang), `-${formatAED(data.costOfOperations)}`, 'red'],
+        [t('netIncome', lang), formatAED(data.netIncome), data.netIncome >= 0 ? 'green' : 'red'],
+      ]
+      // P&L box
+      const plBoxH = plItems.length * 6.5 + 8
+      pdf.setFillColor(248, 250, 252)
+      pdf.roundedRect(margin, plY, contentWidth, plBoxH, 2, 2, 'F')
+      pdf.setFillColor(13, 124, 61)
+      pdf.rect(margin, plY, 1.5, plBoxH, 'F')
+      let plRowY = plY + 6
+      plItems.forEach(([label, value, style]) => {
+        const isBold = style === 'bold'
+        const color: [number, number, number] = style === 'red' ? [194, 65, 58]
+          : style === 'green' ? [13, 124, 61]
+          : isBold ? [13, 124, 61]
+          : [40, 40, 40]
+        pdf.setFontSize(9)
+        pdf.setFont('helvetica', isBold ? 'bold' : 'normal')
+        pdf.setTextColor(color[0], color[1], color[2])
+        pdf.text(label, margin + 5, plRowY)
+        pdf.text(value, margin + contentWidth - 5, plRowY, { align: 'right' })
+        // Subtle separator under bold rows
+        if (isBold) {
+          pdf.setDrawColor(220, 220, 220)
+          pdf.setLineWidth(0.2)
+          pdf.line(margin + 3, plRowY + 2, margin + contentWidth - 3, plRowY + 2)
+        }
+        plRowY += 6.5
+      })
+      plY = plY + plBoxH + 8
+
+      // Expense breakdown
+      if (plY > pageHeight - 60) { pdf.addPage(); plY = 22 }
+      pdf.setFontSize(12)
+      pdf.setTextColor(13, 124, 61)
+      pdf.setFont('helvetica', 'bold')
+      pdf.text(t('expenseBreakdown', lang), margin, plY)
+      plY += 4
+      pdf.setFont('helvetica', 'normal')
+      pdf.setFontSize(8)
+      pdf.setTextColor(110, 110, 110)
+      pdf.text('Operating expenses grouped by category.', margin, plY)
+      plY += 6
+
+      // Expense breakdown table
+      const expBoxW = contentWidth
+      const expEntries = Object.entries(data.expenseBreakdown).sort((a, b) => (b[1] as number) - (a[1] as number))
+      const expTotal = expEntries.reduce((s, [, v]) => s + (v as number), 0)
+      const expRows = expEntries.length
+      const expBoxH = expRows * 7 + 14 // header + total
+      pdf.setFillColor(248, 250, 252)
+      pdf.roundedRect(margin, plY, expBoxW, expBoxH, 2, 2, 'F')
+      pdf.setFillColor(13, 124, 61)
+      pdf.rect(margin, plY, expBoxW, 1.2, 'F')
+      // Header
+      pdf.setFontSize(8)
+      pdf.setFont('helvetica', 'bold')
+      pdf.setTextColor(13, 124, 61)
+      pdf.text(t('expenseCategory', lang), margin + 5, plY + 7)
+      pdf.text(t('amount', lang), margin + expBoxW * 0.7, plY + 7)
+      pdf.text('Share %', margin + expBoxW - 5, plY + 7, { align: 'right' })
+      pdf.setDrawColor(220, 220, 220)
+      pdf.setLineWidth(0.2)
+      pdf.line(margin + 3, plY + 10, margin + expBoxW - 3, plY + 10)
+      let expRowY = plY + 15
+      pdf.setFont('helvetica', 'normal')
+      pdf.setFontSize(8.5)
+      expEntries.forEach(([key, value], i) => {
+        const v = value as number
+        const sharePct = expTotal > 0 ? Math.round((v / expTotal) * 100) : 0
+        // Subtle zebra striping
+        if (i % 2 === 1) {
+          pdf.setFillColor(255, 255, 255)
+          pdf.rect(margin + 2, expRowY - 4, expBoxW - 4, 6, 'F')
+        }
+        pdf.setTextColor(40, 40, 40)
+        pdf.text(getExpenseCategoryLabelExport(key), margin + 5, expRowY)
+        pdf.setTextColor(194, 65, 58)
+        pdf.text(formatAED(v), margin + expBoxW * 0.7, expRowY)
+        pdf.setTextColor(110, 110, 110)
+        pdf.text(`${sharePct}%`, margin + expBoxW - 5, expRowY, { align: 'right' })
+        expRowY += 7
+      })
+      // Total row
+      pdf.setDrawColor(220, 220, 220)
+      pdf.line(margin + 3, expRowY - 1, margin + expBoxW - 3, expRowY - 1)
+      pdf.setFont('helvetica', 'bold')
+      pdf.setTextColor(13, 124, 61)
+      pdf.text('TOTAL', margin + 5, expRowY + 3)
+      pdf.text(formatAED(expTotal), margin + expBoxW * 0.7, expRowY + 3)
+      pdf.text('100%', margin + expBoxW - 5, expRowY + 3, { align: 'right' })
+      pdf.setFont('helvetica', 'normal')
+      plY = plY + expBoxH + 8
 
       // ── Page 3: Reservations & Recurring Bills Overview ──
       pdf.addPage()
@@ -745,159 +880,129 @@ export default function Reports() {
           })
       }
 
-      // ── Page 2: Charts ──
-      // Track Y position manually for reliable placement
-      let chartPageY = 20
-      let isOnChartPage = false
-
-      // Capture bar chart
-      if (barChartRef.current) {
-        try {
-          const canvas = await html2canvas(barChartRef.current, { scale: 2, backgroundColor: '#ffffff', logging: false })
-          const imgData = canvas.toDataURL('image/png')
-          pdf.addPage()
-          isOnChartPage = true
-          pdf.setFillColor(13, 124, 61)
-          pdf.rect(0, 0, pageWidth, 15, 'F')
-          pdf.setTextColor(255, 255, 255)
-          pdf.setFontSize(12)
-          pdf.text(`${t('sixMonthTrend', lang)} - ${monthName} ${selectedYear}`, pageWidth / 2, 10, { align: 'center' })
-          pdf.setTextColor(0, 0, 0)
-          const imgW = contentWidth
-          const imgH = (canvas.height / canvas.width) * imgW
-          const actualImgH = Math.min(imgH, 120)
-          pdf.addImage(imgData, 'PNG', margin, 20, imgW, actualImgH)
-          chartPageY = 20 + actualImgH + 5
-        } catch { /* skip chart if capture fails */ }
-      }
-
-      // Capture pie chart - place relative to tracked bar chart Y position
-      if (pieChartRef.current) {
-        try {
-          const canvas = await html2canvas(pieChartRef.current, { scale: 2, backgroundColor: '#ffffff', logging: false })
-          const imgData = canvas.toDataURL('image/png')
-          const imgW = contentWidth * 0.8
-          const imgH = (canvas.height / canvas.width) * imgW
-          const actualPieH = Math.min(imgH, 100)
-          // Check if pie fits on current chart page
-          if (isOnChartPage && chartPageY + actualPieH + 5 < pageHeight - 25) {
-            // Place on same page as bar chart
-            pdf.addImage(imgData, 'PNG', margin + contentWidth * 0.1, chartPageY, imgW, actualPieH)
-            chartPageY += actualPieH + 5
-          } else {
-            // Add new page for pie chart
-            pdf.addPage()
-            isOnChartPage = true
-            chartPageY = 20
-            pdf.addImage(imgData, 'PNG', margin + contentWidth * 0.1, chartPageY, imgW, actualPieH)
-            chartPageY += actualPieH + 5
-          }
-        } catch { /* skip chart if capture fails */ }
-      }
-
-      // ── Page 3: Revenue Analysis Chart ──
-      let areaChartEndY = 20
-      if (areaChartRef.current) {
-        try {
-          const canvas = await html2canvas(areaChartRef.current, { scale: 2, backgroundColor: '#ffffff', logging: false })
-          const imgData = canvas.toDataURL('image/png')
-          pdf.addPage()
-          pdf.setFillColor(13, 124, 61)
-          pdf.rect(0, 0, pageWidth, 15, 'F')
-          pdf.setTextColor(255, 255, 255)
-          pdf.setFontSize(12)
-          pdf.text(`${t('revenueAnalysis', lang)} - ${monthName} ${selectedYear}`, pageWidth / 2, 10, { align: 'center' })
-          pdf.setTextColor(0, 0, 0)
-          const imgW = contentWidth
-          const imgH = (canvas.height / canvas.width) * imgW
-          const actualAreaH = Math.min(imgH, 140)
-          pdf.addImage(imgData, 'PNG', margin, 20, imgW, actualAreaH)
-          areaChartEndY = 20 + actualAreaH + 5
-        } catch { /* skip chart if capture fails */ }
-      }
-
-      // ── P&L Statement ──
-      // Track Y position after area chart; add new page if not enough room
-      let plY: number
-      if (areaChartEndY + 80 < pageHeight - 25) {
-        // Place P&L on the same page as area chart
-        plY = areaChartEndY
-      } else {
-        pdf.addPage()
-        plY = 20
-      }
-      pdf.setFontSize(12)
+      // ─ Section C: Bills vs Tenant Payments — Net Cash Position ─
+      if (ovY > pageHeight - 60) { pdf.addPage(); ovY = 22 }
+      ovY += 4
       pdf.setTextColor(13, 124, 61)
-      pdf.text(t('profitAndLoss', lang), margin, plY)
-      plY += 8
-      pdf.setFontSize(9)
-      pdf.setTextColor(0, 0, 0)
+      pdf.setFontSize(13)
+      pdf.setFont('helvetica', 'bold')
+      pdf.text('Bills vs Tenant Payments', margin, ovY)
+      ovY += 5
+      pdf.setFont('helvetica', 'normal')
+      pdf.setFontSize(8)
+      pdf.setTextColor(110, 110, 110)
+      pdf.text('Cash inflow from tenants versus cash outflow for recurring bills this month.', margin, ovY)
+      ovY += 6
 
-      const plItems = [
-        [t('rentalIncome', lang), formatAED(data.rentalIncome), ''],
-        [t('otherIncome', lang), formatAED(data.otherIncome), ''],
-        [t('grossRevenue', lang), formatAED(data.grossRevenue), 'bold'],
-        [t('adjustmentsTotal', lang), `-${formatAED(data.adjustmentTotal)}`, 'red'],
-        [t('netRevenue', lang), formatAED(data.netRevenue), data.netRevenue >= 0 ? 'green' : 'red'],
-        [t('vacancyLoss', lang), `-${formatAED(data.vacancyLoss)}`, 'red'],
-        [t('badDebt', lang), `-${formatAED(data.badDebt)}`, 'red'],
-        [t('grossProfit', lang), formatAED(data.grossProfit), data.grossProfit >= 0 ? 'green' : 'red'],
-        [t('operatingExpenses', lang), `-${formatAED(data.costOfOperations)}`, 'red'],
-        [t('netIncome', lang), formatAED(data.netIncome), data.netIncome >= 0 ? 'green' : 'red'],
+      // Compute tenant payments collected this month (rent only — excludes reservation deposits already shown)
+      const tenantPaymentsThisMonth = monthPayments.reduce((s, p) => s + (p.amount || 0), 0)
+      const billsPaidThisMonth = rbPaidThisMonth
+      const netCashFlow = tenantPaymentsThisMonth - billsPaidThisMonth
+
+      // 3-tile KPI strip
+      const bvtTiles = [
+        { label: 'Tenant Payments', value: formatAED(tenantPaymentsThisMonth), accent: [13, 124, 61] as [number, number, number] },
+        { label: 'Bills Paid', value: formatAED(billsPaidThisMonth), accent: [194, 65, 58] as [number, number, number] },
+        { label: 'Net Cash Flow', value: formatAED(netCashFlow), accent: netCashFlow >= 0 ? [10, 92, 78] as [number, number, number] : [197, 160, 40] as [number, number, number] },
       ]
-      plItems.forEach(([label, value, style]) => {
-        if (plY > pageHeight - 25) {
-          pdf.addPage()
-          plY = 20
-          // Redraw P&L header on new page
-          pdf.setFontSize(12)
-          pdf.setTextColor(13, 124, 61)
-          pdf.text(t('profitAndLoss', lang) + ' (cont.)', margin, plY)
-          plY += 8
-          pdf.setFontSize(9)
-          pdf.setTextColor(0, 0, 0)
-        }
-        if (style === 'bold') pdf.setFont('helvetica', 'bold')
-        else pdf.setFont('helvetica', 'normal')
-        pdf.text(label, margin, plY)
-        pdf.text(value, margin + contentWidth, plY, { align: 'right' })
-        plY += 6
-      })
-
-      // Expense breakdown table
-      if (plY > pageHeight - 60) { pdf.addPage(); plY = 20 }
-      plY += 5
-      pdf.setFontSize(11)
-      pdf.setTextColor(13, 124, 61)
-      pdf.text(t('expenseBreakdown', lang), margin, plY)
-      plY += 7
-      // Draw expense breakdown table header (function for reuse on page breaks)
-      const drawExpenseTableHeader = (startY: number) => {
-        pdf.setFontSize(9)
-        pdf.setTextColor(0, 0, 0)
-        pdf.setFont('helvetica', 'bold')
-        pdf.text(t('expenseCategory', lang), margin, startY)
-        pdf.text(t('amount', lang), margin + contentWidth, startY, { align: 'right' })
-        pdf.line(margin, startY + 2, margin + contentWidth, startY + 2)
+      const bvtTileW = (contentWidth - 8) / 3
+      bvtTiles.forEach((tile, i) => {
+        const x = margin + i * (bvtTileW + 4)
+        pdf.setFillColor(248, 250, 252)
+        pdf.roundedRect(x, ovY, bvtTileW, 16, 2, 2, 'F')
+        pdf.setFillColor(tile.accent[0], tile.accent[1], tile.accent[2])
+        pdf.rect(x, ovY, 1.5, 16, 'F')
+        pdf.setFontSize(7)
+        pdf.setTextColor(110, 110, 110)
         pdf.setFont('helvetica', 'normal')
-        return startY + 6
-      }
-      plY = drawExpenseTableHeader(plY)
-      Object.entries(data.expenseBreakdown).forEach(([key, value]) => {
-        if (plY > pageHeight - 25) {
-          pdf.addPage()
-          plY = 20
-          // Redraw expense table header on new page
-          pdf.setFontSize(11)
-          pdf.setTextColor(13, 124, 61)
-          pdf.text(t('expenseBreakdown', lang) + ' (cont.)', margin, plY)
-          plY += 7
-          plY = drawExpenseTableHeader(plY)
-        }
-        pdf.text(getExpenseCategoryLabelExport(key), margin, plY)
-        pdf.text(formatAED(value), margin + contentWidth, plY, { align: 'right' })
-        plY += 5
+        pdf.text(tile.label.toUpperCase(), x + 4, ovY + 5)
+        pdf.setFontSize(11)
+        pdf.setFont('helvetica', 'bold')
+        pdf.setTextColor(tile.accent[0], tile.accent[1], tile.accent[2])
+        pdf.text(tile.value, x + 4, ovY + 12)
+        pdf.setFont('helvetica', 'normal')
       })
+      ovY += 22
+
+      // Simple comparison bar (visual)
+      const totalFlow = tenantPaymentsThisMonth + billsPaidThisMonth
+      const barX = margin
+      const barW = contentWidth
+      const barH = 8
+      const inflowPct = totalFlow > 0 ? (tenantPaymentsThisMonth / totalFlow) * 100 : 0
+      // Background
+      pdf.setFillColor(233, 233, 233)
+      pdf.roundedRect(barX, ovY, barW, barH, 1.5, 1.5, 'F')
+      // Inflow (tenant payments) portion — green
+      pdf.setFillColor(13, 124, 61)
+      pdf.roundedRect(barX, ovY, Math.max(0.5, barW * inflowPct / 100), barH, 1.5, 1.5, 'F')
+      // Labels
+      pdf.setFontSize(7.5)
+      pdf.setTextColor(13, 124, 61)
+      pdf.setFont('helvetica', 'bold')
+      pdf.text(`Inflow ${Math.round(inflowPct)}%`, barX + 3, ovY + barH + 4)
+      pdf.setTextColor(194, 65, 58)
+      pdf.text(`Outflow ${Math.round(100 - inflowPct)}%`, barX + barW - 3, ovY + barH + 4, { align: 'right' })
+      pdf.setFont('helvetica', 'normal')
+
+      // ── Page: Charts (each chart on its own page, aspect ratio preserved) ──
+      // Note: html2canvas captures the chart at its rendered pixel size. We compute the
+      // placement width/height preserving the canvas aspect ratio and clamp by MAX height
+      // so charts never get stretched or squashed. Each chart gets its own dedicated page.
+
+      // Helper: render a single chart on its own page with title bar
+      const renderChartOnOwnPage = async (
+        ref: RefObject<HTMLDivElement | null>,
+        title: string,
+        maxH: number,
+      ) => {
+        if (!ref.current) return
+        let canvas: HTMLCanvasElement
+        try {
+          canvas = await html2canvas(ref.current, { scale: 2, backgroundColor: '#ffffff', logging: false })
+        } catch {
+          return // skip if capture fails
+        }
+        const imgData = canvas.toDataURL('image/png')
+        pdf.addPage()
+        // Title bar
+        pdf.setFillColor(13, 124, 61)
+        pdf.rect(0, 0, pageWidth, 15, 'F')
+        pdf.setTextColor(255, 255, 255)
+        pdf.setFontSize(12)
+        pdf.setFont('helvetica', 'bold')
+        pdf.text(title, pageWidth / 2, 10, { align: 'center' })
+        pdf.setFont('helvetica', 'normal')
+        pdf.setTextColor(0, 0, 0)
+
+        // Compute placement preserving aspect ratio
+        const canvasRatio = canvas.height / canvas.width
+        let placeW = contentWidth        // try full content width first
+        let placeH = placeW * canvasRatio
+        const maxPlaceH = maxH
+        if (placeH > maxPlaceH) {
+          // Clamp by height — recompute width to preserve aspect ratio
+          placeH = maxPlaceH
+          placeW = placeH / canvasRatio
+          if (placeW > contentWidth) {
+            placeW = contentWidth
+            placeH = placeW * canvasRatio
+          }
+        }
+        // Center horizontally
+        const placeX = margin + (contentWidth - placeW) / 2
+        const placeY = 22
+        pdf.addImage(imgData, 'PNG', placeX, placeY, placeW, placeH)
+      }
+
+      // Bar chart — 6-month trend
+      // Brief wait to ensure recharts have finished animating before snapshot
+      await new Promise(resolve => setTimeout(resolve, 350))
+      await renderChartOnOwnPage(barChartRef, `${t('sixMonthTrend', lang)} - ${monthName} ${selectedYear}`, 130)
+      // Pie chart — payment method breakdown
+      await renderChartOnOwnPage(pieChartRef, `${t('paymentMethodSummary', lang)} - ${monthName} ${selectedYear}`, 130)
+      // Area chart — revenue analysis
+      await renderChartOnOwnPage(areaChartRef, `${t('revenueAnalysis', lang)} - ${monthName} ${selectedYear}`, 150)
 
       // Footer on all pages
       const totalPages = pdf.getNumberOfPages()
