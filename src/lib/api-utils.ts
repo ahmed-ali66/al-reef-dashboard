@@ -240,9 +240,12 @@ export function serialize<T extends Record<string, any>>(obj: T): T {
       // PHASE 3: Prisma.Decimal — convert to string for full precision, then to number for JSON
       ;(result as any)[key] = Number(value.toFixed(2))
     } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      // Handle nested objects (like relations)
-      if ('id' in value && ('createdAt' in value || 'updatedAt' in value)) {
-        // This looks like a Prisma model, serialize it
+      // Handle nested objects (like relations).
+      // Serialize any object that looks like a Prisma model record: it has an `id`
+      // and at least one other field (covers full models AND `select`-restricted
+      // projections that omit createdAt/updatedAt).
+      const keys = Object.keys(value)
+      if ('id' in value && keys.length >= 2) {
         ;(result as any)[key] = serialize(value)
       }
     } else if (Array.isArray(value)) {
