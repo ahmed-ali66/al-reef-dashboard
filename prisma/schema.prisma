@@ -5,9 +5,6 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  // directUrl is used by Prisma migrate/CLI to bypass PgBouncer (which only supports
-  // transaction-mode pooling). Falls back to DATABASE_URL when DIRECT_DATABASE_URL is not set.
-  directUrl = env("DIRECT_DATABASE_URL", env("DATABASE_URL"))
 }
 
 model Company {
