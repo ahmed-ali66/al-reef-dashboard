@@ -588,8 +588,12 @@ export default function SystemManagement() {
                           </p>
                         )}
                         {record.storageUrl && (
-                          <a href={record.storageUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline mt-1 block">
-                            Storage URL
+                          <a
+                            href={`/api/backup/download?recordId=${record.id}`}
+                            className="text-xs text-blue-600 hover:underline mt-1 block"
+                            download
+                          >
+                            Download backup file
                           </a>
                         )}
                       </div>
