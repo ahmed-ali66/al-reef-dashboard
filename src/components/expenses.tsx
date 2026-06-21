@@ -19,6 +19,15 @@ import { Receipt, Plus, Pencil, Trash2, TrendingDown, Loader2, ShieldAlert, Chev
 
 const EXPENSE_CATEGORIES = ['maintenance', 'utility', 'insurance', 'manpower', 'municipality', 'leasing', 'security', 'other'] as const
 
+// Quick-pick preset descriptions for common recurring expenses.
+// Clicking a preset pre-fills the description + category (and optionally the
+// default amount) so users don't have to type these every time. The list can
+// be extended freely — each entry is { label, category, defaultAmount? }.
+const QUICK_DESCRIPTIONS: Array<{ label: string; category: string; defaultAmount?: number }> = [
+  { label: 'Sienna Car Petrol', category: 'other', defaultAmount: 100 },
+  { label: 'Mirage Car Petrol', category: 'other', defaultAmount: 100 },
+]
+
 type ViewMode = 'daily' | 'monthly'
 
 export default function Expenses() {
@@ -485,6 +494,30 @@ export default function Expenses() {
             <div>
               <Label>{t('description', lang)}</Label>
               <Input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
+              {/* Quick-pick preset descriptions for common recurring expenses */}
+              <div className="flex flex-wrap gap-2 mt-2">
+                <span className="text-xs text-muted-foreground self-center">Quick:</span>
+                {QUICK_DESCRIPTIONS.map(preset => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => setForm({
+                      ...form,
+                      description: preset.label,
+                      category: preset.category,
+                      amount: preset.defaultAmount ?? form.amount,
+                    })}
+                    className={cn2(
+                      'inline-flex items-center px-2.5 py-1 text-xs rounded-full border transition-colors',
+                      form.description === preset.label
+                        ? 'bg-emerald text-white border-emerald'
+                        : 'bg-background text-muted-foreground border-input hover:bg-muted hover:text-foreground'
+                    )}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
