@@ -119,6 +119,7 @@ model TenantGroup {
   updatedAt     DateTime @updatedAt
   tenants       Tenant[]
   reservations  Reservation[]
+  payments      Payment[]
 
   @@index([companyId])
   @@index([propertyId])
@@ -197,6 +198,8 @@ model Payment {
   company       Company  @relation(fields: [companyId], references: [id])
   tenantId      String
   tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  groupId       String?
+  group         TenantGroup? @relation(fields: [groupId], references: [id])
   amount        Decimal   @db.Decimal(10,2)
   date          DateTime
   month         Int
@@ -214,6 +217,7 @@ model Payment {
 
   @@index([companyId])
   @@index([tenantId])
+  @@index([groupId])
   @@index([month, year])
   @@index([date])
   @@index([allocationType])

@@ -90,8 +90,8 @@ export async function GET(request: Request) {
 
     for (const companyId of companyIds) {
       try {
-        // Fetch all company data (including Reservations, RentAdjustments, RecurringBills)
-        const [company, properties, tenants, expenses, maintenance, users, auditLogs, reservations, rentAdjustments, recurringBills, billPayments] = await Promise.all([
+        // Fetch all company data (including Reservations, RentAdjustments, RecurringBills, TenantGroups)
+        const [company, properties, tenants, expenses, maintenance, users, auditLogs, reservations, rentAdjustments, recurringBills, billPayments, tenantGroups, billCycles] = await Promise.all([
           prisma.company.findUnique({ where: { id: companyId } }),
           prisma.property.findMany({ where: { companyId, deletedAt: null } }),
           prisma.tenant.findMany({
@@ -116,10 +116,12 @@ export async function GET(request: Request) {
           prisma.rentAdjustment.findMany({ where: { tenant: { companyId } } }),
           prisma.recurringBill.findMany({ where: { companyId, deletedAt: null } }),
           prisma.billPayment.findMany({ where: { recurringBill: { companyId } } }),
+          prisma.tenantGroup.findMany({ where: { companyId, deletedAt: null } }),
+          prisma.billCycle.findMany({ where: { recurringBill: { companyId } } }),
         ])
 
         // Also fetch soft-deleted records
-        const [deletedProperties, deletedTenants, deletedExpenses, deletedMaintenance, deletedReservations, deletedRecurringBills] = await Promise.all([
+        const [deletedProperties, deletedTenants, deletedExpenses, deletedMaintenance, deletedReservations, deletedRecurringBills, deletedTenantGroups] = await Promise.all([
           prisma.property.findMany({ where: { companyId, deletedAt: { not: null } } }),
           prisma.tenant.findMany({
             where: { companyId, deletedAt: { not: null } },
@@ -129,20 +131,21 @@ export async function GET(request: Request) {
           prisma.maintenance.findMany({ where: { companyId, deletedAt: { not: null } } }),
           prisma.reservation.findMany({ where: { companyId, deletedAt: { not: null } } }),
           prisma.recurringBill.findMany({ where: { companyId, deletedAt: { not: null } } }),
+          prisma.tenantGroup.findMany({ where: { companyId, deletedAt: { not: null } } }),
         ])
 
         const backup = {
-          version: '1.2',
+          version: '1.3',
           exportedAt: new Date().toISOString(),
           type: isCron ? 'auto' : 'manual',
           company,
-          data: { properties, tenants, expenses, maintenance, users, auditLogs, reservations, rentAdjustments, recurringBills, billPayments },
-          deleted: { properties: deletedProperties, tenants: deletedTenants, expenses: deletedExpenses, maintenance: deletedMaintenance, reservations: deletedReservations, recurringBills: deletedRecurringBills },
+          data: { properties, tenants, expenses, maintenance, users, auditLogs, reservations, rentAdjustments, recurringBills, billPayments, tenantGroups, billCycles },
+          deleted: { properties: deletedProperties, tenants: deletedTenants, expenses: deletedExpenses, maintenance: deletedMaintenance, reservations: deletedReservations, recurringBills: deletedRecurringBills, tenantGroups: deletedTenantGroups },
         }
 
         const backupJson = JSON.stringify(backup)
         const backupSize = Buffer.byteLength(backupJson, 'utf-8')
-        const recordCount = properties.length + tenants.length + expenses.length + maintenance.length + users.length + reservations.length + rentAdjustments.length + recurringBills.length
+        const recordCount = properties.length + tenants.length + expenses.length + maintenance.length + users.length + reservations.length + rentAdjustments.length + recurringBills.length + tenantGroups.length + billCycles.length
 
         // Compute SHA-256 data hash for integrity verification
         const dataHash = crypto.createHash('sha256').update(backupJson).digest('hex')
@@ -240,6 +243,8 @@ export async function GET(request: Request) {
             reservations: reservations.length,
             rentAdjustments: rentAdjustments.length,
             recurringBills: recurringBills.length,
+            tenantGroups: tenantGroups.length,
+            billCycles: billCycles.length,
           },
         })
 
