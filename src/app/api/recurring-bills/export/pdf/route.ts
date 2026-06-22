@@ -224,9 +224,11 @@ export async function GET(request: Request) {
       doc.text(reportTitle, marginLeft, y, { width: pageWidth, lineBreak: true })
       y += doc.heightOfString(reportTitle, { width: pageWidth, fontSize: 14 }) + 8
 
-      // Summary line — generated date and key metrics
+      // Summary line — generated date and key metrics.
+      // NOTE: "Bills Paid This Month" sums ONLY BillPayment records (utility bills),
+      // NOT rent Payment records. Label is explicit to avoid confusion.
       doc.fontSize(9).fillColor('#7f8c8d').font('Helvetica')
-      const summaryLine = `Generated: ${today} | Total Bills: ${totalBills} | Outstanding: AED ${totalOutstanding.toFixed(2)} | Paid This Month: AED ${totalPaidThisMonth.toFixed(2)}`
+      const summaryLine = `Generated: ${today} | Total Bills: ${totalBills} | Outstanding: AED ${totalOutstanding.toFixed(2)} | Bills Paid This Month: AED ${totalPaidThisMonth.toFixed(2)}`
       doc.text(summaryLine, marginLeft, y, { width: pageWidth, lineBreak: true })
       y += doc.heightOfString(summaryLine, { width: pageWidth, fontSize: 9 }) + 12
 
@@ -249,6 +251,53 @@ export async function GET(request: Request) {
       y += doc.heightOfString(title, { width: pageWidth, fontSize: 12 }) + 2
       doc.moveTo(marginLeft, y).lineTo(marginLeft + pageWidth, y).strokeColor(color).lineWidth(0.5).stroke()
       y += 8
+      return y
+    }
+
+    // ─── Helper: Add a section total line (used after each section's table) ───
+    // Renders a bold, color-coded total line right-aligned at the bottom of a section.
+    // `label` example: "Total Overdue". `amount` is a Number. `color` matches the section color.
+    // Multi-line label supported via `secondaryLabel`/`secondaryAmount` (e.g. for Partially Paid
+    // section where both Paid-so-far and Remaining are useful totals).
+    const addSectionTotal = (
+      y: number,
+      label: string,
+      amount: number,
+      color: string,
+      secondaryLabel?: string,
+      secondaryAmount?: number,
+    ): number => {
+      // Reserve space for total line(s); page-break if needed
+      const linesNeeded = secondaryLabel ? 2 : 1
+      if (y + 20 * linesNeeded + 10 > contentBottomLimit) {
+        doc.addPage()
+        y = 50
+      }
+
+      // Primary total line — label on the left, amount right-aligned
+      doc.fontSize(10).fillColor(color).font('Helvetica-Bold')
+      doc.text(label, marginLeft, y, { width: pageWidth * 0.7, align: 'left', lineBreak: false })
+      doc.text(`AED ${amount.toFixed(2)}`, marginLeft + pageWidth * 0.7, y, {
+        width: pageWidth * 0.3,
+        align: 'right',
+        lineBreak: false,
+      })
+      y += 18
+
+      // Optional secondary total line (e.g. "Remaining: AED X" for partially paid section)
+      if (secondaryLabel && secondaryAmount !== undefined) {
+        doc.fontSize(10).fillColor(color).font('Helvetica-Bold')
+        doc.text(secondaryLabel, marginLeft, y, { width: pageWidth * 0.7, align: 'left', lineBreak: false })
+        doc.text(`AED ${secondaryAmount.toFixed(2)}`, marginLeft + pageWidth * 0.7, y, {
+          width: pageWidth * 0.3,
+          align: 'right',
+          lineBreak: false,
+        })
+        y += 18
+      }
+
+      // Small spacer after the total
+      y += 6
       return y
     }
 
@@ -399,7 +448,7 @@ export async function GET(request: Request) {
     const summaryData = [
       ['Total Bills', String(totalBills)],
       ['Total Outstanding', `AED ${totalOutstanding.toFixed(2)}`],
-      ['Paid This Month', `AED ${totalPaidThisMonth.toFixed(2)}`],
+      ['Bills Paid This Month', `AED ${totalPaidThisMonth.toFixed(2)}`],
       ['Overdue Bills', String(overdueBills.length)],
       ['Upcoming Bills (30 days)', String(upcomingBills.length)],
       ['Paid Bills', String(paidBills.length)],
@@ -443,6 +492,9 @@ export async function GET(request: Request) {
         { header: 'Days Overdue', widthPct: 13 },
         { header: 'Type', widthPct: 13 },
       ], overdueRows, y)
+      // Section total: sum of all overdue bills' current outstanding amounts
+      const totalOverdue = overdueBills.reduce((s, b) => s + safeNumber(b.currentOutstanding), 0)
+      y = addSectionTotal(y, `Total Overdue (${overdueBills.length} bills):`, totalOverdue, '#c0392b')
     }
 
     // Upcoming Bills Section
@@ -469,6 +521,9 @@ export async function GET(request: Request) {
         { header: 'Due Date', widthPct: 13 },
         { header: 'Remaining', widthPct: 13 },
       ], upcomingRows, y)
+      // Section total: sum of all upcoming bills' current outstanding amounts
+      const totalUpcoming = upcomingBills.reduce((s, b) => s + safeNumber(b.currentOutstanding), 0)
+      y = addSectionTotal(y, `Total Upcoming (${upcomingBills.length} bills):`, totalUpcoming, '#e67e22')
     }
 
     // FIX: Paid Bills — only include bills with ACTUAL payment records
@@ -493,6 +548,9 @@ export async function GET(request: Request) {
         { header: 'Payment Date', widthPct: 13 },
         { header: 'Reference', widthPct: 13 },
       ], paidRows, y)
+      // Section total: sum of all paid bills' actual paid amounts (lifetime, not just this month)
+      const totalPaid = paidBills.reduce((s, b) => s + getActualPaidAmount(b), 0)
+      y = addSectionTotal(y, `Total Paid (${paidBills.length} bills):`, totalPaid, '#27ae60')
     }
 
     // FIX: Partially Paid Bills — only include bills with ACTUAL payment records
@@ -519,6 +577,17 @@ export async function GET(request: Request) {
         { header: 'Remaining', widthPct: 14 },
         { header: 'Due Date', widthPct: 15 },
       ], partialRows, y)
+      // Section totals: show BOTH total paid-so-far AND total still outstanding
+      const totalPartialPaid = partiallyPaidBills.reduce((s, b) => s + getActualPaidAmount(b), 0)
+      const totalPartialRemaining = partiallyPaidBills.reduce((s, b) => s + safeNumber(b.currentOutstanding), 0)
+      y = addSectionTotal(
+        y,
+        `Total Paid So Far (${partiallyPaidBills.length} bills):`,
+        totalPartialPaid,
+        '#8e44ad',
+        'Total Still Outstanding:',
+        totalPartialRemaining,
+      )
     }
 
     // Outstanding Balance Summary — show only current outstanding, no confusing "Previous"
@@ -541,15 +610,7 @@ export async function GET(request: Request) {
 
       // FIX: Total Outstanding only — remove confusing "Previous Liability"
       const totalCurr = outstandingBills.reduce((s, b) => s + safeNumber(b.currentOutstanding), 0)
-
-      if (y + 25 > contentBottomLimit) {
-        doc.addPage()
-        y = 50
-      }
-
-      doc.fontSize(10).fillColor('#c0392b').font('Helvetica-Bold')
-      doc.text(`Total Outstanding: AED ${totalCurr.toFixed(2)}`, marginLeft, y, { width: pageWidth, lineBreak: false })
-      y += 20
+      y = addSectionTotal(y, `Total Outstanding (${outstandingBills.length} bills):`, totalCurr, '#c0392b')
     }
 
     // ─── Add footers to ALL pages at the end ───

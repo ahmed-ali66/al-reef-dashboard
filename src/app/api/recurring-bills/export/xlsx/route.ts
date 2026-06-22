@@ -169,7 +169,7 @@ export async function GET(request: Request) {
       ['Metric', 'Value'],
       ['Total Bills', activeBills.length],
       ['Total Outstanding (AED)', activeBills.reduce((s, b) => s + parseFloat(String(b.currentOutstanding)), 0).toFixed(2)],
-      ['Total Paid This Month (AED)', totalPaidThisMonth.toFixed(2)],
+      ['Total Bills Paid This Month (AED)', totalPaidThisMonth.toFixed(2)],
       ['Overdue Bills', overdueBills.length],
       ['Upcoming Bills (30 days)', upcomingBills.length],
       ['Paid Bills', paidBills.length],
@@ -221,7 +221,10 @@ export async function GET(request: Request) {
           b.nextDueDate.toISOString().split('T')[0],
         ]
       })
-      const overdueWs = XLSX.utils.aoa_to_sheet([overdueHeader, ...overdueRows])
+      // Total row at the bottom of the sheet
+      const overdueTotal = overdueBills.reduce((s, b) => s + parseFloat(String(b.currentOutstanding)), 0)
+      const overdueTotalRow = ['', '', '', `TOTAL (${overdueBills.length} bills)`, overdueTotal.toFixed(2), '', '', '']
+      const overdueWs = XLSX.utils.aoa_to_sheet([overdueHeader, ...overdueRows, overdueTotalRow])
       overdueWs['!cols'] = overdueHeader.map(() => ({ wch: 18 }))
       XLSX.utils.book_append_sheet(wb, overdueWs, 'Overdue')
     }
@@ -244,7 +247,10 @@ export async function GET(request: Request) {
           b.serviceType,
         ]
       })
-      const upcomingWs = XLSX.utils.aoa_to_sheet([upcomingHeader, ...upcomingRows])
+      // Total row at the bottom of the sheet
+      const upcomingTotal = upcomingBills.reduce((s, b) => s + parseFloat(String(b.currentOutstanding)), 0)
+      const upcomingTotalRow = ['', '', '', `TOTAL (${upcomingBills.length} bills)`, upcomingTotal.toFixed(2), '', '', '']
+      const upcomingWs = XLSX.utils.aoa_to_sheet([upcomingHeader, ...upcomingRows, upcomingTotalRow])
       upcomingWs['!cols'] = upcomingHeader.map(() => ({ wch: 18 }))
       XLSX.utils.book_append_sheet(wb, upcomingWs, 'Upcoming')
     }
@@ -265,7 +271,10 @@ export async function GET(request: Request) {
           b.payments?.[0]?.reference || '',
         ]
       })
-      const paidWs = XLSX.utils.aoa_to_sheet([paidHeader, ...paidRows])
+      // Total row at the bottom of the sheet
+      const paidTotal = paidBills.reduce((s, b) => s + getActualPaidAmount(b), 0)
+      const paidTotalRow = ['', '', '', `TOTAL (${paidBills.length} bills)`, paidTotal.toFixed(2), '', '', '']
+      const paidWs = XLSX.utils.aoa_to_sheet([paidHeader, ...paidRows, paidTotalRow])
       paidWs['!cols'] = paidHeader.map(() => ({ wch: 18 }))
       XLSX.utils.book_append_sheet(wb, paidWs, 'Paid')
     }
@@ -287,7 +296,11 @@ export async function GET(request: Request) {
           b.serviceType,
         ]
       })
-      const partialWs = XLSX.utils.aoa_to_sheet([partialHeader, ...partialRows])
+      // Total row at the bottom of the sheet (both paid-so-far and outstanding)
+      const partialPaidTotal = partiallyPaidBills.reduce((s, b) => s + getActualPaidAmount(b), 0)
+      const partialOutstandingTotal = partiallyPaidBills.reduce((s, b) => s + parseFloat(String(b.currentOutstanding)), 0)
+      const partialTotalRow = ['', '', '', `TOTAL (${partiallyPaidBills.length} bills)`, partialPaidTotal.toFixed(2), partialOutstandingTotal.toFixed(2), '', '']
+      const partialWs = XLSX.utils.aoa_to_sheet([partialHeader, ...partialRows, partialTotalRow])
       partialWs['!cols'] = partialHeader.map(() => ({ wch: 20 }))
       XLSX.utils.book_append_sheet(wb, partialWs, 'Partially Paid')
     }
@@ -304,7 +317,10 @@ export async function GET(request: Request) {
         b.serviceType,
         b.nextDueDate.toISOString().split('T')[0],
       ])
-      const outstandingWs = XLSX.utils.aoa_to_sheet([outstandingHeader, ...outstandingRows])
+      // Total row at the bottom of the sheet
+      const outstandingTotal = outstandingBills.reduce((s, b) => s + parseFloat(String(b.currentOutstanding)), 0)
+      const outstandingTotalRow = ['', '', '', `TOTAL (${outstandingBills.length} bills)`, outstandingTotal.toFixed(2), '', '']
+      const outstandingWs = XLSX.utils.aoa_to_sheet([outstandingHeader, ...outstandingRows, outstandingTotalRow])
       outstandingWs['!cols'] = outstandingHeader.map(() => ({ wch: 20 }))
       XLSX.utils.book_append_sheet(wb, outstandingWs, 'Outstanding')
     }
