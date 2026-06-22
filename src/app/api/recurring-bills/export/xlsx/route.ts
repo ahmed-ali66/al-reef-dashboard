@@ -126,33 +126,46 @@ export async function GET(request: Request) {
       return bill.cycles.reduce((sum: number, c: any) => sum + safeNumber(c.paidAmount), 0)
     }
 
-    // FIX: Overdue = nextDueDate < today AND currentOutstanding > 0
-    const overdueBills = activeBills.filter(b => {
-      const dueDate = new Date(b.nextDueDate)
-      const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate())
-      return dueDay < startOfToday && parseFloat(String(b.currentOutstanding)) > 0
-    })
+    // ─────────────────────────────────────────────────────────────────────────
+    // SIMPLIFIED 3-BUCKET CLASSIFICATION — matches the PDF exactly.
+    // Every active bill appears in EXACTLY ONE bucket:
+    //   1. Fully Paid     → currentOutstanding <= 0 AND has actual payment records
+    //   2. Partially Paid → currentOutstanding > 0  AND has actual payment records
+    //   3. Unpaid         → NO payment records (regardless of currentOutstanding)
+    // ─────────────────────────────────────────────────────────────────────────
 
-    // FIX: Upcoming = nextDueDate >= today AND nextDueDate <= today + 30 days
-    const upcomingBills = activeBills.filter(b => {
-      const dueDate = new Date(b.nextDueDate)
-      const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate())
-      const thirtyDays = new Date(startOfToday.getTime() + 30 * 24 * 60 * 60 * 1000)
-      return dueDay >= startOfToday && dueDay <= thirtyDays
-    })
-
-    // FIX: Paid = currentOutstanding <= 0 AND has actual payment records
-    const paidBills = activeBills.filter(b =>
+    const fullyPaidBills = activeBills.filter(b =>
       parseFloat(String(b.currentOutstanding)) <= 0 && hasActualPayments(b)
     )
 
-    // FIX: Partially Paid = has actual payment records AND currentOutstanding > 0
     const partiallyPaidBills = activeBills.filter(b =>
       parseFloat(String(b.currentOutstanding)) > 0 && hasActualPayments(b)
     )
 
-    // Outstanding = all bills with currentOutstanding > 0
-    const outstandingBills = activeBills.filter(b => parseFloat(String(b.currentOutstanding)) > 0)
+    const unpaidBills = activeBills.filter(b => !hasActualPayments(b))
+
+    // Overdue is a status flag within Unpaid (not a separate sheet).
+    // Used for the optional callout in the Summary sheet.
+    const isOverdue = (b: any): boolean => {
+      const dueDate = new Date(b.nextDueDate)
+      const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate())
+      return dueDay < startOfToday && parseFloat(String(b.currentOutstanding)) > 0
+    }
+    const overdueUnpaidCount = unpaidBills.filter(isOverdue).length
+
+    // Sort unpaid bills by nextDueDate ascending — overdue bills appear first
+    unpaidBills.sort((a, b) => new Date(a.nextDueDate).getTime() - new Date(b.nextDueDate).getTime())
+
+    // Helper: format "Days Until Due" — matches the PDF helper
+    const formatDaysUntilDue = (nextDueDate: string): string => {
+      const dueDate = new Date(nextDueDate)
+      const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate())
+      const diffMs = dueDay.getTime() - startOfToday.getTime()
+      const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24))
+      if (diffDays > 0) return `${diffDays} days`
+      if (diffDays === 0) return 'Due today'
+      return `${Math.abs(diffDays)} days overdue`
+    }
 
     // Summary metrics — use aggregate for total paid
     const totalPaidThisMonth = safeNumber(paidAgg._sum.amount)
@@ -160,8 +173,8 @@ export async function GET(request: Request) {
     // Create workbook
     const wb = XLSX.utils.book_new()
 
-    // ─── Summary Sheet — NO Total Due, uses aggregate for paid ───
-    const summaryData = [
+    // ─── Summary Sheet — 3-bucket counts (matches PDF Summary Statistics) ───
+    const summaryData: any[][] = [
       ['Recurring Bills & Utilities Report'],
       ['Company', company?.name || 'Al Reef Al Madeena'],
       ['Generated', today],
@@ -170,11 +183,13 @@ export async function GET(request: Request) {
       ['Total Bills', activeBills.length],
       ['Total Outstanding (AED)', activeBills.reduce((s, b) => s + parseFloat(String(b.currentOutstanding)), 0).toFixed(2)],
       ['Total Bills Paid This Month (AED)', totalPaidThisMonth.toFixed(2)],
-      ['Overdue Bills', overdueBills.length],
-      ['Upcoming Bills (30 days)', upcomingBills.length],
-      ['Paid Bills', paidBills.length],
+      ['Fully Paid', fullyPaidBills.length],
       ['Partially Paid', partiallyPaidBills.length],
+      ['Unpaid', unpaidBills.length],
     ]
+    if (overdueUnpaidCount > 0) {
+      summaryData.push(['Overdue (subset of Unpaid)', overdueUnpaidCount])
+    }
     const summaryWs = XLSX.utils.aoa_to_sheet(summaryData)
     summaryWs['!cols'] = [{ wch: 30 }, { wch: 20 }]
     XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary')
@@ -203,62 +218,12 @@ export async function GET(request: Request) {
     allBillsWs['!cols'] = allBillsHeader.map(() => ({ wch: 18 }))
     XLSX.utils.book_append_sheet(wb, allBillsWs, 'All Bills')
 
-    // ─── Overdue Bills Sheet ───
-    if (overdueBills.length > 0) {
-      const overdueHeader = ['Provider', 'Account No.', 'Owner', 'Property', 'Outstanding (AED)', 'Days Overdue', 'Service Type', 'Due Date']
-      const overdueRows = overdueBills.map(b => {
-        const dueDate = new Date(b.nextDueDate)
-        const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate())
-        const daysOverdue = Math.max(0, Math.ceil((startOfToday.getTime() - dueDay.getTime()) / (1000 * 60 * 60 * 24)))
-        return [
-          b.providerName,
-          b.accountNumber || '',
-          b.ownerName || '',
-          b.property?.name || b.buildingName || '',
-          parseFloat(String(b.currentOutstanding)).toFixed(2),
-          daysOverdue,
-          b.serviceType,
-          b.nextDueDate.toISOString().split('T')[0],
-        ]
-      })
-      // Total row at the bottom of the sheet
-      const overdueTotal = overdueBills.reduce((s, b) => s + parseFloat(String(b.currentOutstanding)), 0)
-      const overdueTotalRow = ['', '', '', `TOTAL (${overdueBills.length} bills)`, overdueTotal.toFixed(2), '', '', '']
-      const overdueWs = XLSX.utils.aoa_to_sheet([overdueHeader, ...overdueRows, overdueTotalRow])
-      overdueWs['!cols'] = overdueHeader.map(() => ({ wch: 18 }))
-      XLSX.utils.book_append_sheet(wb, overdueWs, 'Overdue')
-    }
-
-    // ─── Upcoming Bills Sheet ───
-    if (upcomingBills.length > 0) {
-      const upcomingHeader = ['Provider', 'Account No.', 'Owner', 'Property', 'Outstanding (AED)', 'Due Date', 'Days Remaining', 'Service Type']
-      const upcomingRows = upcomingBills.map(b => {
-        const dueDate = new Date(b.nextDueDate)
-        const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate())
-        const daysRemaining = Math.max(0, Math.ceil((dueDay.getTime() - startOfToday.getTime()) / (1000 * 60 * 60 * 24)))
-        return [
-          b.providerName,
-          b.accountNumber || '',
-          b.ownerName || '',
-          b.property?.name || b.buildingName || '',
-          parseFloat(String(b.currentOutstanding)).toFixed(2),
-          b.nextDueDate.toISOString().split('T')[0],
-          daysRemaining,
-          b.serviceType,
-        ]
-      })
-      // Total row at the bottom of the sheet
-      const upcomingTotal = upcomingBills.reduce((s, b) => s + parseFloat(String(b.currentOutstanding)), 0)
-      const upcomingTotalRow = ['', '', '', `TOTAL (${upcomingBills.length} bills)`, upcomingTotal.toFixed(2), '', '', '']
-      const upcomingWs = XLSX.utils.aoa_to_sheet([upcomingHeader, ...upcomingRows, upcomingTotalRow])
-      upcomingWs['!cols'] = upcomingHeader.map(() => ({ wch: 18 }))
-      XLSX.utils.book_append_sheet(wb, upcomingWs, 'Upcoming')
-    }
-
-    // FIX: Paid Bills — only include bills with ACTUAL payment records
-    if (paidBills.length > 0) {
-      const paidHeader = ['Provider', 'Account No.', 'Owner', 'Property', 'Amount Paid (AED)', 'Payment Date', 'Payment Method', 'Reference']
-      const paidRows = paidBills.map(b => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // SHEET 2 of 4: FULLY PAID BILLS (currentOutstanding=0 AND has payments)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (fullyPaidBills.length > 0) {
+      const fullyPaidHeader = ['Provider', 'Account No.', 'Owner', 'Property', 'Amount Paid (AED)', 'Payment Date', 'Payment Method', 'Reference']
+      const fullyPaidRows = fullyPaidBills.map(b => {
         const actualPaid = getActualPaidAmount(b)
         return [
           b.providerName,
@@ -271,15 +236,16 @@ export async function GET(request: Request) {
           b.payments?.[0]?.reference || '',
         ]
       })
-      // Total row at the bottom of the sheet
-      const paidTotal = paidBills.reduce((s, b) => s + getActualPaidAmount(b), 0)
-      const paidTotalRow = ['', '', '', `TOTAL (${paidBills.length} bills)`, paidTotal.toFixed(2), '', '', '']
-      const paidWs = XLSX.utils.aoa_to_sheet([paidHeader, ...paidRows, paidTotalRow])
-      paidWs['!cols'] = paidHeader.map(() => ({ wch: 18 }))
-      XLSX.utils.book_append_sheet(wb, paidWs, 'Paid')
+      const fullyPaidTotal = fullyPaidBills.reduce((s, b) => s + getActualPaidAmount(b), 0)
+      const fullyPaidTotalRow = ['', '', '', `TOTAL (${fullyPaidBills.length} bills)`, fullyPaidTotal.toFixed(2), '', '', '']
+      const fullyPaidWs = XLSX.utils.aoa_to_sheet([fullyPaidHeader, ...fullyPaidRows, fullyPaidTotalRow])
+      fullyPaidWs['!cols'] = fullyPaidHeader.map(() => ({ wch: 18 }))
+      XLSX.utils.book_append_sheet(wb, fullyPaidWs, 'Fully Paid')
     }
 
-    // FIX: Partially Paid — only bills with ACTUAL payment records, show REAL paidAmount
+    // ═══════════════════════════════════════════════════════════════════════
+    // SHEET 3 of 4: PARTIALLY PAID BILLS (currentOutstanding>0 AND has payments)
+    // ═══════════════════════════════════════════════════════════════════════
     if (partiallyPaidBills.length > 0) {
       const partialHeader = ['Provider', 'Account No.', 'Owner', 'Property', 'Amount Paid (AED)', 'Outstanding (AED)', 'Due Date', 'Service Type']
       const partialRows = partiallyPaidBills.map(b => {
@@ -296,7 +262,6 @@ export async function GET(request: Request) {
           b.serviceType,
         ]
       })
-      // Total row at the bottom of the sheet (both paid-so-far and outstanding)
       const partialPaidTotal = partiallyPaidBills.reduce((s, b) => s + getActualPaidAmount(b), 0)
       const partialOutstandingTotal = partiallyPaidBills.reduce((s, b) => s + parseFloat(String(b.currentOutstanding)), 0)
       const partialTotalRow = ['', '', '', `TOTAL (${partiallyPaidBills.length} bills)`, partialPaidTotal.toFixed(2), partialOutstandingTotal.toFixed(2), '', '']
@@ -305,24 +270,28 @@ export async function GET(request: Request) {
       XLSX.utils.book_append_sheet(wb, partialWs, 'Partially Paid')
     }
 
-    // ─── Outstanding Balances Sheet — no confusing "Previous Liability" ───
-    if (outstandingBills.length > 0) {
-      const outstandingHeader = ['Provider', 'Account No.', 'Owner', 'Property', 'Outstanding (AED)', 'Service Type', 'Due Date']
-      const outstandingRows = outstandingBills.map(b => [
+    // ═══════════════════════════════════════════════════════════════════════
+    // SHEET 4 of 4: UNPAID BILLS (NO payment records)
+    // Sorted by nextDueDate ascending — overdue bills appear first.
+    // "Days Until Due" column: positive=N days, 0=Due today, negative=N days overdue.
+    // ═══════════════════════════════════════════════════════════════════════
+    if (unpaidBills.length > 0) {
+      const unpaidHeader = ['Provider', 'Account No.', 'Owner', 'Property', 'Outstanding (AED)', 'Due Date', 'Days Until Due', 'Service Type']
+      const unpaidRows = unpaidBills.map(b => [
         b.providerName,
         b.accountNumber || '',
         b.ownerName || '',
         b.property?.name || b.buildingName || '',
         parseFloat(String(b.currentOutstanding)).toFixed(2),
-        b.serviceType,
         b.nextDueDate.toISOString().split('T')[0],
+        formatDaysUntilDue(b.nextDueDate),
+        b.serviceType,
       ])
-      // Total row at the bottom of the sheet
-      const outstandingTotal = outstandingBills.reduce((s, b) => s + parseFloat(String(b.currentOutstanding)), 0)
-      const outstandingTotalRow = ['', '', '', `TOTAL (${outstandingBills.length} bills)`, outstandingTotal.toFixed(2), '', '']
-      const outstandingWs = XLSX.utils.aoa_to_sheet([outstandingHeader, ...outstandingRows, outstandingTotalRow])
-      outstandingWs['!cols'] = outstandingHeader.map(() => ({ wch: 20 }))
-      XLSX.utils.book_append_sheet(wb, outstandingWs, 'Outstanding')
+      const unpaidTotal = unpaidBills.reduce((s, b) => s + parseFloat(String(b.currentOutstanding)), 0)
+      const unpaidTotalRow = ['', '', '', `TOTAL (${unpaidBills.length} bills)`, unpaidTotal.toFixed(2), '', '', '']
+      const unpaidWs = XLSX.utils.aoa_to_sheet([unpaidHeader, ...unpaidRows, unpaidTotalRow])
+      unpaidWs['!cols'] = unpaidHeader.map(() => ({ wch: 20 }))
+      XLSX.utils.book_append_sheet(wb, unpaidWs, 'Unpaid')
     }
 
     // ─── Billing Cycles Sheet ───

@@ -134,33 +134,57 @@ export async function GET(request: Request) {
       return bill.cycles.reduce((sum: number, c: any) => sum + safeNumber(c.paidAmount), 0)
     }
 
-    // FIX: Overdue = nextDueDate < today AND currentOutstanding > 0 (bill.nextDueDate = sole truth)
-    const overdueBills = activeBills.filter(b => {
-      const dueDate = new Date(new Date(b.nextDueDate).getFullYear(), new Date(b.nextDueDate).getMonth(), new Date(b.nextDueDate).getDate())
-      return dueDate < startOfToday && safeNumber(b.currentOutstanding) > 0
-    })
+    // ─────────────────────────────────────────────────────────────────────────
+    // SIMPLIFIED 3-BUCKET CLASSIFICATION — every active bill appears in EXACTLY ONE section.
+    // This eliminates the overlap confusion of the old 5-section design (where the same
+    // bill could appear in Upcoming + Outstanding + Partially Paid simultaneously).
+    //
+    // 1. Fully Paid     → currentOutstanding <= 0 AND has actual payment records
+    // 2. Partially Paid → currentOutstanding > 0  AND has actual payment records
+    // 3. Unpaid         → NO payment records (regardless of currentOutstanding)
+    //
+    // Math reconciliation (must always tie out):
+    //   fullyPaid.length + partiallyPaid.length + unpaid.length == activeBills.length
+    //   sum(partiallyPaid.currentOutstanding) + sum(unpaid.currentOutstanding) == totalOutstanding
+    //   sum(partiallyPaid.cyclePaidAmount) + sum(fullyPaid.cyclePaidAmount) == lifetime collected
+    // ─────────────────────────────────────────────────────────────────────────
 
-    // FIX: Upcoming = nextDueDate >= today AND nextDueDate <= today + 30 days
-    const upcomingBills = activeBills.filter(b => {
-      const dueDate = new Date(new Date(b.nextDueDate).getFullYear(), new Date(b.nextDueDate).getMonth(), new Date(b.nextDueDate).getDate())
-      const thirtyDays = new Date(startOfToday.getTime() + 30 * 24 * 60 * 60 * 1000)
-      return dueDate >= startOfToday && dueDate <= thirtyDays
-    })
-
-    // FIX: Paid = currentOutstanding <= 0 AND has actual payment records
-    // Bills with 0 outstanding and no payments are just "new/unused" — NOT "paid"
-    const paidBills = activeBills.filter(b =>
+    const fullyPaidBills = activeBills.filter(b =>
       safeNumber(b.currentOutstanding) <= 0 && hasActualPayments(b)
     )
 
-    // FIX: Partially Paid = has actual payment records AND currentOutstanding > 0
-    // Use REAL paidAmount from cycles, NOT fabricated (totalDue - outstanding)
     const partiallyPaidBills = activeBills.filter(b =>
       safeNumber(b.currentOutstanding) > 0 && hasActualPayments(b)
     )
 
-    // Outstanding = all bills with currentOutstanding > 0
-    const outstandingBills = activeBills.filter(b => safeNumber(b.currentOutstanding) > 0)
+    const unpaidBills = activeBills.filter(b => !hasActualPayments(b))
+
+    // Overdue is a STATUS FLAG within Unpaid (not a separate section).
+    // A bill is overdue if nextDueDate < today AND currentOutstanding > 0.
+    // Used for the optional callout in the section title and for the "Days Until Due" column.
+    const isOverdue = (b: any): boolean => {
+      const dueDate = new Date(new Date(b.nextDueDate).getFullYear(), new Date(b.nextDueDate).getMonth(), new Date(b.nextDueDate).getDate())
+      return dueDate < startOfToday && safeNumber(b.currentOutstanding) > 0
+    }
+    const overdueUnpaidCount = unpaidBills.filter(isOverdue).length
+
+    // Sort unpaid bills by nextDueDate ascending — overdue bills appear first naturally,
+    // so the reader sees the most urgent items at the top of the section.
+    unpaidBills.sort((a, b) => new Date(a.nextDueDate).getTime() - new Date(b.nextDueDate).getTime())
+
+    // Helper: format the "Days Until Due" cell.
+    // Returns a string that communicates urgency through text alone (no per-cell color needed):
+    //   positive → "N days"
+    //   zero     → "Due today"
+    //   negative → "N days overdue" (absolute value)
+    const formatDaysUntilDue = (nextDueDate: string): string => {
+      const dueDate = new Date(new Date(nextDueDate).getFullYear(), new Date(nextDueDate).getMonth(), new Date(nextDueDate).getDate())
+      const diffMs = dueDate.getTime() - startOfToday.getTime()
+      const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24))
+      if (diffDays > 0) return `${diffDays} days`
+      if (diffDays === 0) return 'Due today'
+      return `${Math.abs(diffDays)} days overdue`
+    }
 
     // Summary metrics — use aggregate for total paid, NO Total Due
     const totalBills = activeBills.length
@@ -443,16 +467,17 @@ export async function GET(request: Request) {
 
     let y = addHeader()
 
-    // Summary Statistics Box — NO "Total Due"
+    // Summary Statistics Box — 3-bucket counts (Fully Paid / Partially Paid / Unpaid)
+    // Every active bill is counted exactly once. Overdue is shown only if > 0.
     y = addSectionTitle('Summary Statistics', y)
-    const summaryData = [
+    const summaryData: Array<[string, string]> = [
       ['Total Bills', String(totalBills)],
       ['Total Outstanding', `AED ${totalOutstanding.toFixed(2)}`],
       ['Bills Paid This Month', `AED ${totalPaidThisMonth.toFixed(2)}`],
-      ['Overdue Bills', String(overdueBills.length)],
-      ['Upcoming Bills (30 days)', String(upcomingBills.length)],
-      ['Paid Bills', String(paidBills.length)],
+      ['Fully Paid', String(fullyPaidBills.length)],
       ['Partially Paid', String(partiallyPaidBills.length)],
+      ['Unpaid', String(unpaidBills.length)],
+      ...(overdueUnpaidCount > 0 ? [['Overdue (subset of Unpaid)', String(overdueUnpaidCount)]] as Array<[string, string]> : []),
     ]
 
     summaryData.forEach((item, i) => {
@@ -468,68 +493,14 @@ export async function GET(request: Request) {
     })
     y += Math.ceil(summaryData.length / 2) * 18 + 15
 
-    // Overdue Bills Section
-    if (overdueBills.length > 0) {
-      y = addSectionTitle(`Overdue Bills (${overdueBills.length})`, y, '#c0392b')
-      const overdueRows = overdueBills.map(b => {
-        const dueDate = new Date(b.nextDueDate)
-        const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate())
-        const daysOverdue = Math.max(0, Math.ceil((startOfToday.getTime() - dueDay.getTime()) / (1000 * 60 * 60 * 24)))
-        return [
-          b.providerName,
-          accountCell(b),
-          b.property?.name || b.buildingName || '-',
-          `AED ${safeNumber(b.currentOutstanding).toFixed(2)}`,
-          `${daysOverdue} days`,
-          b.serviceType,
-        ]
-      })
-      y = drawTable([
-        { header: 'Provider', widthPct: 22 },
-        { header: 'Account # / Owner', widthPct: 20 },
-        { header: 'Property', widthPct: 18 },
-        { header: 'Outstanding', widthPct: 14 },
-        { header: 'Days Overdue', widthPct: 13 },
-        { header: 'Type', widthPct: 13 },
-      ], overdueRows, y)
-      // Section total: sum of all overdue bills' current outstanding amounts
-      const totalOverdue = overdueBills.reduce((s, b) => s + safeNumber(b.currentOutstanding), 0)
-      y = addSectionTotal(y, `Total Overdue (${overdueBills.length} bills):`, totalOverdue, '#c0392b')
-    }
-
-    // Upcoming Bills Section
-    if (upcomingBills.length > 0) {
-      y = addSectionTitle(`Upcoming Bills (${upcomingBills.length})`, y, '#e67e22')
-      const upcomingRows = upcomingBills.map(b => {
-        const dueDate = new Date(b.nextDueDate)
-        const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate())
-        const daysRemaining = Math.max(0, Math.ceil((dueDay.getTime() - startOfToday.getTime()) / (1000 * 60 * 60 * 24)))
-        return [
-          b.providerName,
-          accountCell(b),
-          b.property?.name || b.buildingName || '-',
-          `AED ${safeNumber(b.currentOutstanding).toFixed(2)}`,
-          dueDate.toISOString().split('T')[0],
-          `${daysRemaining} days`,
-        ]
-      })
-      y = drawTable([
-        { header: 'Provider', widthPct: 22 },
-        { header: 'Account # / Owner', widthPct: 20 },
-        { header: 'Property', widthPct: 18 },
-        { header: 'Outstanding', widthPct: 14 },
-        { header: 'Due Date', widthPct: 13 },
-        { header: 'Remaining', widthPct: 13 },
-      ], upcomingRows, y)
-      // Section total: sum of all upcoming bills' current outstanding amounts
-      const totalUpcoming = upcomingBills.reduce((s, b) => s + safeNumber(b.currentOutstanding), 0)
-      y = addSectionTotal(y, `Total Upcoming (${upcomingBills.length} bills):`, totalUpcoming, '#e67e22')
-    }
-
-    // FIX: Paid Bills — only include bills with ACTUAL payment records
-    if (paidBills.length > 0) {
-      y = addSectionTitle(`Paid Bills (${paidBills.length})`, y, '#27ae60')
-      const paidRows = paidBills.map(b => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // SECTION 1 of 3: FULLY PAID BILLS
+    // Bills with currentOutstanding == 0 AND actual payment records.
+    // Total = sum of cycle.paidAmount (lifetime amount collected for these bills).
+    // ═══════════════════════════════════════════════════════════════════════
+    if (fullyPaidBills.length > 0) {
+      y = addSectionTitle(`Fully Paid Bills (${fullyPaidBills.length})`, y, '#27ae60')
+      const fullyPaidRows = fullyPaidBills.map(b => {
         const actualPaid = getActualPaidAmount(b)
         return [
           b.providerName,
@@ -547,14 +518,16 @@ export async function GET(request: Request) {
         { header: 'Amount Paid', widthPct: 14 },
         { header: 'Payment Date', widthPct: 13 },
         { header: 'Reference', widthPct: 13 },
-      ], paidRows, y)
-      // Section total: sum of all paid bills' actual paid amounts (lifetime, not just this month)
-      const totalPaid = paidBills.reduce((s, b) => s + getActualPaidAmount(b), 0)
-      y = addSectionTotal(y, `Total Paid (${paidBills.length} bills):`, totalPaid, '#27ae60')
+      ], fullyPaidRows, y)
+      const totalFullyPaid = fullyPaidBills.reduce((s, b) => s + getActualPaidAmount(b), 0)
+      y = addSectionTotal(y, `Total Collected (${fullyPaidBills.length} bills):`, totalFullyPaid, '#27ae60')
     }
 
-    // FIX: Partially Paid Bills — only include bills with ACTUAL payment records
-    // Show REAL paidAmount from cycles, NOT fabricated (totalDue - outstanding)
+    // ═══════════════════════════════════════════════════════════════════════
+    // SECTION 2 of 3: PARTIALLY PAID BILLS
+    // Bills with currentOutstanding > 0 AND actual payment records.
+    // Shows TWO totals: total paid-so-far + total still outstanding.
+    // ═══════════════════════════════════════════════════════════════════════
     if (partiallyPaidBills.length > 0) {
       y = addSectionTitle(`Partially Paid Bills (${partiallyPaidBills.length})`, y, '#8e44ad')
       const partialRows = partiallyPaidBills.map(b => {
@@ -577,7 +550,6 @@ export async function GET(request: Request) {
         { header: 'Remaining', widthPct: 14 },
         { header: 'Due Date', widthPct: 15 },
       ], partialRows, y)
-      // Section totals: show BOTH total paid-so-far AND total still outstanding
       const totalPartialPaid = partiallyPaidBills.reduce((s, b) => s + getActualPaidAmount(b), 0)
       const totalPartialRemaining = partiallyPaidBills.reduce((s, b) => s + safeNumber(b.currentOutstanding), 0)
       y = addSectionTotal(
@@ -590,27 +562,36 @@ export async function GET(request: Request) {
       )
     }
 
-    // Outstanding Balance Summary — show only current outstanding, no confusing "Previous"
-    if (outstandingBills.length > 0) {
-      y = addSectionTitle(`Outstanding Balances (${outstandingBills.length})`, y, '#c0392b')
-      const outstandingRows = outstandingBills.map(b => [
+    // ═══════════════════════════════════════════════════════════════════════
+    // SECTION 3 of 3: UNPAID BILLS
+    // Bills with NO payment records. Sorted by nextDueDate ascending so overdue
+    // bills appear first. The "Days Until Due" column communicates urgency through
+    // text: "N days" / "Due today" / "N days overdue".
+    // Section title includes overdue count as a callout when > 0.
+    // ═══════════════════════════════════════════════════════════════════════
+    if (unpaidBills.length > 0) {
+      const overdueCallout = overdueUnpaidCount > 0
+        ? `  ⚠ ${overdueUnpaidCount} overdue`
+        : ''
+      y = addSectionTitle(`Unpaid Bills (${unpaidBills.length})${overdueCallout}`, y, '#c0392b')
+      const unpaidRows = unpaidBills.map(b => [
         b.providerName,
         accountCell(b),
         b.property?.name || b.buildingName || '-',
         `AED ${safeNumber(b.currentOutstanding).toFixed(2)}`,
-        b.serviceType,
+        new Date(b.nextDueDate).toISOString().split('T')[0],
+        formatDaysUntilDue(b.nextDueDate),
       ])
       y = drawTable([
         { header: 'Provider', widthPct: 22 },
-        { header: 'Account # / Owner', widthPct: 22 },
-        { header: 'Property', widthPct: 22 },
-        { header: 'Outstanding', widthPct: 19 },
-        { header: 'Type', widthPct: 15 },
-      ], outstandingRows, y)
-
-      // FIX: Total Outstanding only — remove confusing "Previous Liability"
-      const totalCurr = outstandingBills.reduce((s, b) => s + safeNumber(b.currentOutstanding), 0)
-      y = addSectionTotal(y, `Total Outstanding (${outstandingBills.length} bills):`, totalCurr, '#c0392b')
+        { header: 'Account # / Owner', widthPct: 20 },
+        { header: 'Property', widthPct: 18 },
+        { header: 'Outstanding', widthPct: 15 },
+        { header: 'Due Date', widthPct: 12 },
+        { header: 'Days Until Due', widthPct: 13 },
+      ], unpaidRows, y)
+      const totalUnpaid = unpaidBills.reduce((s, b) => s + safeNumber(b.currentOutstanding), 0)
+      y = addSectionTotal(y, `Total Outstanding (${unpaidBills.length} bills):`, totalUnpaid, '#c0392b')
     }
 
     // ─── Add footers to ALL pages at the end ───
