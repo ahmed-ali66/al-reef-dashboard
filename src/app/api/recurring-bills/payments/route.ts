@@ -85,6 +85,7 @@ export async function GET(request: Request) {
               serviceType: true,
               buildingName: true,
               accountNumber: true,
+              ownerName: true,
               currentOutstanding: true,
               totalAmountDue: true,
               property: {

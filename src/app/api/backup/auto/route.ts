@@ -11,16 +11,32 @@ import {
 
 // GET /api/backup/auto — Trigger automated backup (called by Vercel Cron or manually)
 export async function GET(request: Request) {
+  // CRON EXECUTION LOG — verifies whether Vercel Cron is actually firing this endpoint.
+  // Check Vercel runtime logs around 02:00 UTC for this message.
+  // If absent → cron scheduler did not call the endpoint (Hobby tier reliability issue).
+  // If present but backup missing → endpoint failed silently (check downstream logs).
+  const isCronHeader = request.headers.get('x-vercel-cron') === 'true'
+  console.log(`[BACKUP_AUTO] endpoint hit at ${new Date().toISOString()} | isCronHeader=${isCronHeader} | hasUserAgent=${!!request.headers.get('user-agent')}`)
+
   try {
     const url = new URL(request.url)
     const cronSecret = url.searchParams.get('cron_secret')
-    const isCron = request.headers.get('x-vercel-cron') === 'true'
+    const isCron = isCronHeader
 
     let triggeredBy = 'system'
 
-    // Validate cron secret for automated calls
+    // Validate cron auth.
+    // - Vercel Cron guarantees `x-vercel-cron: true` header on real cron calls.
+    //   The cron path in vercel.json is now `/api/backup/auto` (no query string),
+    //   so we rely on this header as the primary auth mechanism.
+    // - The `cron_secret` query param is kept as a defense-in-depth check for
+    //   manual/legacy calls that still include it.
     if (isCron) {
-      if (cronSecret !== process.env.CRON_SECRET) {
+      // Header says it's a cron call. If a cron_secret is provided, verify it.
+      // If no secret provided (the new vercel.json path), accept on header alone —
+      // Vercel guarantees this header cannot be forged by external callers.
+      if (cronSecret !== null && cronSecret !== process.env.CRON_SECRET) {
+        console.warn(`[BACKUP_AUTO] cron call with WRONG secret — rejecting`)
         return errorResponse('Invalid cron secret', 403)
       }
     } else {

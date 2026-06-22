@@ -1133,7 +1133,21 @@ export default function RecurringBills() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm font-mono">{payment.recurringBill?.accountNumber || '—'}</TableCell>
+                      <TableCell className="text-sm font-mono">
+                        <div className="flex flex-col gap-0.5 min-w-0">
+                          <span className="truncate" title={payment.recurringBill?.accountNumber || undefined}>
+                            {payment.recurringBill?.accountNumber || '—'}
+                          </span>
+                          {payment.recurringBill?.ownerName && (
+                            <span
+                              className="text-xs text-muted-foreground font-sans truncate max-w-[180px]"
+                              title={payment.recurringBill.ownerName}
+                            >
+                              {payment.recurringBill.ownerName}
+                            </span>
+                          )}
+                        </div>
+                      </TableCell>
                       <TableCell>
                         <Badge variant="secondary" className="text-xs">
                           {getServiceTypeLabel(payment.recurringBill?.serviceType || '', lang)}
@@ -1225,7 +1239,21 @@ export default function RecurringBills() {
                           </Badge>
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm font-mono">{bill.accountNumber || '—'}</TableCell>
+                      <TableCell className="text-sm font-mono">
+                        <div className="flex flex-col gap-0.5 min-w-0">
+                          <span className="truncate" title={bill.accountNumber || undefined}>
+                            {bill.accountNumber || '—'}
+                          </span>
+                          {bill.ownerName && (
+                            <span
+                              className="text-xs text-muted-foreground font-sans truncate max-w-[180px]"
+                              title={bill.ownerName}
+                            >
+                              {bill.ownerName}
+                            </span>
+                          )}
+                        </div>
+                      </TableCell>
                       <TableCell className="text-sm">
                         {bill.property ? getNameByLang(bill.property, lang) : bill.buildingName || '—'}
                       </TableCell>
@@ -1589,9 +1617,19 @@ export default function RecurringBills() {
                     <span className="font-medium">{payingBill.providerName}</span>
                   </div>
                   {payingBill.accountNumber && (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">{t('accountNumber', lang)}</span>
-                      <span className="font-medium font-mono">{payingBill.accountNumber}</span>
+                    <div className="flex justify-between text-sm gap-2">
+                      <span className="text-muted-foreground shrink-0">{t('accountNumber', lang)}</span>
+                      <span className="font-medium font-mono truncate text-right" title={payingBill.accountNumber}>
+                        {payingBill.accountNumber}
+                      </span>
+                    </div>
+                  )}
+                  {payingBill.ownerName && (
+                    <div className="flex justify-between text-sm gap-2">
+                      <span className="text-muted-foreground shrink-0">{t('ownerName', lang)}</span>
+                      <span className="font-medium truncate text-right max-w-[60%]" title={payingBill.ownerName}>
+                        {payingBill.ownerName}
+                      </span>
                     </div>
                   )}
                   <div className="flex justify-between text-sm">
@@ -1697,9 +1735,19 @@ export default function RecurringBills() {
                     <Badge variant="secondary" className="text-xs">{getServiceTypeLabel(historyBill.serviceType, lang)}</Badge>
                   </div>
                   {historyBill.accountNumber && (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">{t('accountNumber', lang)}</span>
-                      <span className="font-medium font-mono">{historyBill.accountNumber}</span>
+                    <div className="flex justify-between text-sm gap-2">
+                      <span className="text-muted-foreground shrink-0">{t('accountNumber', lang)}</span>
+                      <span className="font-medium font-mono truncate text-right" title={historyBill.accountNumber}>
+                        {historyBill.accountNumber}
+                      </span>
+                    </div>
+                  )}
+                  {historyBill.ownerName && (
+                    <div className="flex justify-between text-sm gap-2">
+                      <span className="text-muted-foreground shrink-0">{t('ownerName', lang)}</span>
+                      <span className="font-medium truncate text-right max-w-[60%]" title={historyBill.ownerName}>
+                        {historyBill.ownerName}
+                      </span>
                     </div>
                   )}
                   <div className="flex justify-between text-sm">

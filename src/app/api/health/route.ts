@@ -87,8 +87,14 @@ export async function GET() {
       ? (Date.now() - lastBackup.createdAt.getTime()) / (1000 * 60 * 60)
       : null
 
-    // Flag if no backup in 48 hours
-    const backupStale = hoursSinceLastBackup !== null && hoursSinceLastBackup > 48
+    // BACKUP AGE THRESHOLDS — daily auto-backup cron runs at 02:00 UTC.
+    // - < 30 hours: healthy (allows ~6 hours of skew past the 24-hour cycle)
+    // - 30-48 hours: degraded (likely missed one daily cycle — investigate)
+    // - > 48 hours: degraded (CRITICAL — multiple cycles missed, data loss risk)
+    const BACKUP_DEGRADED_HOURS = 30
+    const BACKUP_CRITICAL_HOURS = 48
+    const backupStale = hoursSinceLastBackup !== null && hoursSinceLastBackup > BACKUP_DEGRADED_HOURS
+    const backupCritical = hoursSinceLastBackup !== null && hoursSinceLastBackup > BACKUP_CRITICAL_HOURS
 
     checks.dataIntegrity = {
       status: backupStale ? 'degraded' : 'healthy',
@@ -104,8 +110,33 @@ export async function GET() {
         completedBackups: backupRecordCount,
         lastBackupAt: lastBackup?.createdAt?.toISOString() || null,
         hoursSinceLastBackup: hoursSinceLastBackup ? Math.round(hoursSinceLastBackup) : null,
+        backupAgeThresholdHours: BACKUP_DEGRADED_HOURS,
+        backupCriticalThresholdHours: BACKUP_CRITICAL_HOURS,
       },
-      ...(backupStale && { error: `Last backup was ${Math.round(hoursSinceLastBackup!)} hours ago — exceeds 48-hour threshold` }),
+      ...(backupStale && {
+        error: backupCritical
+          ? `Last backup was ${Math.round(hoursSinceLastBackup!)} hours ago — exceeds ${BACKUP_CRITICAL_HOURS}-hour CRITICAL threshold (multiple cron cycles missed, possible data loss risk)`
+          : `Last backup was ${Math.round(hoursSinceLastBackup!)} hours ago — exceeds ${BACKUP_DEGRADED_HOURS}-hour threshold (likely missed one daily cron cycle)`,
+      }),
+    }
+
+    // Dedicated backup freshness check — surfaces as its own check so monitoring
+    // tools can alert on this dimension independently of overall dataIntegrity.
+    checks.backupFreshness = {
+      status: (!lastBackup || backupStale) ? 'degraded' : 'healthy',
+      details: {
+        lastBackupAt: lastBackup?.createdAt?.toISOString() || null,
+        hoursSinceLastBackup: hoursSinceLastBackup ? Math.round(hoursSinceLastBackup) : null,
+        thresholdHours: BACKUP_DEGRADED_HOURS,
+        criticalThresholdHours: BACKUP_CRITICAL_HOURS,
+        schedule: 'Daily at 02:00 UTC (Vercel Cron)',
+      },
+      ...(lastBackup === null && { error: 'No completed backup found — auto-backup has never run successfully' }),
+      ...(backupStale && lastBackup !== null && {
+        error: backupCritical
+          ? `Last backup ${Math.round(hoursSinceLastBackup!)}h ago — CRITICAL (> ${BACKUP_CRITICAL_HOURS}h). Investigate Vercel Cron execution for /api/backup/auto.`
+          : `Last backup ${Math.round(hoursSinceLastBackup!)}h ago — degraded (> ${BACKUP_DEGRADED_HOURS}h). Verify Vercel Cron fired at 02:00 UTC.`,
+      }),
     }
   } catch (error) {
     checks.dataIntegrity = {

@@ -121,14 +121,29 @@ export async function GET(request: NextRequest) {
     })
 
     // Trigger auto-backup as a fallback — ensures daily backups even if
-    // the dedicated /api/backup/auto cron is not registered (Vercel Hobby = 2 cron limit)
-    // Fire-and-forget: backup failure should not affect the daily report response
+    // the dedicated /api/backup/auto cron did not fire (Vercel Hobby tier
+    // cron reliability is "best-effort" and skips are common).
+    // Fire-and-forget for the response, BUT errors are now logged to Vercel
+    // runtime logs so silent failures become visible.
     try {
       const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'
       const backupUrl = `${baseUrl}/api/backup/auto?cron_secret=${encodeURIComponent(process.env.CRON_SECRET || '')}`
-      fetch(backupUrl, { headers: { 'x-vercel-cron': 'true' } }).catch(() => {})
-    } catch {
-      // Non-critical — ignore backup trigger failures
+      console.log(`[DAILY_REPORT] triggering backup fallback at ${new Date().toISOString()} → ${backupUrl.replace(/cron_secret=[^&]+/, 'cron_secret=REDACTED')}`)
+      fetch(backupUrl, { headers: { 'x-vercel-cron': 'true' } })
+        .then(async (res) => {
+          if (!res.ok) {
+            const body = await res.text().catch(() => '<no body>')
+            console.error(`[DAILY_REPORT] backup fallback FAILED: HTTP ${res.status} — ${body.slice(0, 300)}`)
+          } else {
+            console.log(`[DAILY_REPORT] backup fallback OK: HTTP ${res.status}`)
+          }
+        })
+        .catch((err) => {
+          console.error(`[DAILY_REPORT] backup fallback network error:`, err instanceof Error ? err.message : err)
+        })
+    } catch (triggerErr) {
+      // Non-critical for the daily report response, but log it
+      console.error(`[DAILY_REPORT] failed to initiate backup fallback:`, triggerErr instanceof Error ? triggerErr.message : triggerErr)
     }
 
     return NextResponse.json({

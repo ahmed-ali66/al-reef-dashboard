@@ -354,6 +354,7 @@ export interface BillPaymentData {
     serviceType: string
     buildingName: string | null
     accountNumber: string | null
+    ownerName: string | null
     currentOutstanding: number
     totalAmountDue: number
   }

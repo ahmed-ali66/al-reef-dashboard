@@ -253,13 +253,21 @@ export async function GET(request: Request) {
     }
 
     // ─── Helper: Smart column width calculation ───
+    // Cell value can be either a string OR an object { primary, secondary }.
+    // When { primary, secondary } is passed, the renderer shows the primary text
+    // on the first line and the secondary text (muted gray, smaller font) on the
+    // second line — both wrap naturally within the cell width. This is used for
+    // the Account# column to show the account owner's name underneath the number
+    // WITHOUT overflowing or overlapping into adjacent columns.
+    type CellValue = string | { primary: string; secondary?: string | null }
     type ColumnSpec = { header: string; widthPct: number }
 
-    const drawTable = (columns: ColumnSpec[], rows: string[][], y: number): number => {
+    const drawTable = (columns: ColumnSpec[], rows: CellValue[][], y: number): number => {
       const colWidths = columns.map(c => (c.widthPct / 100) * pageWidth)
       const padding = 4
       const headerFontSize = 8
       const cellFontSize = 7.5
+      const secondaryFontSize = 6.5
       const headerHeight = 24
       const minRowHeight = 18
       const headerFont = 'Helvetica-Bold'
@@ -289,15 +297,27 @@ export async function GET(request: Request) {
       y = drawHeader(y)
 
       rows.forEach((row, ri) => {
+        // Measure each cell's height (primary + optional secondary line).
+        // Both primary and secondary wrap naturally — no truncation, no overlap.
         let maxCellHeight = minRowHeight
         row.forEach((cell, i) => {
-          doc.font(cellFont).fontSize(cellFontSize)
-          const cellHeight = doc.heightOfString(String(cell), {
-            width: colWidths[i] - padding * 2,
-          })
-          maxCellHeight = Math.max(maxCellHeight, cellHeight + 8)
+          const cellWidth = colWidths[i] - padding * 2
+          if (typeof cell === 'string') {
+            doc.font(cellFont).fontSize(cellFontSize)
+            const h = doc.heightOfString(String(cell), { width: cellWidth })
+            maxCellHeight = Math.max(maxCellHeight, h + 8)
+          } else {
+            doc.font(cellFont).fontSize(cellFontSize)
+            const primaryH = doc.heightOfString(cell.primary, { width: cellWidth })
+            let totalH = primaryH
+            if (cell.secondary) {
+              doc.font(cellFont).fontSize(secondaryFontSize)
+              totalH += 2 + doc.heightOfString(cell.secondary, { width: cellWidth })
+            }
+            maxCellHeight = Math.max(maxCellHeight, totalH + 8)
+          }
         })
-        maxCellHeight = Math.min(maxCellHeight, 60)
+        maxCellHeight = Math.min(maxCellHeight, 80)
 
         if (y + maxCellHeight > contentBottomLimit) {
           doc.addPage()
@@ -311,20 +331,63 @@ export async function GET(request: Request) {
 
         let x = marginLeft
         row.forEach((cell, i) => {
-          const truncated = truncateText(String(cell), colWidths[i] - padding * 2, cellFont, cellFontSize)
-          doc.fontSize(cellFontSize).fillColor('#2c3e50').font(cellFont)
-          doc.text(truncated, x + padding, y + 4, {
-            width: colWidths[i] - padding * 2,
-            align: 'left',
-            lineBreak: false,
-            ellipsis: true,
-          })
+          const cellWidth = colWidths[i] - padding * 2
+          if (typeof cell === 'string') {
+            // Single-line cell: truncate only if it cannot fit even after wrapping.
+            // For multi-word strings, allow wrapping first; truncate only as last resort.
+            doc.font(cellFont).fontSize(cellFontSize)
+            const wrappedHeight = doc.heightOfString(String(cell), { width: cellWidth })
+            if (wrappedHeight <= maxCellHeight - 8) {
+              doc.fontSize(cellFontSize).fillColor('#2c3e50').font(cellFont)
+              doc.text(String(cell), x + padding, y + 4, {
+                width: cellWidth,
+                align: 'left',
+                lineBreak: true,
+              })
+            } else {
+              const truncated = truncateText(String(cell), cellWidth, cellFont, cellFontSize)
+              doc.fontSize(cellFontSize).fillColor('#2c3e50').font(cellFont)
+              doc.text(truncated, x + padding, y + 4, {
+                width: cellWidth,
+                align: 'left',
+                lineBreak: false,
+                ellipsis: true,
+              })
+            }
+          } else {
+            // Two-line cell: primary on top, secondary (muted) below — both wrap.
+            doc.font(cellFont).fontSize(cellFontSize).fillColor('#2c3e50')
+            doc.text(cell.primary, x + padding, y + 4, {
+              width: cellWidth,
+              align: 'left',
+              lineBreak: true,
+            })
+            if (cell.secondary) {
+              const primaryH = doc.heightOfString(cell.primary, { width: cellWidth, fontSize: cellFontSize })
+              doc.font(cellFont).fontSize(secondaryFontSize).fillColor('#7f8c8d')
+              doc.text(cell.secondary, x + padding, y + 4 + primaryH + 2, {
+                width: cellWidth,
+                align: 'left',
+                lineBreak: true,
+              })
+            }
+          }
           x += colWidths[i]
         })
         y += maxCellHeight
       })
 
       return y + 8
+    }
+
+    // ─── Helper: build the Account# cell value (number + optional owner) ───
+    const accountCell = (bill: any): CellValue => {
+      const acct = bill.accountNumber || '—'
+      const owner = bill.ownerName?.trim()
+      if (owner) {
+        return { primary: acct, secondary: owner }
+      }
+      return acct
     }
 
     // ─── Build PDF Content ───
@@ -365,7 +428,7 @@ export async function GET(request: Request) {
         const daysOverdue = Math.max(0, Math.ceil((startOfToday.getTime() - dueDay.getTime()) / (1000 * 60 * 60 * 24)))
         return [
           b.providerName,
-          b.accountNumber || '—',
+          accountCell(b),
           b.property?.name || b.buildingName || '-',
           `AED ${safeNumber(b.currentOutstanding).toFixed(2)}`,
           `${daysOverdue} days`,
@@ -373,12 +436,12 @@ export async function GET(request: Request) {
         ]
       })
       y = drawTable([
-        { header: 'Provider', widthPct: 25 },
-        { header: 'Account#', widthPct: 15 },
-        { header: 'Property', widthPct: 20 },
-        { header: 'Outstanding', widthPct: 15 },
-        { header: 'Days Overdue', widthPct: 12.5 },
-        { header: 'Type', widthPct: 12.5 },
+        { header: 'Provider', widthPct: 22 },
+        { header: 'Account # / Owner', widthPct: 20 },
+        { header: 'Property', widthPct: 18 },
+        { header: 'Outstanding', widthPct: 14 },
+        { header: 'Days Overdue', widthPct: 13 },
+        { header: 'Type', widthPct: 13 },
       ], overdueRows, y)
     }
 
@@ -391,7 +454,7 @@ export async function GET(request: Request) {
         const daysRemaining = Math.max(0, Math.ceil((dueDay.getTime() - startOfToday.getTime()) / (1000 * 60 * 60 * 24)))
         return [
           b.providerName,
-          b.accountNumber || '—',
+          accountCell(b),
           b.property?.name || b.buildingName || '-',
           `AED ${safeNumber(b.currentOutstanding).toFixed(2)}`,
           dueDate.toISOString().split('T')[0],
@@ -399,12 +462,12 @@ export async function GET(request: Request) {
         ]
       })
       y = drawTable([
-        { header: 'Provider', widthPct: 25 },
-        { header: 'Account#', widthPct: 15 },
-        { header: 'Property', widthPct: 20 },
-        { header: 'Outstanding', widthPct: 15 },
-        { header: 'Due Date', widthPct: 12.5 },
-        { header: 'Remaining', widthPct: 12.5 },
+        { header: 'Provider', widthPct: 22 },
+        { header: 'Account # / Owner', widthPct: 20 },
+        { header: 'Property', widthPct: 18 },
+        { header: 'Outstanding', widthPct: 14 },
+        { header: 'Due Date', widthPct: 13 },
+        { header: 'Remaining', widthPct: 13 },
       ], upcomingRows, y)
     }
 
@@ -415,7 +478,7 @@ export async function GET(request: Request) {
         const actualPaid = getActualPaidAmount(b)
         return [
           b.providerName,
-          b.accountNumber || '—',
+          accountCell(b),
           b.property?.name || b.buildingName || '-',
           `AED ${actualPaid.toFixed(2)}`,
           b.lastPaymentDate ? new Date(b.lastPaymentDate).toISOString().split('T')[0] : '-',
@@ -423,12 +486,12 @@ export async function GET(request: Request) {
         ]
       })
       y = drawTable([
-        { header: 'Provider', widthPct: 25 },
-        { header: 'Account#', widthPct: 15 },
-        { header: 'Property', widthPct: 20 },
-        { header: 'Amount Paid', widthPct: 15 },
-        { header: 'Payment Date', widthPct: 12.5 },
-        { header: 'Reference', widthPct: 12.5 },
+        { header: 'Provider', widthPct: 22 },
+        { header: 'Account # / Owner', widthPct: 20 },
+        { header: 'Property', widthPct: 18 },
+        { header: 'Amount Paid', widthPct: 14 },
+        { header: 'Payment Date', widthPct: 13 },
+        { header: 'Reference', widthPct: 13 },
       ], paidRows, y)
     }
 
@@ -441,7 +504,7 @@ export async function GET(request: Request) {
         const outstanding = safeNumber(b.currentOutstanding)
         return [
           b.providerName,
-          b.accountNumber || '—',
+          accountCell(b),
           b.property?.name || b.buildingName || '-',
           `AED ${actualPaid.toFixed(2)}`,
           `AED ${outstanding.toFixed(2)}`,
@@ -449,11 +512,11 @@ export async function GET(request: Request) {
         ]
       })
       y = drawTable([
-        { header: 'Provider', widthPct: 22 },
-        { header: 'Account#', widthPct: 13 },
-        { header: 'Property', widthPct: 20 },
-        { header: 'Amount Paid', widthPct: 15 },
-        { header: 'Remaining', widthPct: 15 },
+        { header: 'Provider', widthPct: 20 },
+        { header: 'Account # / Owner', widthPct: 20 },
+        { header: 'Property', widthPct: 17 },
+        { header: 'Amount Paid', widthPct: 14 },
+        { header: 'Remaining', widthPct: 14 },
         { header: 'Due Date', widthPct: 15 },
       ], partialRows, y)
     }
@@ -463,16 +526,16 @@ export async function GET(request: Request) {
       y = addSectionTitle(`Outstanding Balances (${outstandingBills.length})`, y, '#c0392b')
       const outstandingRows = outstandingBills.map(b => [
         b.providerName,
-        b.accountNumber || '—',
+        accountCell(b),
         b.property?.name || b.buildingName || '-',
         `AED ${safeNumber(b.currentOutstanding).toFixed(2)}`,
         b.serviceType,
       ])
       y = drawTable([
-        { header: 'Provider', widthPct: 25 },
-        { header: 'Account#', widthPct: 15 },
-        { header: 'Property', widthPct: 25 },
-        { header: 'Outstanding', widthPct: 20 },
+        { header: 'Provider', widthPct: 22 },
+        { header: 'Account # / Owner', widthPct: 22 },
+        { header: 'Property', widthPct: 22 },
+        { header: 'Outstanding', widthPct: 19 },
         { header: 'Type', widthPct: 15 },
       ], outstandingRows, y)
 

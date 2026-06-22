@@ -205,7 +205,7 @@ export async function GET(request: Request) {
 
     // ─── Overdue Bills Sheet ───
     if (overdueBills.length > 0) {
-      const overdueHeader = ['Provider', 'Account No.', 'Property', 'Outstanding (AED)', 'Days Overdue', 'Service Type', 'Due Date']
+      const overdueHeader = ['Provider', 'Account No.', 'Owner', 'Property', 'Outstanding (AED)', 'Days Overdue', 'Service Type', 'Due Date']
       const overdueRows = overdueBills.map(b => {
         const dueDate = new Date(b.nextDueDate)
         const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate())
@@ -213,6 +213,7 @@ export async function GET(request: Request) {
         return [
           b.providerName,
           b.accountNumber || '',
+          b.ownerName || '',
           b.property?.name || b.buildingName || '',
           parseFloat(String(b.currentOutstanding)).toFixed(2),
           daysOverdue,
@@ -227,7 +228,7 @@ export async function GET(request: Request) {
 
     // ─── Upcoming Bills Sheet ───
     if (upcomingBills.length > 0) {
-      const upcomingHeader = ['Provider', 'Account No.', 'Property', 'Outstanding (AED)', 'Due Date', 'Days Remaining', 'Service Type']
+      const upcomingHeader = ['Provider', 'Account No.', 'Owner', 'Property', 'Outstanding (AED)', 'Due Date', 'Days Remaining', 'Service Type']
       const upcomingRows = upcomingBills.map(b => {
         const dueDate = new Date(b.nextDueDate)
         const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate())
@@ -235,6 +236,7 @@ export async function GET(request: Request) {
         return [
           b.providerName,
           b.accountNumber || '',
+          b.ownerName || '',
           b.property?.name || b.buildingName || '',
           parseFloat(String(b.currentOutstanding)).toFixed(2),
           b.nextDueDate.toISOString().split('T')[0],
@@ -249,12 +251,13 @@ export async function GET(request: Request) {
 
     // FIX: Paid Bills — only include bills with ACTUAL payment records
     if (paidBills.length > 0) {
-      const paidHeader = ['Provider', 'Account No.', 'Property', 'Amount Paid (AED)', 'Payment Date', 'Payment Method', 'Reference']
+      const paidHeader = ['Provider', 'Account No.', 'Owner', 'Property', 'Amount Paid (AED)', 'Payment Date', 'Payment Method', 'Reference']
       const paidRows = paidBills.map(b => {
         const actualPaid = getActualPaidAmount(b)
         return [
           b.providerName,
           b.accountNumber || '',
+          b.ownerName || '',
           b.property?.name || b.buildingName || '',
           actualPaid.toFixed(2),
           b.lastPaymentDate ? new Date(b.lastPaymentDate).toISOString().split('T')[0] : '',
@@ -269,13 +272,14 @@ export async function GET(request: Request) {
 
     // FIX: Partially Paid — only bills with ACTUAL payment records, show REAL paidAmount
     if (partiallyPaidBills.length > 0) {
-      const partialHeader = ['Provider', 'Account No.', 'Property', 'Amount Paid (AED)', 'Outstanding (AED)', 'Due Date', 'Service Type']
+      const partialHeader = ['Provider', 'Account No.', 'Owner', 'Property', 'Amount Paid (AED)', 'Outstanding (AED)', 'Due Date', 'Service Type']
       const partialRows = partiallyPaidBills.map(b => {
         const actualPaid = getActualPaidAmount(b)
         const outstanding = parseFloat(String(b.currentOutstanding))
         return [
           b.providerName,
           b.accountNumber || '',
+          b.ownerName || '',
           b.property?.name || b.buildingName || '',
           actualPaid.toFixed(2),
           outstanding.toFixed(2),
@@ -290,10 +294,11 @@ export async function GET(request: Request) {
 
     // ─── Outstanding Balances Sheet — no confusing "Previous Liability" ───
     if (outstandingBills.length > 0) {
-      const outstandingHeader = ['Provider', 'Account No.', 'Property', 'Outstanding (AED)', 'Service Type', 'Due Date']
+      const outstandingHeader = ['Provider', 'Account No.', 'Owner', 'Property', 'Outstanding (AED)', 'Service Type', 'Due Date']
       const outstandingRows = outstandingBills.map(b => [
         b.providerName,
         b.accountNumber || '',
+        b.ownerName || '',
         b.property?.name || b.buildingName || '',
         parseFloat(String(b.currentOutstanding)).toFixed(2),
         b.serviceType,
