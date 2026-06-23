@@ -609,9 +609,10 @@ async fn run_sync_agent(app_handle: tauri::AppHandle) {
             let app_handle_clone = app_handle.clone();
             // Create backup in a blocking task (don't block async runtime)
             let _ = tauri::async_runtime::spawn_blocking(move || {
-                // We need to get the DbState inside the blocking task
-                // to avoid lifetime issues with the async context
-                if let Some(db_state) = app_handle_clone.try_state::<DbState>() {
+                // Get DbState and create backup — both use app_handle_clone
+                // We borrow it for try_state, then pass ownership to create_local_backup
+                let db_state_opt = app_handle_clone.try_state::<DbState>();
+                if let Some(db_state) = db_state_opt {
                     let _ = create_local_backup(app_handle_clone, db_state);
                 }
             }).await;
