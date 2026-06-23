@@ -567,8 +567,18 @@ fn main() {
 
                 println!("[DESKTOP] Starting Next.js server from: {:?}", server_dir);
 
+                // Use bundled Node.js if available, otherwise fall back to system Node.js
+                let node_portable = server_dir.join("node-portable").join("node.exe");
+                let node_exe = if node_portable.exists() {
+                    println!("[DESKTOP] Using bundled Node.js: {:?}", node_portable);
+                    node_portable.to_string_lossy().to_string()
+                } else {
+                    println!("[DESKTOP] Using system Node.js (node-portable not found)");
+                    "node".to_string()
+                };
+
                 // Start the Node.js standalone server
-                let server_process = Command::new("node")
+                let server_process = Command::new(&node_exe)
                     .arg("server.js")
                     .current_dir(&server_dir)
                     .env("NODE_ENV", "production")
