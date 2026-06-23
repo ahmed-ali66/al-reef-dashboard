@@ -94,9 +94,9 @@ fn init_database(app: &tauri::App) -> Result<Connection, Box<dyn std::error::Err
 
     let conn = Connection::open(db_path)?;
 
-    // Enable WAL mode (Write-Ahead Logging) for better performance + crash safety
-    conn.execute("PRAGMA journal_mode=WAL;", [])?;
-    conn.execute("PRAGMA foreign_keys=ON;", [])?;
+    // Enable WAL mode (Write-Ahead Logging) for better performance + crash safety.
+    // Use execute_batch for PRAGMAs — some PRAGMAs return rows which breaks execute().
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
 
     // Create a simple config table for storing app state
     conn.execute(
