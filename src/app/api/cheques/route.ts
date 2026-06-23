@@ -73,6 +73,10 @@ export async function GET(request: Request) {
           property: {
             select: { id: true, name: true, nameAr: true, nameBn: true, nameUr: true, type: true },
           },
+          payments: {
+            orderBy: { paymentDate: 'desc' },
+            select: { id: true, amount: true, paymentDate: true, paymentMethod: true, reference: true, notes: true, createdAt: true },
+          },
         },
         orderBy: [{ dueDate: 'asc' }],
         skip: pagination.skip,
@@ -81,9 +85,20 @@ export async function GET(request: Request) {
       prisma.cheque.count({ where }),
     ])
 
+    // Compute paid-so-far + remaining for each cheque
+    const chequesWithSums = cheques.map(c => {
+      const serialized = serialize(c)
+      const totalPaid = (c.payments || []).reduce((s, p) => s + safeNumber(p.amount), 0)
+      const chequeAmount = safeNumber(c.amount)
+      serialized.totalPaid = Number(totalPaid.toFixed(2))
+      serialized.remaining = Number(Math.max(0, chequeAmount - totalPaid).toFixed(2))
+      serialized.paymentCount = (c.payments || []).length
+      return serialized
+    })
+
     return successResponse({
-      data: cheques.map(serialize),
-      pagination: { page: pagination.page, pageSize: pagination.pageSize, total, totalPages: Math.ceil(total / pagination.pageSize) },
+      data: chequesWithSums,
+      pagination: { page: pagination.page, pageSize: pagination.pageSize, total, totalPages: Math.ceil(total / (pagination.pageSize || 1)) },
     })
   } catch (error) {
     console.error('Error fetching cheques:', error)

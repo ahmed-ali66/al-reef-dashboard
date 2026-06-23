@@ -28,14 +28,22 @@ export async function GET(request: Request) {
     // Run all aggregations in parallel
     const [
       totalPendingAgg,
+      partiallyPaidAgg,
       upcoming30Agg,
       overdueAgg,
       paidThisYearAgg,
       byPropertyPending,
     ] = await Promise.all([
-      // Total pending (all pending cheques)
+      // Total pending (all pending cheques — no payments yet)
       prisma.cheque.aggregate({
         where: { companyId: user.companyId, status: 'pending', deletedAt: null },
+        _sum: { amount: true },
+        _count: true,
+      }),
+
+      // Partially paid (has some payments but not fully paid)
+      prisma.cheque.aggregate({
+        where: { companyId: user.companyId, status: 'partially_paid', deletedAt: null },
         _sum: { amount: true },
         _count: true,
       }),
@@ -76,23 +84,31 @@ export async function GET(request: Request) {
         _count: true,
       }),
 
-      // By property: pending amounts grouped by property
+      // By property: pending + partially_paid amounts grouped by property
       prisma.cheque.findMany({
-        where: { companyId: user.companyId, status: 'pending', deletedAt: null },
+        where: {
+          companyId: user.companyId,
+          status: { in: ['pending', 'partially_paid'] },
+          deletedAt: null,
+        },
         select: {
           amount: true,
           propertyId: true,
           property: { select: { id: true, name: true } },
+          payments: { select: { amount: true } },
         },
       }),
     ])
 
-    // Group by property manually (Prisma doesn't support groupBy with relations easily)
+    // Group by property manually — use REMAINING amount (cheque amount - sum of payments)
     const byPropertyMap = new Map<string, { propertyId: string; propertyName: string; totalPending: number; chequeCount: number }>()
     for (const c of byPropertyPending) {
       const pid = c.propertyId
+      const chequeAmount = safeNumber(c.amount)
+      const paidSoFar = (c.payments || []).reduce((s, p) => s + safeNumber(p.amount), 0)
+      const remaining = Math.max(0, chequeAmount - paidSoFar)
       const existing = byPropertyMap.get(pid) || { propertyId: pid, propertyName: c.property?.name || 'Unknown', totalPending: 0, chequeCount: 0 }
-      existing.totalPending += safeNumber(c.amount)
+      existing.totalPending += remaining
       existing.chequeCount += 1
       byPropertyMap.set(pid, existing)
     }
@@ -102,6 +118,10 @@ export async function GET(request: Request) {
       totalPending: {
         amount: safeNumber(totalPendingAgg._sum.amount),
         count: totalPendingAgg._count,
+      },
+      partiallyPaid: {
+        amount: safeNumber(partiallyPaidAgg._sum.amount),
+        count: partiallyPaidAgg._count,
       },
       upcoming30: {
         amount: safeNumber(upcoming30Agg._sum.amount),

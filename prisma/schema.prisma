@@ -620,10 +620,16 @@ model Cheque {
   chequeNumber String?                   // physical cheque number (optional)
   bankName     String?                   // e.g. "ADCB" (optional)
 
-  // Workflow: pending (default) → paid (or bounced / cancelled)
-  status       String    @default("pending")  // pending | paid | bounced | cancelled
-  paidDate     DateTime?                 // set when actually deposited/cleared
+  // Workflow: pending → partially_paid → paid (or bounced / cancelled)
+  // Status auto-updates based on ChequePayment records:
+  //   - no payments → pending
+  //   - sum(payments) < amount → partially_paid
+  //   - sum(payments) >= amount → paid (+ paidDate set)
+  status       String    @default("pending")  // pending | partially_paid | paid | bounced | cancelled
+  paidDate     DateTime?                 // set when fully paid (sum of payments >= amount)
   notes        String?
+
+  payments     ChequePayment[]
 
   deletedAt    DateTime?                 // soft delete
   createdAt    DateTime  @default(now())
@@ -634,4 +640,30 @@ model Cheque {
   @@index([propertyId])
   @@index([status, dueDate])
   @@map("cheques")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CHEQUE PAYMENTS — partial payments made against a cheque
+// Allows recording multiple payments (e.g. 30k today + 20k next week)
+// toward a single cheque. The parent Cheque's status auto-updates.
+// ─────────────────────────────────────────────────────────────────────────
+model ChequePayment {
+  id            String    @id @default(cuid())
+  chequeId      String
+  cheque        Cheque    @relation(fields: [chequeId], references: [id])
+  companyId     String
+
+  amount        Decimal   @db.Decimal(10, 2)
+  paymentDate   DateTime
+  paymentMethod String?   // cash | bank_transfer | cheque | online
+  reference     String?   // optional reference number
+  notes         String?
+
+  createdBy     String    // user ID who recorded the payment
+  createdAt     DateTime  @default(now())
+
+  @@index([chequeId])
+  @@index([companyId, paymentDate])
+  @@index([paymentDate])
+  @@map("cheque_payments")
 }
