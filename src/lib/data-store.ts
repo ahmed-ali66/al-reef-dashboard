@@ -228,20 +228,42 @@ export const useDataStore = create<DataState>()(
       set({ isLoading: true })
 
       try {
-        // Fetch all data in parallel
-        // Staff can now view payments (amounts masked) and users (still blocked via 403 catch)
-        const [companyData, propertiesData, tenantsData, paymentsData, expensesData, maintenanceData, usersData, resetData, reservationsData, adjustmentsData, tenantGroupsData] = await Promise.all([
-          apiCall('/api/company').catch(() => null),
-          apiCall('/api/properties?includeArchived=true&limit=1000').catch(() => ({ data: [] })),
-          apiCall('/api/tenants?limit=1000').catch(() => ({ data: [] })),
-          apiCall('/api/payments?limit=1000').catch(() => ({ data: [] })),
-          apiCall('/api/expenses?limit=1000').catch(() => ({ data: [] })),
-          apiCall('/api/maintenance?limit=1000').catch(() => ({ data: [] })),
-          apiCall('/api/users?limit=1000').catch(() => ({ data: [] })),
-          apiCall('/api/reset-requests').catch(() => []),
-          apiCall('/api/reservations?limit=1000').catch(() => ({ data: [] })),
-          apiCall('/api/adjustments?limit=1000').catch(() => ({ data: [] })),
-          apiCall('/api/tenant-groups').catch(() => []),
+        // Use desktop adapter for offline-capable data fetching.
+        // In browser mode: fetchWithOfflineFallback just calls fetch() (normal).
+        // In desktop mode: tries cloud API first, falls back to local SQLite when offline.
+        const { fetchWithOfflineFallback, isDesktop } = await import('@/lib/desktop-adapter')
+        const desktop = isDesktop()
+
+        // Helper: fetch with offline fallback (desktop) or apiCall (browser)
+        const smartFetch = async (url: string, tableName: string): Promise<any> => {
+          if (desktop) {
+            try {
+              return await fetchWithOfflineFallback(url, tableName)
+            } catch {
+              return { data: [] }
+            }
+          } else {
+            return apiCall(url).catch(() => ({ data: [] }))
+          }
+        }
+
+        // Company data — always from cloud (not synced to local)
+        const companyData = desktop
+          ? await apiCall('/api/company').catch(() => null)
+          : await apiCall('/api/company').catch(() => null)
+
+        // All other data — uses offline fallback in desktop mode
+        const [propertiesData, tenantsData, paymentsData, expensesData, maintenanceData, usersData, resetData, reservationsData, adjustmentsData, tenantGroupsData] = await Promise.all([
+          smartFetch('/api/properties?includeArchived=true&limit=1000', 'properties'),
+          smartFetch('/api/tenants?limit=1000', 'tenants'),
+          smartFetch('/api/payments?limit=1000', 'payments'),
+          smartFetch('/api/expenses?limit=1000', 'expenses'),
+          smartFetch('/api/maintenance?limit=1000', 'maintenance'),
+          desktop ? smartFetch('/api/users?limit=1000', 'users') : apiCall('/api/users?limit=1000').catch(() => ({ data: [] })),
+          desktop ? [] : apiCall('/api/reset-requests').catch(() => []),
+          smartFetch('/api/reservations?limit=1000', 'reservations'),
+          smartFetch('/api/adjustments?limit=1000', 'rent_adjustments'),
+          desktop ? smartFetch('/api/tenant-groups', 'tenant_groups') : apiCall('/api/tenant-groups').catch(() => []),
         ])
 
         // Helper to extract data from paginated or plain responses
@@ -277,15 +299,31 @@ export const useDataStore = create<DataState>()(
     // Refresh all data after mutations — forces re-fetch to ensure consistency
     refreshAllData: async () => {
       try {
+        // Use desktop adapter for offline-capable refresh
+        const { fetchWithOfflineFallback, isDesktop } = await import('@/lib/desktop-adapter')
+        const desktop = isDesktop()
+
+        const smartFetch = async (url: string, tableName: string): Promise<any> => {
+          if (desktop) {
+            try {
+              return await fetchWithOfflineFallback(url, tableName)
+            } catch {
+              return { data: [] }
+            }
+          } else {
+            return apiCall(url).catch(() => ({ data: [] }))
+          }
+        }
+
         const [propertiesData, tenantsData, paymentsData, expensesData, maintenanceData, reservationsData, adjustmentsData, tenantGroupsData] = await Promise.all([
-          apiCall('/api/properties?includeArchived=true&limit=1000').catch(() => ({ data: [] })),
-          apiCall('/api/tenants?limit=1000').catch(() => ({ data: [] })),
-          apiCall('/api/payments?limit=1000').catch(() => ({ data: [] })),
-          apiCall('/api/expenses?limit=1000').catch(() => ({ data: [] })),
-          apiCall('/api/maintenance?limit=1000').catch(() => ({ data: [] })),
-          apiCall('/api/reservations?limit=1000').catch(() => ({ data: [] })),
-          apiCall('/api/adjustments?limit=1000').catch(() => ({ data: [] })),
-          apiCall('/api/tenant-groups').catch(() => []),
+          smartFetch('/api/properties?includeArchived=true&limit=1000', 'properties'),
+          smartFetch('/api/tenants?limit=1000', 'tenants'),
+          smartFetch('/api/payments?limit=1000', 'payments'),
+          smartFetch('/api/expenses?limit=1000', 'expenses'),
+          smartFetch('/api/maintenance?limit=1000', 'maintenance'),
+          smartFetch('/api/reservations?limit=1000', 'reservations'),
+          smartFetch('/api/adjustments?limit=1000', 'rent_adjustments'),
+          desktop ? smartFetch('/api/tenant-groups', 'tenant_groups') : apiCall('/api/tenant-groups').catch(() => []),
         ])
 
         const extractData = (resp: any): any[] => {
