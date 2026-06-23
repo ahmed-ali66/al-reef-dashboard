@@ -122,9 +122,14 @@ export default function PropertyPnL() {
   }
 
   // ─── Render single property card ─────────────────────────────────────
-  const renderPropertyCard = (p: PropertyPnLResult, isPortfolio = false) => {
+  // Defensive: if p or p.property is missing, render nothing instead of crashing.
+  // This prevents client-side exceptions when the API response shape changes.
+  const renderPropertyCard = (p: PropertyPnLResult | null | undefined, isPortfolio = false) => {
+    if (!p || !p.property || !p.income || !p.expenses || !p.profit || !p.chequeCounts) {
+      return null
+    }
     return (
-      <Card key={p.property.id} className={isPortfolio ? 'border-terracotta border-2' : ''}>
+      <Card key={p.property.id || 'unknown'} className={isPortfolio ? 'border-terracotta border-2' : ''}>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Building2 className="w-4 h-4 text-terracotta" />

@@ -248,7 +248,17 @@ export async function GET(request: Request) {
     }))
 
     // ─── Portfolio totals (aggregate across all properties) ───────────────
+    // NOTE: Includes a synthetic `property` field so this object is compatible
+    // with the PropertyPnLResult interface used by the frontend's renderPropertyCard.
+    // The frontend accesses p.property.id / p.property.name when rendering cards,
+    // and portfolioTotals must satisfy the same shape to avoid client-side crashes.
     const portfolioTotals = {
+      property: {
+        id: 'portfolio',
+        name: 'Portfolio Total',
+        type: 'portfolio',
+        totalUnits: propertyResults.reduce((s, p) => s + (p.property.totalUnits || 0), 0),
+      },
       tenantCount: propertyResults.reduce((s, p) => s + p.tenantCount, 0),
       income: {
         expectedRent: Number(propertyResults.reduce((s, p) => s + p.income.expectedRent, 0).toFixed(2)),
