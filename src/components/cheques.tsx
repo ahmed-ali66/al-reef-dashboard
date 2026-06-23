@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
-import { Wallet, Plus, Pencil, Trash2, CheckCircle2, Loader2, Search, Calendar, TrendingUp, AlertCircle, Clock, History } from 'lucide-react'
+import { Wallet, Plus, Pencil, Trash2, CheckCircle2, Loader2, Search, Calendar, TrendingUp, AlertCircle, Clock } from 'lucide-react'
 
 interface ChequeData {
   id: string
@@ -92,7 +92,6 @@ export default function Cheques() {
     setError(null)
     try {
       const params = new URLSearchParams()
-      if (activeTab === 'upcoming') params.set('upcoming', 'false')  // we filter client-side by tab
       if (activeTab === 'paid') params.set('status', 'paid')
       if (propertyFilter !== 'all') params.set('propertyId', propertyFilter)
       if (searchQuery) params.set('search', searchQuery)
@@ -100,7 +99,8 @@ export default function Cheques() {
       const res = await fetch(`/api/cheques?${params.toString()}`)
       if (!res.ok) throw new Error('Failed to fetch cheques')
       const json = await res.json()
-      setCheques(json.data?.data || [])
+      // API returns { data: [...cheques], pagination: {...} } — json.data is the array
+      setCheques(Array.isArray(json.data) ? json.data : [])
     } catch (e: any) {
       setError(e.message || 'Unknown error')
     } finally {
@@ -113,7 +113,8 @@ export default function Cheques() {
       const res = await fetch('/api/cheques/summary')
       if (!res.ok) return
       const json = await res.json()
-      setSummary(json.data)
+      // API returns { totalPending, upcoming30, ... } directly (not wrapped in data)
+      setSummary(json)
     } catch (e) {
       // silent — summary is non-critical
     }
@@ -124,7 +125,8 @@ export default function Cheques() {
       const res = await fetch('/api/properties?limit=200')
       if (!res.ok) return
       const json = await res.json()
-      setProperties(json.data?.data || json.data || [])
+      // API returns { data: [...properties], pagination: {...} }
+      setProperties(Array.isArray(json.data) ? json.data : [])
     } catch (e) {
       // silent
     }
@@ -284,26 +286,6 @@ export default function Cheques() {
     }
   }
 
-  // ─── Seed Neima Villa cheques (one-time, owner/admin only) ──────────
-  const [seeding, setSeeding] = useState(false)
-  const handleSeed = async () => {
-    if (!confirm('Seed 17 Neima Villa cheques (Ali Majdi Ghareeb Nasser, AED 1,150,000 total)?\n\nThis is idempotent — safe to run multiple times.')) return
-    setSeeding(true)
-    setError(null)
-    try {
-      const res = await fetch('/api/cheques/seed', { method: 'POST' })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error || 'Seed failed')
-      alert(json.data?.message || 'Cheques seeded successfully')
-      await fetchCheques()
-      await fetchSummary()
-    } catch (e: any) {
-      setError(e.message)
-    } finally {
-      setSeeding(false)
-    }
-  }
-
   // ─── Render ──────────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
@@ -317,12 +299,6 @@ export default function Cheques() {
           <p className="text-sm text-muted-foreground mt-1">{t('chequesSubtitle', lang) || 'Track outgoing cheques to property owners'}</p>
         </div>
         <div className="flex gap-2">
-          {canModify && (
-            <Button variant="outline" onClick={handleSeed} disabled={seeding}>
-              {seeding ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <History className="w-4 h-4 mr-2" />}
-              {t('seedNeimaVilla', lang) || 'Seed Neima Villa'}
-            </Button>
-          )}
           {canModify && (
             <Button onClick={openAdd} className="bg-terracotta hover:bg-terracotta/90">
               <Plus className="w-4 h-4 mr-2" />

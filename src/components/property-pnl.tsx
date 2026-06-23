@@ -79,7 +79,7 @@ export default function PropertyPnL() {
       const res = await fetch('/api/properties?limit=200')
       if (!res.ok) return
       const json = await res.json()
-      setProperties(json.data?.data || json.data || [])
+      setProperties(Array.isArray(json.data) ? json.data : [])
     } catch (e) { /* silent */ }
   }, [])
 
@@ -94,7 +94,8 @@ export default function PropertyPnL() {
       const res = await fetch(`/api/reports/property-pnl?${params.toString()}`)
       if (!res.ok) throw new Error('Failed to fetch P&L')
       const json = await res.json()
-      setData(json.data)
+      // API returns the PnL response object directly: { period, properties, portfolioTotals, ... }
+      setData(json)
     } catch (e: any) {
       setError(e.message || 'Unknown error')
     } finally {

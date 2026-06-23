@@ -25,8 +25,9 @@ export async function POST(request: Request) {
       return forbiddenResponse('Only owners and admins can seed cheques')
     }
 
-    // Neima Villa property ID (verified from DB)
-    const NEIMA_VILLA_ID = 'cmpzshtvf000vnj5g0mymf7q2'
+    // Neima Villa property ID (verified from DB — 'Neima Villa', type=villa, 17 units)
+    // NOT 'Neima New' (which is an apartment building with 43 units)
+    const NEIMA_VILLA_ID = 'cmpzshu0x000xnj5g6pcom1fz'
 
     // Verify property exists in this company
     const property = await prisma.property.findFirst({
