@@ -17,6 +17,8 @@ import Expenses from '@/components/expenses'
 import RecurringBills from '@/components/recurring-bills'
 import DailyExpensesReport from '@/components/daily-expenses-report'
 import Reports from '@/components/reports'
+import Cheques from '@/components/cheques'
+import PropertyPnL from '@/components/property-pnl'
 import Contracts from '@/components/contracts'
 import Reservations from '@/components/reservations'
 import UserManagement from '@/components/user-management'
@@ -124,8 +126,10 @@ function AppContent() {
       case 'maintenance': return <Maintenance />
       case 'expenses': return <Expenses />
       case 'recurring-bills': return <RecurringBills />
+      case 'cheques': return <Cheques />
       case 'daily-report': return isFinancialUser ? <DailyExpensesReport /> : <AccessDenied />
       case 'reports': return isFinancialUser ? <Reports /> : <AccessDenied />
+      case 'property-pnl': return isFinancialUser ? <PropertyPnL /> : <AccessDenied />
       case 'contracts': return <Contracts />
       case 'settings': return isSystemAdmin ? <SettingsPage /> : <AccessDenied type="admin" />
       case 'system': return isSystemAdmin ? <SystemManagement /> : <AccessDenied type="admin" />

@@ -376,3 +376,23 @@ export interface AuditLogData {
   companyId: string | null
   createdAt: string
 }
+
+// ─── Cheques (outgoing cheques to property owners) ──────────────────────
+export interface ChequeData {
+  id: string
+  companyId: string
+  propertyId: string
+  payeeName: string
+  payeeMobile: string | null
+  amount: number
+  dueDate: string
+  chequeNumber: string | null
+  bankName: string | null
+  status: 'pending' | 'paid' | 'bounced' | 'cancelled'
+  paidDate: string | null
+  notes: string | null
+  deletedAt: string | null
+  createdAt: string
+  updatedAt: string
+  property?: PropertyData
+}

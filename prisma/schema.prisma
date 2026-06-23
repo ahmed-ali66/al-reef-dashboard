@@ -41,6 +41,7 @@ model Company {
   billPayments   BillPayment[]
   billCycles     BillCycle[]
   tenantGroups  TenantGroup[]
+  cheques       Cheque[]
 
   @@map("companies")
 }
@@ -95,6 +96,7 @@ model Property {
   adjustments  RentAdjustment[]
   recurringBills RecurringBill[]
   tenantGroups TenantGroup[]
+  cheques      Cheque[]
 
   @@index([companyId])
   @@index([archived])
@@ -594,4 +596,42 @@ model BillCycle {
   @@index([dueDate])
   @@index([periodStart, periodEnd])
   @@map("bill_cycles")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CHEQUES — outgoing cheques to property owners (rent payments to landlords)
+// Tracks: what we owe, to whom, when it's due, and whether it's been paid.
+// Used by the Property P&L report to calculate total outgoing cash per property.
+// ─────────────────────────────────────────────────────────────────────────
+model Cheque {
+  id           String    @id @default(cuid())
+  companyId    String
+  company      Company   @relation(fields: [companyId], references: [id])
+  propertyId   String
+  property     Property  @relation(fields: [propertyId], references: [id])
+
+  // Payee info (the property owner receiving the cheque)
+  payeeName    String                    // e.g. "Ali Majdi Ghareeb Nasser"
+  payeeMobile  String?                   // e.g. "+971554444918"
+
+  // Cheque details
+  amount       Decimal   @db.Decimal(10, 2)   // e.g. 50000.00
+  dueDate      DateTime                  // when the cheque should be deposited
+  chequeNumber String?                   // physical cheque number (optional)
+  bankName     String?                   // e.g. "ADCB" (optional)
+
+  // Workflow: pending (default) → paid (or bounced / cancelled)
+  status       String    @default("pending")  // pending | paid | bounced | cancelled
+  paidDate     DateTime?                 // set when actually deposited/cleared
+  notes        String?
+
+  deletedAt    DateTime?                 // soft delete
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([companyId, status])
+  @@index([companyId, dueDate])
+  @@index([propertyId])
+  @@index([status, dueDate])
+  @@map("cheques")
 }

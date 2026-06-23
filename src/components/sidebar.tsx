@@ -28,6 +28,8 @@ import {
   User,
   Settings,
   CalendarCheck,
+  Wallet,
+  TrendingUp,
 } from 'lucide-react'
 
 const navItems: { page: PageType; icon: React.ElementType; key: string; financialOnly?: boolean; adminOnly?: boolean }[] = [
@@ -39,8 +41,10 @@ const navItems: { page: PageType; icon: React.ElementType; key: string; financia
   { page: 'maintenance', icon: Wrench, key: 'maintenance' },
   { page: 'expenses', icon: Receipt, key: 'expenses' },
   { page: 'recurring-bills' as PageType, icon: Zap, key: 'recurringBills' },
+  { page: 'cheques' as PageType, icon: Wallet, key: 'cheques' },
   { page: 'daily-report', icon: FileText, key: 'dailyReport', financialOnly: true },
   { page: 'reports', icon: BarChart3, key: 'reports', financialOnly: true },
+  { page: 'property-pnl' as PageType, icon: TrendingUp, key: 'propertyPnL', financialOnly: true },
   { page: 'contracts', icon: FileText, key: 'contracts' },
   { page: 'settings', icon: Settings, key: 'settings', adminOnly: true },
   { page: 'system', icon: ShieldCheck, key: 'systemManagement', adminOnly: true },
