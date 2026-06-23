@@ -205,6 +205,51 @@ async function apiCall(url: string, options?: RequestInit) {
   return res.json()
 }
 
+// ── Offline-aware mutation helper ──────────────────────────────────────
+// In desktop mode: tries cloud API first (5s timeout). If offline, saves
+// to local SQLite + sync queue. The sync agent pushes when reconnected.
+// In browser mode: just calls apiCall (normal behavior).
+async function smartMutation(
+  createUrl: string,
+  updateUrl: string,
+  tableName: string,
+  data: any,
+  method: string
+): Promise<any> {
+  // Check if desktop
+  if (typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) {
+    try {
+      // Try cloud first with timeout
+      const res = await fetch(method === 'DELETE' ? updateUrl : (method === 'POST' ? createUrl : updateUrl), {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: method === 'DELETE' ? undefined : JSON.stringify(data),
+        signal: AbortSignal.timeout(5000),
+      })
+      if (res.ok) return res.json()
+      if (res.status === 401) throw new Error('Session expired')
+      throw new Error(`HTTP ${res.status}`)
+    } catch (e: any) {
+      // If it's a 401, don't fall back to local — rethrow
+      if (e?.message === 'Session expired') throw e
+
+      // Cloud failed — save to local SQLite + sync queue
+      const { saveWithOfflineFallback } = await import('@/lib/desktop-adapter')
+      const isEdit = method !== 'POST'
+      const recordId = isEdit ? updateUrl.split('/').pop() : `local-${Date.now()}`
+      const record = { ...data, id: recordId }
+      const result = await saveWithOfflineFallback(createUrl, updateUrl, tableName, record, isEdit)
+      return result.data
+    }
+  }
+  // Browser mode — normal apiCall
+  const url = method === 'DELETE' ? updateUrl : (method === 'POST' ? createUrl : updateUrl)
+  return apiCall(url, {
+    method,
+    body: method === 'DELETE' ? undefined : JSON.stringify(data),
+  })
+}
+
 export const useDataStore = create<DataState>()(
   (set, get) => ({
     company: DEFAULT_COMPANY,
@@ -481,19 +526,13 @@ export const useDataStore = create<DataState>()(
 
     // Tenants CRUD
     addTenant: async (data) => {
-      const newTenant = await apiCall('/api/tenants', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      })
+      const newTenant = await smartMutation('/api/tenants', '', 'tenants', data, 'POST')
       set(s => ({ tenants: [...s.tenants, { ...newTenant, payments: [] }] }))
       await get().refreshAllData()
     },
 
     updateTenant: async (id, data) => {
-      const updated = await apiCall(`/api/tenants/${id}`, {
-        method: 'PUT',
-        body: JSON.stringify(data),
-      })
+      const updated = await smartMutation('', `/api/tenants/${id}`, 'tenants', data, 'PUT')
       set(s => ({
         tenants: s.tenants.map(t => t.id === id ? { ...t, ...updated } : t),
       }))
@@ -501,18 +540,13 @@ export const useDataStore = create<DataState>()(
     },
 
     deleteTenant: async (id) => {
-      await apiCall(`/api/tenants/${id}`, { method: 'DELETE' })
-      // Move Out: the tenant stays in the system with status 'moved_out'
-      // We refresh all data to reflect the updated status and unit availability
+      await smartMutation('', `/api/tenants/${id}`, 'tenants', {}, 'DELETE')
       await get().refreshAllData()
     },
 
     // Payments
     addPayment: async (data) => {
-      const newPayment = await apiCall('/api/payments', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      })
+      const newPayment = await smartMutation('/api/payments', '', 'payments', data, 'POST')
       set(s => ({ payments: [...s.payments, newPayment] }))
 
       // Update tenant score locally if late (server already did it, but update UI)
@@ -532,10 +566,7 @@ export const useDataStore = create<DataState>()(
 
     updatePayment: async (id, data) => {
       const { reason, ...paymentData } = data
-      const updated = await apiCall(`/api/payments/${id}`, {
-        method: 'PUT',
-        body: JSON.stringify({ ...paymentData, reason }),
-      })
+      const updated = await smartMutation('', `/api/payments/${id}`, 'payments', { ...paymentData, reason }, 'PUT')
       set(s => ({
         payments: s.payments.map(p => p.id === id ? { ...p, ...updated } : p),
       }))
@@ -546,26 +577,20 @@ export const useDataStore = create<DataState>()(
       const url = reason
         ? `/api/payments/${id}?reason=${encodeURIComponent(reason)}`
         : `/api/payments/${id}`
-      await apiCall(url, { method: 'DELETE' })
+      await smartMutation('', url, 'payments', {}, 'DELETE')
       set(s => ({ payments: s.payments.filter(p => p.id !== id) }))
       await get().refreshAllData()
     },
 
     // Adjustments CRUD
     addAdjustment: async (data) => {
-      const newAdjustment = await apiCall('/api/adjustments', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      })
+      const newAdjustment = await smartMutation('/api/adjustments', '', 'rent_adjustments', data, 'POST')
       set(s => ({ adjustments: [...s.adjustments, newAdjustment] }))
       await get().refreshAllData()
     },
 
     updateAdjustment: async (id, data) => {
-      const updated = await apiCall(`/api/adjustments/${id}`, {
-        method: 'PUT',
-        body: JSON.stringify(data),
-      })
+      const updated = await smartMutation('', `/api/adjustments/${id}`, 'rent_adjustments', data, 'PUT')
       set(s => ({
         adjustments: s.adjustments.map(a => a.id === id ? { ...a, ...updated } : a),
       }))
@@ -576,7 +601,7 @@ export const useDataStore = create<DataState>()(
       const url = reason
         ? `/api/adjustments/${id}?reason=${encodeURIComponent(reason)}`
         : `/api/adjustments/${id}`
-      await apiCall(url, { method: 'DELETE' })
+      await smartMutation('', url, 'rent_adjustments', {}, 'DELETE')
       set(s => ({
         adjustments: s.adjustments.map(a => a.id === id ? { ...a, status: 'cancelled' } : a),
       }))
@@ -585,10 +610,7 @@ export const useDataStore = create<DataState>()(
 
     // Tenant Groups CRUD
     addTenantGroup: async (data) => {
-      const newGroup = await apiCall('/api/tenant-groups', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      })
+      const newGroup = await smartMutation('/api/tenant-groups', '', 'tenant_groups', data, 'POST')
       set(s => ({ tenantGroups: [...s.tenantGroups, newGroup] }))
       await get().refreshAllData()
       return newGroup
@@ -625,19 +647,13 @@ export const useDataStore = create<DataState>()(
 
     // Expenses CRUD
     addExpense: async (data) => {
-      const newExpense = await apiCall('/api/expenses', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      })
+      const newExpense = await smartMutation('/api/expenses', '', 'expenses', data, 'POST')
       set(s => ({ expenses: [...s.expenses, newExpense] }))
       await get().refreshAllData()
     },
 
     updateExpense: async (id, data) => {
-      const updated = await apiCall(`/api/expenses/${id}`, {
-        method: 'PUT',
-        body: JSON.stringify(data),
-      })
+      const updated = await smartMutation('', `/api/expenses/${id}`, 'expenses', data, 'PUT')
       set(s => ({
         expenses: s.expenses.map(e => e.id === id ? { ...e, ...updated } : e),
       }))
@@ -645,26 +661,20 @@ export const useDataStore = create<DataState>()(
     },
 
     deleteExpense: async (id) => {
-      await apiCall(`/api/expenses/${id}`, { method: 'DELETE' })
+      await smartMutation('', `/api/expenses/${id}`, 'expenses', {}, 'DELETE')
       set(s => ({ expenses: s.expenses.filter(e => e.id !== id) }))
       await get().refreshAllData()
     },
 
     // Maintenance CRUD
     addMaintenance: async (data) => {
-      const newItem = await apiCall('/api/maintenance', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      })
+      const newItem = await smartMutation('/api/maintenance', '', 'maintenance', data, 'POST')
       set(s => ({ maintenanceItems: [...s.maintenanceItems, newItem] }))
       await get().refreshAllData()
     },
 
     updateMaintenance: async (id, data) => {
-      const updated = await apiCall(`/api/maintenance/${id}`, {
-        method: 'PUT',
-        body: JSON.stringify(data),
-      })
+      const updated = await smartMutation('', `/api/maintenance/${id}`, 'maintenance', data, 'PUT')
       set(s => ({
         maintenanceItems: s.maintenanceItems.map(m => m.id === id ? { ...m, ...updated } : m),
       }))
@@ -672,17 +682,14 @@ export const useDataStore = create<DataState>()(
     },
 
     deleteMaintenance: async (id) => {
-      await apiCall(`/api/maintenance/${id}`, { method: 'DELETE' })
+      await smartMutation('', `/api/maintenance/${id}`, 'maintenance', {}, 'DELETE')
       set(s => ({ maintenanceItems: s.maintenanceItems.filter(m => m.id !== id) }))
       await get().refreshAllData()
     },
 
     // Reservations CRUD
     addReservation: async (data) => {
-      await apiCall('/api/reservations', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      })
+      await smartMutation('/api/reservations', '', 'reservations', data, 'POST')
       await get().refreshAllData()
     },
 
