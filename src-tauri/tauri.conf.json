@@ -45,12 +45,7 @@
     "windows": {
       "nsis": {
         "installMode": "perMachine",
-        "displayLanguageSelector": false,
-        "languages": ["English"],
-        "installerIcon": "icons/icon.ico",
-        "headerImage": null,
-        "sidebarImage": null,
-        "license": null
+        "languages": ["English"]
       }
     }
   }
