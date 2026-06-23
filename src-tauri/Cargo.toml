@@ -30,7 +30,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 
 # ── Phase 1: HTTP client (for sync agent) ───────────────────────────────
 # reqwest is used by the sync agent to push/pull data from the Vercel cloud.
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
 
 # ── Phase 1: Async runtime ──────────────────────────────────────────────
 # tokio is the async runtime that lets us do background sync without

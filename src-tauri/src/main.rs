@@ -13,6 +13,8 @@ use std::sync::Mutex;
 use tauri::Manager;
 use rusqlite::Connection;
 use serde::Serialize;
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 // ── State ──────────────────────────────────────────────────────────────
 struct DbState(Mutex<Connection>);
@@ -23,6 +25,7 @@ struct SyncState {
     last_error: Mutex<Option<String>>,
     company_id: Mutex<Option<String>>,
 }
+struct ServerProcess(Mutex<Option<std::process::Child>>);
 
 const API_BASE: &str = "http://localhost:3000";
 
@@ -551,6 +554,54 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
+            // ── Start the Next.js server (production mode only) ────────
+            // In dev mode, the Next.js dev server is already running (beforeDevCommand).
+            // In production (built .exe), we need to start the standalone server.
+            #[cfg(not(debug_assertions))]
+            {
+                let resource_path = app.path().resource_dir()
+                    .expect("Failed to get resource dir");
+                let server_dir = resource_path.join("desktop-server");
+
+                println!("[DESKTOP] Starting Next.js server from: {:?}", server_dir);
+
+                // Start the Node.js standalone server
+                let server_process = Command::new("node")
+                    .arg("server.js")
+                    .current_dir(&server_dir)
+                    .env("NODE_ENV", "production")
+                    .env("PORT", "3000")
+                    .env("HOSTNAME", "127.0.0.1")
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn();
+
+                match server_process {
+                    Ok(child) => {
+                        println!("[DESKTOP] Next.js server started (PID: {})", child.id());
+                        // Store the child process so we can kill it on exit
+                        app.manage(ServerProcess(Mutex::new(Some(child))));
+                    }
+                    Err(e) => {
+                        println!("[DESKTOP] WARNING: Could not start Node.js server: {}", e);
+                        println!("[DESKTOP] The app will try to connect to an existing server at localhost:3000");
+                    }
+                }
+
+                // Wait for the server to be ready (up to 10 seconds)
+                println!("[DESKTOP] Waiting for server to be ready...");
+                let client = reqwest::blocking::Client::new();
+                for i in 1..=20 {
+                    if let Ok(resp) = client.get("http://127.0.0.1:3000/api/health").timeout(Duration::from_secs(1)).send() {
+                        if resp.status().is_success() {
+                            println!("[DESKTOP] Server is ready! (attempt {})", i);
+                            break;
+                        }
+                    }
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+            }
+
             let conn = init_database(app).expect("Failed to initialize database");
             app.manage(DbState(Mutex::new(conn)));
             app.manage(SyncState {

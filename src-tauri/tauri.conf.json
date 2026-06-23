@@ -4,10 +4,10 @@
   "version": "1.0.0",
   "identifier": "com.alreef.desktop",
   "build": {
-    "beforeBuildCommand": "npx prisma generate && next build",
+    "beforeBuildCommand": "npx prisma generate && next build && node scripts/prepare-desktop.mjs",
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:3000",
-    "frontendDist": "../.next/standalone"
+    "frontendDist": "../desktop-frontend"
   },
   "app": {
     "windows": [
@@ -36,7 +36,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [],
+    "resources": ["../desktop-server"],
     "externalBin": [],
     "copyright": "© 2024 Al Reef Al Madeena Real Estate Management",
     "category": "Business",
