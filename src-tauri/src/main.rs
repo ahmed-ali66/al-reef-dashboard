@@ -91,6 +91,146 @@ fn set_company_id(company_id: String, state: tauri::State<SyncState>) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// OFFLINE DATA ACCESS — Tauri commands for reading/writing local SQLite
+// ─────────────────────────────────────────────────────────────────────────
+// These commands let the frontend read from the local SQLite mirror when
+// offline, and write to it + queue for sync. This is the core of offline mode.
+
+/// Returns all local cheques (from the SQLite mirror) as JSON.
+/// The frontend calls this instead of /api/cheques when offline.
+#[tauri::command]
+fn get_local_cheques(state: tauri::State<DbState>) -> Result<String, String> {
+    let conn = state.0.lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT id, companyId, propertyId, payeeName, payeeMobile, amount, dueDate, chequeNumber, bankName, status, paidDate, notes, createdAt, updatedAt, totalPaid, remaining, property_name, property_type FROM local_cheques ORDER BY dueDate ASC")
+        .map_err(|e| e.to_string())?;
+
+    let rows: Vec<serde_json::Value> = stmt
+        .query_map([], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, String>(0)?,
+                "companyId": row.get::<_, Option<String>>(1).unwrap_or_default(),
+                "propertyId": row.get::<_, Option<String>>(2).unwrap_or_default(),
+                "payeeName": row.get::<_, Option<String>>(3).unwrap_or_default(),
+                "payeeMobile": row.get::<_, Option<String>>(4).unwrap_or_default(),
+                "amount": row.get::<_, Option<f64>>(5).unwrap_or(0.0),
+                "dueDate": row.get::<_, Option<String>>(6).unwrap_or_default(),
+                "chequeNumber": row.get::<_, Option<String>>(7).unwrap_or_default(),
+                "bankName": row.get::<_, Option<String>>(8).unwrap_or_default(),
+                "status": row.get::<_, Option<String>>(9).unwrap_or_else(|| "pending".to_string()),
+                "paidDate": row.get::<_, Option<String>>(10).unwrap_or_default(),
+                "notes": row.get::<_, Option<String>>(11).unwrap_or_default(),
+                "createdAt": row.get::<_, Option<String>>(12).unwrap_or_default(),
+                "updatedAt": row.get::<_, Option<String>>(13).unwrap_or_default(),
+                "totalPaid": row.get::<_, Option<f64>>(14).unwrap_or(0.0),
+                "remaining": row.get::<_, Option<f64>>(15).unwrap_or(0.0),
+                "property": {
+                    "name": row.get::<_, Option<String>>(16).unwrap_or_default(),
+                    "type": row.get::<_, Option<String>>(17).unwrap_or_default(),
+                },
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let result = serde_json::json!({ "data": rows, "pagination": { "total": rows.len() } });
+    Ok(result.to_string())
+}
+
+/// Returns all local properties (from the SQLite mirror) as JSON.
+#[tauri::command]
+fn get_local_properties(state: tauri::State<DbState>) -> Result<String, String> {
+    let conn = state.0.lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT id, name, nameAr, nameBn, nameUr, type, totalUnits FROM local_properties ORDER BY name ASC")
+        .map_err(|e| e.to_string())?;
+
+    let rows: Vec<serde_json::Value> = stmt
+        .query_map([], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, String>(0)?,
+                "name": row.get::<_, Option<String>>(1).unwrap_or_default(),
+                "nameAr": row.get::<_, Option<String>>(2).unwrap_or_default(),
+                "nameBn": row.get::<_, Option<String>>(3).unwrap_or_default(),
+                "nameUr": row.get::<_, Option<String>>(4).unwrap_or_default(),
+                "type": row.get::<_, Option<String>>(5).unwrap_or_default(),
+                "totalUnits": row.get::<_, Option<i64>>(6).unwrap_or(0),
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let result = serde_json::json!({ "data": rows });
+    Ok(result.to_string())
+}
+
+/// Saves a cheque to local SQLite + adds it to the sync queue.
+/// Called by the frontend when creating/editing a cheque in desktop mode.
+#[tauri::command]
+fn save_local_cheque(
+    cheque_json: String,
+    action: String,
+    state: tauri::State<DbState>,
+) -> Result<String, String> {
+    let cheque: serde_json::Value = serde_json::from_str(&cheque_json).map_err(|e| e.to_string())?;
+    let cheque_id = cheque.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let conn = state.0.lock().unwrap();
+
+    // 1. Upsert into local_cheques
+    let amount = cheque.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let property_name = cheque
+        .get("property")
+        .and_then(|p| p.get("name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let property_type = cheque
+        .get("property")
+        .and_then(|p| p.get("type"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    conn.execute(
+        "INSERT OR REPLACE INTO local_cheques
+        (id, companyId, propertyId, payeeName, payeeMobile, amount, dueDate,
+         chequeNumber, bankName, status, paidDate, notes, createdAt, updatedAt,
+         totalPaid, remaining, property_name, property_type, last_synced)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 0, ?6, ?17, ?18, ?19)",
+        rusqlite::params![
+            &cheque_id,
+            cheque.get("companyId").and_then(|v| v.as_str()).unwrap_or(""),
+            cheque.get("propertyId").and_then(|v| v.as_str()).unwrap_or(""),
+            cheque.get("payeeName").and_then(|v| v.as_str()).unwrap_or(""),
+            cheque.get("payeeMobile").and_then(|v| v.as_str()).unwrap_or(""),
+            amount,
+            cheque.get("dueDate").and_then(|v| v.as_str()).unwrap_or(""),
+            cheque.get("chequeNumber").and_then(|v| v.as_str()).unwrap_or(""),
+            cheque.get("bankName").and_then(|v| v.as_str()).unwrap_or(""),
+            cheque.get("status").and_then(|v| v.as_str()).unwrap_or("pending"),
+            cheque.get("paidDate").and_then(|v| v.as_str()).unwrap_or(""),
+            cheque.get("notes").and_then(|v| v.as_str()).unwrap_or(""),
+            cheque.get("createdAt").and_then(|v| v.as_str()).unwrap_or(&now),
+            &now,
+            property_name,
+            property_type,
+            &now,
+        ],
+    ).map_err(|e| e.to_string())?;
+
+    // 2. Add to sync_queue
+    conn.execute(
+        "INSERT INTO sync_queue (table_name, record_id, action, payload) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params!["cheques", &cheque_id, &action, &cheque_json],
+    ).map_err(|e| e.to_string())?;
+
+    println!("[DESKTOP] Saved cheque {} locally + queued for sync (action: {})", cheque_id, action);
+    Ok(cheque_id)
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // DATABASE INITIALIZATION
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -549,6 +689,9 @@ fn main() {
             get_local_cheque_count,
             trigger_sync,
             set_company_id,
+            get_local_cheques,
+            get_local_properties,
+            save_local_cheque,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
