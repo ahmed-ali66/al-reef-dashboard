@@ -13,7 +13,7 @@
 use std::sync::Mutex;
 use tauri::Manager;
 use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 // ── State ──────────────────────────────────────────────────────────────
 struct DbState(Mutex<Connection>);
@@ -109,24 +109,24 @@ fn get_local_cheques(state: tauri::State<DbState>) -> Result<String, String> {
         .query_map([], |row| {
             Ok(serde_json::json!({
                 "id": row.get::<_, String>(0)?,
-                "companyId": row.get::<_, Option<String>>(1).unwrap_or_default(),
-                "propertyId": row.get::<_, Option<String>>(2).unwrap_or_default(),
-                "payeeName": row.get::<_, Option<String>>(3).unwrap_or_default(),
-                "payeeMobile": row.get::<_, Option<String>>(4).unwrap_or_default(),
-                "amount": row.get::<_, Option<f64>>(5).unwrap_or(0.0),
-                "dueDate": row.get::<_, Option<String>>(6).unwrap_or_default(),
-                "chequeNumber": row.get::<_, Option<String>>(7).unwrap_or_default(),
-                "bankName": row.get::<_, Option<String>>(8).unwrap_or_default(),
-                "status": row.get::<_, Option<String>>(9).unwrap_or_else(|| "pending".to_string()),
-                "paidDate": row.get::<_, Option<String>>(10).unwrap_or_default(),
-                "notes": row.get::<_, Option<String>>(11).unwrap_or_default(),
-                "createdAt": row.get::<_, Option<String>>(12).unwrap_or_default(),
-                "updatedAt": row.get::<_, Option<String>>(13).unwrap_or_default(),
-                "totalPaid": row.get::<_, Option<f64>>(14).unwrap_or(0.0),
-                "remaining": row.get::<_, Option<f64>>(15).unwrap_or(0.0),
+                "companyId": row.get::<_, String>(1).unwrap_or_default(),
+                "propertyId": row.get::<_, String>(2).unwrap_or_default(),
+                "payeeName": row.get::<_, String>(3).unwrap_or_default(),
+                "payeeMobile": row.get::<_, String>(4).unwrap_or_default(),
+                "amount": row.get::<_, f64>(5).unwrap_or(0.0),
+                "dueDate": row.get::<_, String>(6).unwrap_or_default(),
+                "chequeNumber": row.get::<_, String>(7).unwrap_or_default(),
+                "bankName": row.get::<_, String>(8).unwrap_or_default(),
+                "status": row.get::<_, String>(9).unwrap_or("pending".to_string()),
+                "paidDate": row.get::<_, String>(10).unwrap_or_default(),
+                "notes": row.get::<_, String>(11).unwrap_or_default(),
+                "createdAt": row.get::<_, String>(12).unwrap_or_default(),
+                "updatedAt": row.get::<_, String>(13).unwrap_or_default(),
+                "totalPaid": row.get::<_, f64>(14).unwrap_or(0.0),
+                "remaining": row.get::<_, f64>(15).unwrap_or(0.0),
                 "property": {
-                    "name": row.get::<_, Option<String>>(16).unwrap_or_default(),
-                    "type": row.get::<_, Option<String>>(17).unwrap_or_default(),
+                    "name": row.get::<_, String>(16).unwrap_or_default(),
+                    "type": row.get::<_, String>(17).unwrap_or_default(),
                 },
             }))
         })
@@ -150,12 +150,12 @@ fn get_local_properties(state: tauri::State<DbState>) -> Result<String, String> 
         .query_map([], |row| {
             Ok(serde_json::json!({
                 "id": row.get::<_, String>(0)?,
-                "name": row.get::<_, Option<String>>(1).unwrap_or_default(),
-                "nameAr": row.get::<_, Option<String>>(2).unwrap_or_default(),
-                "nameBn": row.get::<_, Option<String>>(3).unwrap_or_default(),
-                "nameUr": row.get::<_, Option<String>>(4).unwrap_or_default(),
-                "type": row.get::<_, Option<String>>(5).unwrap_or_default(),
-                "totalUnits": row.get::<_, Option<i64>>(6).unwrap_or(0),
+                "name": row.get::<_, String>(1).unwrap_or_default(),
+                "nameAr": row.get::<_, String>(2).unwrap_or_default(),
+                "nameBn": row.get::<_, String>(3).unwrap_or_default(),
+                "nameUr": row.get::<_, String>(4).unwrap_or_default(),
+                "type": row.get::<_, String>(5).unwrap_or_default(),
+                "totalUnits": row.get::<_, i64>(6).unwrap_or(0),
             }))
         })
         .map_err(|e| e.to_string())?
