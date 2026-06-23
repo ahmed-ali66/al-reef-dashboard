@@ -92,6 +92,7 @@ export default function Cheques() {
     setError(null)
     try {
       const params = new URLSearchParams()
+      params.set('limit', '1000')  // fetch all cheques — safeInt(null) returns 0 without this
       if (activeTab === 'paid') params.set('status', 'paid')
       if (propertyFilter !== 'all') params.set('propertyId', propertyFilter)
       if (searchQuery) params.set('search', searchQuery)
