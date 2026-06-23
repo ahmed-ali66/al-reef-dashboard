@@ -267,11 +267,17 @@ export default function Cheques() {
       if (form.status === 'paid' && form.paidDate) payload.paidDate = form.paidDate
 
       // Use desktop adapter — tries cloud first, falls back to local SQLite + sync queue
-      const { saveCheque: adapterSave } = await import('@/lib/desktop-adapter')
+      const { saveWithOfflineFallback } = await import('@/lib/desktop-adapter')
       if (editingId) {
         payload.id = editingId
       }
-      await adapterSave(payload, !!editingId)
+      await saveWithOfflineFallback(
+        '/api/cheques',
+        `/api/cheques/${editingId || ''}`,
+        'cheques',
+        payload,
+        !!editingId
+      )
 
       setDialogOpen(false)
       await fetchCheques()
