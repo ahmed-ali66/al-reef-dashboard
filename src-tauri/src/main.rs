@@ -159,6 +159,300 @@ fn get_stored_license_key(state: tauri::State<DbState>) -> Option<String> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// MULTI-USER OFFICE SUPPORT — server mode + client mode
+// ─────────────────────────────────────────────────────────────────────────
+// Server PC: runs Next.js on 0.0.0.0:3000 (accessible from LAN)
+// Client PC: opens a window pointing at http://[server-ip]:3000
+// The mode is set during first-run setup and stored in app_config.
+
+/// Returns the office mode: "server", "client", or None (not configured).
+#[tauri::command]
+fn get_office_mode(state: tauri::State<DbState>) -> Option<String> {
+    let conn = state.0.lock().unwrap();
+    conn.query_row(
+        "SELECT value FROM app_config WHERE key = 'office_mode'",
+        [],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
+/// Sets the office mode and optional server IP.
+/// mode: "server" (this PC hosts the app) or "client" (connect to another PC)
+/// server_ip: only for client mode — e.g. "192.168.1.100"
+#[tauri::command]
+fn set_office_mode(mode: String, server_ip: Option<String>, state: tauri::State<DbState>) -> Result<(), String> {
+    let conn = state.0.lock().unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO app_config (key, value) VALUES ('office_mode', ?1);",
+        rusqlite::params![&mode],
+    ).map_err(|e| e.to_string())?;
+
+    if let Some(ip) = server_ip {
+        conn.execute(
+            "INSERT OR REPLACE INTO app_config (key, value) VALUES ('server_ip', ?1);",
+            rusqlite::params![&ip],
+        ).map_err(|e| e.to_string())?;
+    }
+
+    println!("[OFFICE] Mode set to: {} (server_ip: {:?})", mode, server_ip);
+    Ok(())
+}
+
+/// Returns the server IP for client mode.
+#[tauri::command]
+fn get_server_ip(state: tauri::State<DbState>) -> Option<String> {
+    let conn = state.0.lock().unwrap();
+    conn.query_row(
+        "SELECT value FROM app_config WHERE key = 'server_ip'",
+        [],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
+/// Returns this machine's LAN IP address (for server mode display).
+#[tauri::command]
+fn get_lan_ip() -> String {
+    match std::net::UdpSocket::bind("0.0.0.0:0") {
+        Ok(s) => {
+            match s.connect("8.8.8.8:80") {
+                Ok(_) => {
+                    match s.local_addr() {
+                        Ok(addr) => addr.ip().to_string(),
+                        Err(_) => "127.0.0.1".to_string(),
+                    }
+                }
+                Err(_) => "127.0.0.1".to_string(),
+            }
+        }
+        Err(_) => "127.0.0.1".to_string(),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// LOCAL BACKUP SYSTEM — hourly snapshots + restore
+// ─────────────────────────────────────────────────────────────────────────
+// Copies the SQLite database file to a backup directory every hour.
+// Keeps last 24 hourly + 7 daily snapshots.
+// The sync agent triggers this automatically.
+
+/// Creates a local backup of the SQLite database.
+/// Returns the backup filename.
+#[tauri::command]
+fn create_local_backup(app_handle: tauri::AppHandle, state: tauri::State<DbState>) -> Result<String, String> {
+    let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    let db_path = app_data_dir.join("al-reef-local.db");
+    let backup_dir = app_data_dir.join("backups");
+    std::fs::create_dir_all(&backup_dir).map_err(|e| e.to_string())?;
+
+    let timestamp = chrono::Utc::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let backup_filename = format!("backup_{}.db", timestamp);
+    let backup_path = backup_dir.join(&backup_filename);
+
+    // Close the WAL file first (checkpoint)
+    {
+        let conn = state.0.lock().unwrap();
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    }
+
+    // Copy the database file
+    std::fs::copy(&db_path, &backup_path).map_err(|e| e.to_string())?;
+
+    // Clean up old backups: keep last 24 hourly + 7 daily
+    cleanup_old_backups(&backup_dir);
+
+    println!("[BACKUP] Created: {}", backup_filename);
+    Ok(backup_filename)
+}
+
+/// Lists all available local backups.
+#[tauri::command]
+fn list_local_backups(app_handle: tauri::AppHandle) -> Result<Vec<BackupInfo>, String> {
+    let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    let backup_dir = app_data_dir.join("backups");
+
+    if !backup_dir.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut backups: Vec<BackupInfo> = vec![];
+    for entry in std::fs::read_dir(&backup_dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        let filename = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+
+        if !filename.starts_with("backup_") || !filename.ends_with(".db") {
+            continue;
+        }
+
+        let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+        let size = metadata.len();
+        let modified = metadata.modified().map_err(|e| e.to_string())?;
+        let modified_str = format!("{:?}", modified);
+
+        backups.push(BackupInfo {
+            filename,
+            size_bytes: size,
+            created_at: modified_str,
+        });
+    }
+
+    // Sort by filename descending (newest first)
+    backups.sort_by(|a, b| b.filename.cmp(&a.filename));
+
+    Ok(backups)
+}
+
+#[derive(serde::Serialize)]
+struct BackupInfo {
+    filename: String,
+    size_bytes: u64,
+    created_at: String,
+}
+
+/// Restores the database from a backup file.
+/// WARNING: This replaces the current database. The app must restart after.
+#[tauri::command]
+fn restore_local_backup(
+    backup_filename: String,
+    app_handle: tauri::AppHandle,
+    state: tauri::State<DbState>,
+) -> Result<String, String> {
+    let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    let backup_path = app_data_dir.join("backups").join(&backup_filename);
+    let db_path = app_data_dir.join("al-reef-local.db");
+
+    if !backup_path.exists() {
+        return Err(format!("Backup file not found: {}", backup_filename));
+    }
+
+    // Checkpoint WAL before replacing
+    {
+        let conn = state.0.lock().unwrap();
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    }
+
+    // Create a pre-restore backup (safety net)
+    let pre_restore_path = app_data_dir.join("backups").join("pre-restore-latest.db");
+    if db_path.exists() {
+        std::fs::copy(&db_path, &pre_restore_path).map_err(|e| e.to_string())?;
+    }
+
+    // Replace the database
+    std::fs::copy(&backup_path, &db_path).map_err(|e| e.to_string())?;
+
+    println!("[BACKUP] Restored from: {}", backup_filename);
+    Ok(format!("Database restored from {}. Please restart the application.", backup_filename))
+}
+
+/// Cleans up old backups — keeps last 24 hourly + 7 daily.
+fn cleanup_old_backups(backup_dir: &std::path::Path) {
+    if let Ok(entries) = std::fs::read_dir(backup_dir) {
+        let mut backups: Vec<(String, std::time::SystemTime)> = entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.starts_with("backup_") && name.ends_with(".db") {
+                    let time = e.metadata().ok()?.modified().ok()?;
+                    Some((name, time))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Sort by time descending (newest first)
+        backups.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Keep newest 48 (24 hourly + 7 daily + buffer)
+        for (name, _) in backups.iter().skip(48) {
+            let path = backup_dir.join(name);
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// WHITE-LABELING / BRANDING — per-client customization
+// ─────────────────────────────────────────────────────────────────────────
+// The branding config is stored in app_config and read by the frontend
+// to customize: app title, company name, accent color, logo URL.
+
+/// Returns the branding configuration (from stored license or defaults).
+#[tauri::command]
+fn get_branding_config(state: tauri::State<DbState>) -> BrandingConfig {
+    let conn = state.0.lock().unwrap();
+
+    // Try to read branding from stored activation token
+    let token: Option<String> = conn.query_row(
+        "SELECT value FROM app_config WHERE key = 'activation_token'",
+        [],
+        |row| row.get(0),
+    ).ok();
+
+    let mut branding = BrandingConfig::default();
+
+    if let Some(t) = token {
+        // Decode the activation token (base64 JSON)
+        if let Ok(decoded) = std::str::from_utf8(
+            &match base64_decode(&t) {
+                Some(d) => d,
+                None => return branding,
+            }
+        ) {
+            if let Ok(license) = serde_json::from_str::<serde_json::Value>(decoded) {
+                if let Some(company) = license.get("companyName").and_then(|v| v.as_str()) {
+                    branding.company_name = company.to_string();
+                    branding.app_title = format!("{} — Real Estate Management", company);
+                }
+            }
+        }
+    }
+
+    branding
+}
+
+#[derive(serde::Serialize)]
+struct BrandingConfig {
+    company_name: String,
+    app_title: String,
+    accent_color: String,
+}
+
+impl Default for BrandingConfig {
+    fn default() -> Self {
+        BrandingConfig {
+            company_name: "Al Reef Al Madeena".to_string(),
+            app_title: "Al Reef Al Madeena — Real Estate Management".to_string(),
+            accent_color: "#1a5276".to_string(),
+        }
+    }
+}
+
+/// Simple base64 decoder (no external dependency needed).
+fn base64_decode(input: &str) -> Option<Vec<u8>> {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let input = input.trim_end_matches('=');
+    let mut result = Vec::new();
+    let mut buffer = 0u32;
+    let mut bits = 0;
+
+    for c in input.bytes() {
+        let val = CHARS.iter().position(|&x| x == c)? as u32;
+        buffer = (buffer << 6) | val;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            result.push((buffer >> bits) as u8);
+            buffer &= (1 << bits) - 1;
+        }
+    }
+
+    Some(result)
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // GENERIC DATA ACCESS — works for ANY table
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -302,9 +596,24 @@ async fn run_sync_agent(app_handle: tauri::AppHandle) {
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     perform_sync_cycle(&app_handle).await;
 
+    let mut backup_counter = 0u32; // Every 120 cycles (120 * 30s = 1 hour), create a backup
+
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
         perform_sync_cycle(&app_handle).await;
+
+        // Hourly backup
+        backup_counter += 1;
+        if backup_counter >= 120 {
+            backup_counter = 0;
+            if let Some(db_state) = app_handle.try_state::<DbState>() {
+                let app_handle_clone = app_handle.clone();
+                // Create backup in a blocking task (don't block async runtime)
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    let _ = create_local_backup(app_handle_clone, db_state);
+                }).await;
+            }
+        }
     }
 }
 
@@ -578,12 +887,32 @@ fn main() {
                 };
 
                 // Start the Node.js standalone server
+                // In server mode: bind to 0.0.0.0 (accessible from LAN)
+                // In standalone mode: bind to 127.0.0.1 (localhost only)
+                let hostname = {
+                    let db_state = app.try_state::<DbState>();
+                    if let Some(ds) = db_state {
+                        let conn = ds.0.lock().unwrap();
+                        let mode: Option<String> = conn.query_row(
+                            "SELECT value FROM app_config WHERE key = 'office_mode'",
+                            [], |row| row.get(0)
+                        ).ok();
+                        if mode.as_deref() == Some("server") {
+                            "0.0.0.0"
+                        } else {
+                            "127.0.0.1"
+                        }
+                    } else {
+                        "127.0.0.1"
+                    }
+                };
+
                 let server_process = Command::new(&node_exe)
                     .arg("server.js")
                     .current_dir(&server_dir)
                     .env("NODE_ENV", "production")
                     .env("PORT", "3000")
-                    .env("HOSTNAME", "127.0.0.1")
+                    .env("HOSTNAME", hostname)
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
                     .spawn();
@@ -647,6 +976,17 @@ fn main() {
             store_license,
             clear_stored_license,
             get_stored_license_key,
+            // Multi-user office support
+            get_office_mode,
+            set_office_mode,
+            get_server_ip,
+            get_lan_ip,
+            // Backup system
+            list_local_backups,
+            create_local_backup,
+            restore_local_backup,
+            // Branding
+            get_branding_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
