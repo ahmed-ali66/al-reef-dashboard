@@ -85,6 +85,12 @@ export default auth((req) => {
     return addSecurityHeaders(NextResponse.next())
   }
 
+  // Allow license routes (security is handled by the routes themselves —
+  // they use admin token / license key authentication)
+  if (pathname.startsWith('/api/license/')) {
+    return addSecurityHeaders(NextResponse.next())
+  }
+
   // Allow public assets
   if (
     pathname.startsWith('/_next') ||

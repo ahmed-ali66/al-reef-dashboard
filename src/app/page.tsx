@@ -26,6 +26,7 @@ import SystemManagement from '@/components/system-management'
 import SettingsPage from '@/components/settings-page'
 import AuditLogs from '@/components/audit-logs'
 import { Loader2 } from 'lucide-react'
+import LicenseGate from '@/components/license-gate'
 
 function AppContent() {
   const { data: session, status } = useSession()
@@ -199,7 +200,9 @@ function AccessDenied({ type = 'financial' }: { type?: 'financial' | 'admin' }) 
 export default function Home() {
   return (
     <SessionProvider refetchInterval={5 * 60} refetchOnWindowFocus={true}>
-      <AppContent />
+      <LicenseGate>
+        <AppContent />
+      </LicenseGate>
     </SessionProvider>
   )
 }

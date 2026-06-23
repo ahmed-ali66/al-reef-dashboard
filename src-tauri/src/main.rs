@@ -80,6 +80,82 @@ fn set_company_id(company_id: String, state: tauri::State<SyncState>) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// LICENSE SYSTEM — hardware fingerprinting + activation
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Returns the hardware fingerprint for this machine.
+/// Used by the license system to tie a license to one specific PC.
+#[tauri::command]
+fn get_hardware_fingerprint() -> String {
+    let uid = machine_uid::get().unwrap_or_else(|_| "unknown".to_string());
+    // Hash it with SHA-256 for a consistent, privacy-safe fingerprint
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(uid.as_bytes());
+    let result = hasher.finalize();
+    format!("{:x}", result)
+}
+
+/// Returns the machine name (hostname) for display purposes.
+#[tauri::command]
+fn get_machine_name() -> String {
+    hostname::get()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "Unknown".to_string())
+}
+
+/// Checks if a license is stored locally (already activated).
+/// Returns the activation token if present, or null if not activated.
+#[tauri::command]
+fn get_stored_license(state: tauri::State<DbState>) -> Option<String> {
+    let conn = state.0.lock().unwrap();
+    conn.query_row(
+        "SELECT value FROM app_config WHERE key = 'activation_token'",
+        [],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
+/// Stores the activation token locally (after successful activation).
+#[tauri::command]
+fn store_license(activation_token: String, license_key: String, state: tauri::State<DbState>) -> Result<(), String> {
+    let conn = state.0.lock().unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO app_config (key, value) VALUES ('activation_token', ?1);",
+        rusqlite::params![&activation_token],
+    ).map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT OR REPLACE INTO app_config (key, value) VALUES ('license_key', ?1);",
+        rusqlite::params![&license_key],
+    ).map_err(|e| e.to_string())?;
+    println!("[LICENSE] License stored locally: {}", license_key);
+    Ok(())
+}
+
+/// Clears the stored license (deactivation).
+#[tauri::command]
+fn clear_stored_license(state: tauri::State<DbState>) -> Result<(), String> {
+    let conn = state.0.lock().unwrap();
+    conn.execute("DELETE FROM app_config WHERE key IN ('activation_token', 'license_key');", [])
+        .map_err(|e| e.to_string())?;
+    println!("[LICENSE] License cleared");
+    Ok(())
+}
+
+/// Returns the stored license key (for display in the license dialog).
+#[tauri::command]
+fn get_stored_license_key(state: tauri::State<DbState>) -> Option<String> {
+    let conn = state.0.lock().unwrap();
+    conn.query_row(
+        "SELECT value FROM app_config WHERE key = 'license_key'",
+        [],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // GENERIC DATA ACCESS — works for ANY table
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -501,6 +577,13 @@ fn main() {
             set_company_id,
             get_local_data,
             save_local_data,
+            // License system
+            get_hardware_fingerprint,
+            get_machine_name,
+            get_stored_license,
+            store_license,
+            clear_stored_license,
+            get_stored_license_key,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
