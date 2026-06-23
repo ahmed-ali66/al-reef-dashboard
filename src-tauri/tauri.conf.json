@@ -47,6 +47,17 @@
         "installMode": "perMachine",
         "languages": ["English"]
       }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/ahmed-ali66/al-reef-dashboard/releases/latest/download/latest.json"
+      ],
+      "dialog": true,
+      "pubkey": ""
     }
   }
 }

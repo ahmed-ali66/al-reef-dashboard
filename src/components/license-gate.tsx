@@ -107,6 +107,25 @@ export default function LicenseGate({ children }: { children: React.ReactNode })
     return <>{children}</>
   }
 
+  // In desktop mode + licensed → check for updates on startup
+  if (state === 'activated' && isTauri) {
+    // Check for updates in the background (non-blocking)
+    import('@tauri-apps/plugin-updater').then(({ check }) => {
+      check().then((update) => {
+        if (update) {
+          console.log(`[UPDATER] Update available: ${update.version}`)
+          // Show a notification or dialog
+          if (confirm(`A new version (${update.version}) is available. Download and install now?`)) {
+            update.downloadAndInstall().then(() => {
+              alert('Update installed. The app will restart now.')
+              import('@tauri-apps/plugin-process').then(({ relaunch }) => relaunch())
+            }).catch((e) => console.error('[UPDATER] Update failed:', e))
+          }
+        }
+      }).catch((e) => console.log('[UPDATER] No updates or check failed:', e))
+    }).catch(() => {})
+  }
+
   // Checking license → loading
   if (state === 'checking') {
     return (

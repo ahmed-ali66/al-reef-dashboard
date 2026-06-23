@@ -553,6 +553,8 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // ── Start the Next.js server (production mode only) ────────
             // In dev mode, the Next.js dev server is already running (beforeDevCommand).
