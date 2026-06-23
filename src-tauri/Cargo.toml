@@ -1,0 +1,49 @@
+# ─────────────────────────────────────────────────────────────────────────
+# Tauri Desktop App — Rust Dependencies
+# ─────────────────────────────────────────────────────────────────────────
+# This file is like package.json, but for the Rust (Tauri) side of the app.
+# The Rust code wraps your Next.js app in a native desktop window and
+# provides commands that JavaScript can call (database, sync, license, etc.)
+
+[package]
+name = "al-reef-desktop"
+version = "0.1.0"
+description = "Al Reef Al Madeena — Desktop Edition"
+authors = ["Al Reef Al Madeena"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ── Phase 1: Local SQLite database ──────────────────────────────────────
+# rusqlite is the standard Rust SQLite library. We use it to store a local
+# copy of the data on the client's PC, so the app works offline.
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# ── Phase 1: HTTP client (for sync agent) ───────────────────────────────
+# reqwest is used by the sync agent to push/pull data from the Vercel cloud.
+reqwest = { version = "0.12", features = ["json"] }
+
+# ── Phase 1: Async runtime ──────────────────────────────────────────────
+# tokio is the async runtime that lets us do background sync without
+# freezing the UI.
+tokio = { version = "1", features = ["full"] }
+
+# ── Phase 3: License system (hardware fingerprinting) ───────────────────
+# We'll add machine-uid or similar in Phase 3 for hardware fingerprinting.
+# For now, just the foundation.
+
+# ── Phase 4: Auto-update ────────────────────────────────────────────────
+# tauri-plugin-updater = "2"  # Uncomment in Phase 4
+
+[features]
+# This feature is used for production builds.
+custom-protocol = ["tauri/custom-protocol"]

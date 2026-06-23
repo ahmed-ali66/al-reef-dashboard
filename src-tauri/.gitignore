@@ -1,0 +1,13 @@
+# Tauri build artifacts
+/target/
+
+# Tauri generated files
+/gen/schemas/
+
+# Don't commit the local database
+*.db
+*.db-shm
+*.db-wal
+
+# Cargo lock is OK to commit for binary projects (not libraries)
+# Cargo.lock
