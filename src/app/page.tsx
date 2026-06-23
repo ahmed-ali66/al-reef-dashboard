@@ -53,6 +53,19 @@ function AppContent() {
     }
   }, [status, session, login, logout])
 
+  // ── Desktop sync: tell the Tauri sync agent which company to sync ──
+  // This runs after login and passes the companyId to the Rust sync agent
+  // so it knows which company's data to pull/push.
+  useEffect(() => {
+    if (!isAuthenticated || !authUser?.companyId) return
+    // Check if running inside Tauri (desktop app)
+    if (typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) {
+      import('@tauri-apps/api/core')
+        .then(({ invoke }) => invoke('set_company_id', { companyId: authUser.companyId }))
+        .catch(() => { /* silent — not in desktop mode */ })
+    }
+  }, [isAuthenticated, authUser?.companyId])
+
   // Fetch data when authenticated
   useEffect(() => {
     if (isAuthenticated && !isInitialized) {

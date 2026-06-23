@@ -37,6 +37,10 @@ reqwest = { version = "0.12", features = ["json"] }
 # freezing the UI.
 tokio = { version = "1", features = ["full"] }
 
+# ── Phase 1 Step 2: Timestamps for sync ────────────────────────────────
+# chrono is used to format ISO 8601 timestamps for the sync protocol.
+chrono = { version = "0.4", features = ["serde"] }
+
 # ── Phase 3: License system (hardware fingerprinting) ───────────────────
 # We'll add machine-uid or similar in Phase 3 for hardware fingerprinting.
 # For now, just the foundation.

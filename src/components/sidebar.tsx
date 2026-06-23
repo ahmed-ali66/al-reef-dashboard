@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { getNameByLang } from '@/lib/i18n'
 import { useDataStore } from '@/lib/data-store'
 import { signOut } from 'next-auth/react'
+import SyncStatus from '@/components/sync-status'
 import {
   LayoutDashboard,
   Building2,
@@ -150,6 +151,12 @@ export default function Sidebar() {
 
         {/* Bottom section */}
         <div className="border-t border-white/10 p-3 space-y-2 shrink-0">
+          {/* Sync status (only shows in desktop app) */}
+          {sidebarOpen && (
+            <div className="flex justify-center">
+              <SyncStatus />
+            </div>
+          )}
           {/* Language selector */}
           <div className="relative">
             <button
