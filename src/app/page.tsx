@@ -25,6 +25,7 @@ import UserManagement from '@/components/user-management'
 import SystemManagement from '@/components/system-management'
 import SettingsPage from '@/components/settings-page'
 import AuditLogs from '@/components/audit-logs'
+import LicenseManagement from '@/components/license-management'
 import { Loader2 } from 'lucide-react'
 import LicenseGate from '@/components/license-gate'
 
@@ -148,6 +149,7 @@ function AppContent() {
       case 'settings': return isSystemAdmin ? <SettingsPage /> : <AccessDenied type="admin" />
       case 'system': return isSystemAdmin ? <SystemManagement /> : <AccessDenied type="admin" />
       case 'audit-logs': return isOwnerOrAdmin(authUser?.role || '') ? <AuditLogs /> : <AccessDenied type="admin" />
+      case 'license-management': return isSystemAdmin ? <LicenseManagement /> : <AccessDenied type="admin" />
       default: return <Dashboard />
     }
     })()
