@@ -929,17 +929,30 @@ fn main() {
                     }
                 }
 
-                // Wait for the server to be ready (up to 10 seconds)
+                // Wait for the server to be ready (up to 30 seconds)
                 println!("[DESKTOP] Waiting for server to be ready...");
                 let client = reqwest::blocking::Client::new();
-                for i in 1..=20 {
+                let mut server_ready = false;
+                for i in 1..=60 {
                     if let Ok(resp) = client.get("http://127.0.0.1:3000/api/health").timeout(Duration::from_secs(1)).send() {
                         if resp.status().is_success() {
                             println!("[DESKTOP] Server is ready! (attempt {})", i);
+                            server_ready = true;
                             break;
                         }
                     }
                     std::thread::sleep(Duration::from_millis(500));
+                }
+
+                // Navigate the window to localhost:3000 (the Next.js app)
+                if server_ready {
+                    if let Some(window) = app.get_webview_window("main") {
+                        println!("[DESKTOP] Navigating window to http://127.0.0.1:3000");
+                        let _ = window.eval("window.location.href = 'http://127.0.0.1:3000';");
+                    }
+                } else {
+                    println!("[DESKTOP] WARNING: Server did not become ready in 30 seconds");
+                    println!("[DESKTOP] The app will show a loading screen. Check if Node.js is installed.");
                 }
             }
 
