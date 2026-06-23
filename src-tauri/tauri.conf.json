@@ -19,8 +19,7 @@
         "minHeight": 700,
         "resizable": true,
         "fullscreen": false,
-        "center": true,
-        "icon": "icons/icon.png"
+        "center": true
       }
     ],
     "security": {
