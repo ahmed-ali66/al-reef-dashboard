@@ -79,6 +79,12 @@ export default auth((req) => {
     return addSecurityHeaders(NextResponse.next())
   }
 
+  // Allow desktop sync routes (security is handled by the routes themselves —
+  // they check for localhost requests only and require a companyId parameter)
+  if (pathname.startsWith('/api/desktop/')) {
+    return addSecurityHeaders(NextResponse.next())
+  }
+
   // Allow public assets
   if (
     pathname.startsWith('/_next') ||
