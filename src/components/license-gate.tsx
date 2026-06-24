@@ -78,8 +78,13 @@ export default function LicenseGate({ children }: { children: React.ReactNode })
         // Continue anyway — fingerprint is optional for activation
       }
 
-      // Call activation API
-      const response = await fetch('https://al-reef-al-junoobi.vercel.app/api/license/activate', {
+      // Call activation API — route through local server to avoid CORS issues
+      // The local Next.js server can make external requests without CORS restrictions
+      const activationUrl = isTauri
+        ? '/api/license/activate'  // Local server (desktop mode)
+        : 'https://al-reef-al-junoobi.vercel.app/api/license/activate'  // Direct (browser mode)
+
+      const response = await fetch(activationUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
