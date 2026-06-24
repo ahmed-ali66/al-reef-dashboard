@@ -895,9 +895,45 @@ fn main() {
 
                 // Spawn a background OS thread (not async) to start Node.js + wait
                 std::thread::spawn(move || {
+                    // In production, resources are in the app's resource directory.
+                    // The path varies between dev and installed app, so we try multiple locations.
                     let resource_path = app_handle_clone.path().resource_dir()
-                        .expect("Failed to get resource dir");
-                    let server_dir = resource_path.join("desktop-server");
+                        .unwrap_or_else(|_| {
+                            std::env::current_exe()
+                                .ok()
+                                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                        });
+
+                    // Try 'desktop-server' in resources, then parent dir, then next to exe
+                    let mut server_dir = resource_path.join("desktop-server");
+                    if !server_dir.exists() {
+                        if let Some(parent) = resource_path.parent() {
+                            let alt = parent.join("desktop-server");
+                            if alt.exists() { server_dir = alt; }
+                        }
+                    }
+                    if !server_dir.exists() {
+                        if let Ok(exe) = std::env::current_exe() {
+                            if let Some(exe_dir) = exe.parent() {
+                                let alt = exe_dir.join("desktop-server");
+                                if alt.exists() { server_dir = alt; }
+                            }
+                        }
+                    }
+
+                    println!("[DESKTOP] Server directory: {:?}", server_dir);
+                    println!("[DESKTOP] Server dir exists: {}", server_dir.exists());
+
+                    if !server_dir.exists() {
+                        println!("[DESKTOP] ERROR: desktop-server directory not found!");
+                        if let Some(window) = app_handle_clone.get_webview_window("main") {
+                            let _ = window.eval(
+                                "document.body.innerHTML = '<div style=\"font-family:sans-serif;text-align:center;padding:50px\"><h1 style=\"color:red\">Server files not found</h1><p>The application data directory could not be located. Please reinstall the application.</p></div>'"
+                            );
+                        }
+                        return;
+                    }
 
                     println!("[DESKTOP] Starting Next.js server from: {:?}", server_dir);
 
