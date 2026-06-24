@@ -36,7 +36,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["../desktop-server"],
+    "resources": {
+      "../desktop-server": "desktop-server/"
+    },
     "externalBin": [],
     "copyright": "© 2024 Al Reef Al Madeena Real Estate Management",
     "category": "Business",
