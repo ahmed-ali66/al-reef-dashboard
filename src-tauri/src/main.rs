@@ -1039,7 +1039,7 @@ fn main() {
                             println!("[DESKTOP] FAILED to start Node.js: {}", e);
                             println!("[DESKTOP] Node exe: {}", node_exe);
                             if let Some(window) = app_handle_clone.get_webview_window("main") {
-                                let err_msg = e.to_string().replace('\'", "\\'").replace('\\n', " ");
+                                let err_msg = e.to_string().replace("'", "").replace("\n", " ");
                                 let _ = window.eval(&format!(
                                     "document.body.innerHTML = '<div style=\"font-family:sans-serif;text-align:center;padding:50px\"><h1 style=\"color:red\">Failed to start server</h1><p>Error: {}</p><p>Node exe: {}</p></div>'",
                                     err_msg, node_exe
@@ -1087,7 +1087,7 @@ fn main() {
                             let log_path_str = log_path.to_string_lossy().replace('\\', "/");
                             let _ = window.eval(&format!(
                                 "document.body.innerHTML = '<div style=\"font-family:sans-serif;text-align:center;padding:50px\"><h1 style=\"color:red\">Server startup timeout</h1><p>The server took too long to start.</p><p>Log file: {}</p><p>Last error: {}</p></div>'",
-                                log_path_str, last_error.replace('\'", "\\'")
+                                log_path_str, last_error.replace("'", "").replace("\n", " ")
                             ));
                         }
                     }
