@@ -530,7 +530,34 @@ fn init_database(app: &tauri::App) -> Result<Connection, Box<dyn std::error::Err
     let db_path = app_data_dir.join("al-reef-local.db");
     println!("[DESKTOP] Database path: {:?}", db_path);
 
-    let conn = Connection::open(db_path)?;
+    // If the database file exists but is corrupted, delete it and start fresh
+    if db_path.exists() {
+        // Try opening — if it fails, delete and recreate
+        match Connection::open(&db_path) {
+            Ok(test_conn) => {
+                // Test if the database is readable
+                match test_conn.execute_batch("PRAGMA integrity_check;") {
+                    Ok(_) => {
+                        drop(test_conn);
+                    }
+                    Err(_) => {
+                        println!("[DESKTOP] Database corrupted — deleting and recreating");
+                        let _ = std::fs::remove_file(&db_path);
+                        let _ = std::fs::remove_file(format!("{}-wal", db_path.to_string_lossy()));
+                        let _ = std::fs::remove_file(format!("{}-shm", db_path.to_string_lossy()));
+                    }
+                }
+            }
+            Err(_) => {
+                println!("[DESKTOP] Database cannot be opened — deleting and recreating");
+                let _ = std::fs::remove_file(&db_path);
+                let _ = std::fs::remove_file(format!("{}-wal", db_path.to_string_lossy()));
+                let _ = std::fs::remove_file(format!("{}-shm", db_path.to_string_lossy()));
+            }
+        }
+    }
+
+    let conn = Connection::open(&db_path)?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
 
     // App config
@@ -884,9 +911,18 @@ fn main() {
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // ── Initialize database + state BEFORE anything else ────────
-            // This must happen before the background thread starts, so the thread
-            // can access DbState and SyncState via try_state().
-            let conn = init_database(app).expect("Failed to initialize database");
+            // NEVER panic — if anything fails, fall back gracefully
+            let conn = match init_database(app) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("[DESKTOP] Database init failed: {}. Using in-memory fallback.", e);
+                    // Fall back to in-memory database so the app doesn't crash
+                    Connection::open_in_memory().unwrap_or_else(|e2| {
+                        eprintln!("[DESKTOP] Even in-memory failed: {}", e2);
+                        panic!("Cannot create any database")
+                    })
+                }
+            };
             app.manage(DbState(Mutex::new(conn)));
             app.manage(SyncState {
                 last_sync: Mutex::new(None),
