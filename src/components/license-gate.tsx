@@ -67,50 +67,19 @@ export default function LicenseGate({ children }: { children: React.ReactNode })
     try {
       const { invoke } = await import('@tauri-apps/api/core')
 
-      // Get hardware fingerprint
-      let fingerprint = 'unknown'
-      let machineName = 'unknown'
-      try {
-        fingerprint = await invoke<string>('get_hardware_fingerprint')
-        machineName = await invoke<string>('get_machine_name')
-      } catch (e: any) {
-        console.log('[LICENSE] Fingerprint error:', e)
-        // Continue anyway — fingerprint is optional for activation
-      }
-
-      // Call activation API — route through local server to avoid CORS issues
-      // The local Next.js server can make external requests without CORS restrictions
-      const activationUrl = isTauri
-        ? '/api/license/activate'  // Local server (desktop mode)
-        : 'https://al-reef-al-junoobi.vercel.app/api/license/activate'  // Direct (browser mode)
-
-      const response = await fetch(activationUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          licenseKey: licenseKey.trim().toUpperCase(),
-          hardwareFingerprint: fingerprint,
-          machineName,
-        }),
-      })
-
-      const result = await response.json()
-
-      if (!response.ok) {
-        throw new Error(result.error || `Activation failed (HTTP ${response.status})`)
-      }
-
-      // Store the activation token locally
-      await invoke('store_license', {
-        activationToken: result.activationToken,
+      // Use Rust to do the entire activation — no JavaScript fetch, no CORS issues
+      // Rust calls the Vercel API directly using reqwest (no webview restrictions)
+      const resultJson = await invoke<string>('activate_license_rust', {
         licenseKey: licenseKey.trim().toUpperCase(),
       })
 
-      setLicenseInfo(result.license)
+      // Parse the license info returned from Rust
+      const licenseData = JSON.parse(resultJson)
+      setLicenseInfo(licenseData)
       setState('activated')
     } catch (e: any) {
       console.error('[LICENSE] Activation error:', e)
-      setError(e.message || 'Activation failed — check your internet connection and try again')
+      setError(e.message || e || 'Activation failed — check your internet connection and try again')
       setState('error')
     }
   }

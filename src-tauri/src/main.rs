@@ -174,6 +174,93 @@ fn get_stored_license_key(state: tauri::State<DbState>) -> Option<String> {
     .ok()
 }
 
+/// Activates a license key by calling the Vercel API directly from Rust.
+/// This avoids all CORS/webview issues — Rust can make HTTP requests freely.
+#[tauri::command]
+async fn activate_license_rust(
+    license_key: String,
+    state: tauri::State<DbState>,
+) -> Result<String, String> {
+    log_msg(&format!("[LICENSE] Activating key: {}", license_key));
+
+    // Get hardware fingerprint
+    let fingerprint = machine_uid::get()
+        .map(|uid| {
+            use sha2::{Sha256, Digest};
+            let mut hasher = Sha256::new();
+            hasher.update(uid.as_bytes());
+            format!("{:x}", hasher.finalize())
+        })
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    let machine_name = hostname::get()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "Unknown".to_string());
+
+    log_msg(&format!("[LICENSE] Fingerprint: {}", fingerprint));
+    log_msg(&format!("[LICENSE] Machine: {}", machine_name));
+
+    // Call the Vercel API directly from Rust (no CORS issues)
+    let client = reqwest::Client::new();
+    let body = serde_json::json!({
+        "licenseKey": license_key.to_uppercase(),
+        "hardwareFingerprint": fingerprint,
+        "machineName": machine_name,
+    });
+
+    log_msg("[LICENSE] Calling Vercel API...");
+
+    let response = client
+        .post("https://al-reef-al-junoobi.vercel.app/api/license/activate")
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| {
+            log_msg(&format!("[LICENSE] Network error: {}", e));
+            format!("Network error: {}. Check your internet connection.", e)
+        })?;
+
+    let status = response.status();
+    log_msg(&format!("[LICENSE] API response status: {}", status));
+
+    let result: serde_json::Value = response.json().await
+        .map_err(|e| {
+            log_msg(&format!("[LICENSE] JSON parse error: {}", e));
+            format!("Invalid response from server: {}", e)
+        })?;
+
+    if !status.is_success() {
+        let error = result.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+        log_msg(&format!("[LICENSE] Activation failed: {}", error));
+        return Err(error.to_string());
+    }
+
+    let activation_token = result.get("activationToken").and_then(|v| v.as_str()).unwrap_or("");
+    let license_info = result.get("license").cloned().unwrap_or(serde_json::json!({}));
+
+    log_msg(&format!("[LICENSE] Activation successful! Token length: {}", activation_token.len()));
+
+    // Store the activation token locally
+    let conn = state.0.lock().unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO app_config (key, value) VALUES ('activation_token', ?1);",
+        rusqlite::params![activation_token],
+    ).map_err(|e| format!("Failed to store token: {}", e))?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO app_config (key, value) VALUES ('license_key', ?1);",
+        rusqlite::params![license_key.to_uppercase()],
+    ).map_err(|e| format!("Failed to store key: {}", e))?;
+
+    drop(conn);
+
+    log_msg("[LICENSE] License stored locally");
+
+    // Return the license info as JSON for the frontend
+    Ok(license_info.to_string())
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // MULTI-USER OFFICE SUPPORT — server mode + client mode
 // ─────────────────────────────────────────────────────────────────────────
@@ -1184,6 +1271,7 @@ fn main() {
             store_license,
             clear_stored_license,
             get_stored_license_key,
+            activate_license_rust,
             // Multi-user office support
             get_office_mode,
             set_office_mode,
