@@ -57,6 +57,24 @@ if (existsSync(publicDir)) {
   cpSync(publicDir, join(serverOutDir, 'public'), { recursive: true })
 }
 
+// 4b. Copy .env file → desktop-server/.env (the server needs DATABASE_URL + NEXTAUTH_SECRET)
+const envFile = join(root, '.env')
+if (existsSync(envFile)) {
+  console.log('[prepare-desktop] Copying .env file...')
+  cpSync(envFile, join(serverOutDir, '.env'))
+} else {
+  console.warn('[prepare-desktop] WARNING: .env file not found! Server will not have DATABASE_URL.')
+}
+
+// 4c. Verify server.js exists in the standalone build
+const serverJs = join(serverOutDir, 'server.js')
+if (!existsSync(serverJs)) {
+  console.error('[prepare-desktop] ERROR: server.js not found in standalone build!')
+  console.error('[prepare-desktop] The build will fail. Check that next build completed successfully.')
+} else {
+  console.log('[prepare-desktop] ✓ server.js found')
+}
+
 // 5. Download portable Node.js (Windows x64)
 // Skip if already downloaded (cache the zip)
 if (!existsSync(join(NODE_DIR, 'node.exe'))) {

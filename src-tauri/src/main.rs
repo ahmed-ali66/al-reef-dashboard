@@ -895,8 +895,7 @@ fn main() {
 
                 // Spawn a background OS thread (not async) to start Node.js + wait
                 std::thread::spawn(move || {
-                    // In production, resources are in the app's resource directory.
-                    // The path varies between dev and installed app, so we try multiple locations.
+                    // Get the resource directory — this is where Tauri bundles the desktop-server folder
                     let resource_path = app_handle_clone.path().resource_dir()
                         .unwrap_or_else(|_| {
                             std::env::current_exe()
@@ -905,31 +904,83 @@ fn main() {
                                 .unwrap_or_else(|| std::path::PathBuf::from("."))
                         });
 
-                    // Try 'desktop-server' in resources, then parent dir, then next to exe
-                    let mut server_dir = resource_path.join("desktop-server");
-                    if !server_dir.exists() {
-                        if let Some(parent) = resource_path.parent() {
-                            let alt = parent.join("desktop-server");
-                            if alt.exists() { server_dir = alt; }
+                    println!("[DESKTOP] Resource dir: {:?}", resource_path);
+
+                    // List contents of resource dir for debugging
+                    if let Ok(entries) = std::fs::read_dir(&resource_path) {
+                        println!("[DESKTOP] Resource dir contents:");
+                        for entry in entries.flatten() {
+                            println!("[DESKTOP]   - {}", entry.file_name().to_string_lossy());
                         }
                     }
+
+                    // The desktop-server folder is bundled as a resource
+                    let server_dir = resource_path.join("desktop-server");
+                    println!("[DESKTOP] Server dir: {:?}", server_dir);
+                    println!("[DESKTOP] Server dir exists: {}", server_dir.exists());
+
+                    // If not found, try listing parent directories
                     if !server_dir.exists() {
-                        if let Ok(exe) = std::env::current_exe() {
-                            if let Some(exe_dir) = exe.parent() {
-                                let alt = exe_dir.join("desktop-server");
-                                if alt.exists() { server_dir = alt; }
+                        // Try parent of resource dir
+                        if let Some(parent) = resource_path.parent() {
+                            println!("[DESKTOP] Trying parent: {:?}", parent);
+                            if let Ok(entries) = std::fs::read_dir(parent) {
+                                println!("[DESKTOP] Parent dir contents:");
+                                for entry in entries.flatten() {
+                                    println!("[DESKTOP]   - {}", entry.file_name().to_string_lossy());
+                                }
+                            }
+                            let alt = parent.join("desktop-server");
+                            if alt.exists() {
+                                println!("[DESKTOP] Found desktop-server in parent!");
+                                // Use alt path — but we can't reassign server_dir since it's used later
+                                // Instead, fall through to the error below with debug info
                             }
                         }
                     }
 
-                    println!("[DESKTOP] Server directory: {:?}", server_dir);
-                    println!("[DESKTOP] Server dir exists: {}", server_dir.exists());
-
                     if !server_dir.exists() {
-                        println!("[DESKTOP] ERROR: desktop-server directory not found!");
+                        // Also try next to the exe
+                        if let Ok(exe) = std::env::current_exe() {
+                            println!("[DESKTOP] Exe path: {:?}", exe);
+                            if let Some(exe_dir) = exe.parent() {
+                                println!("[DESKTOP] Exe dir: {:?}", exe_dir);
+                                if let Ok(entries) = std::fs::read_dir(exe_dir) {
+                                    println!("[DESKTOP] Exe dir contents:");
+                                    for entry in entries.flatten() {
+                                        println!("[DESKTOP]   - {}", entry.file_name().to_string_lossy());
+                                    }
+                                }
+                            }
+                        }
+
+                        println!("[DESKTOP] ERROR: desktop-server directory not found in any location!");
+                        if let Some(window) = app_handle_clone.get_webview_window("main") {
+                            let resource_str = resource_path.to_string_lossy().replace('\\', "/");
+                            let _ = window.eval(&format!(
+                                "document.body.innerHTML = '<div style=\"font-family:sans-serif;text-align:center;padding:50px\"><h1 style=\"color:red\">Server files not found</h1><p>Resource dir: {}</p><p>Please contact support.</p></div>'",
+                                resource_str
+                            ));
+                        }
+                        return;
+                    }
+
+                    // Check if server.js exists
+                    let server_js = server_dir.join("server.js");
+                    println!("[DESKTOP] server.js exists: {}", server_js.exists());
+
+                    if !server_js.exists() {
+                        println!("[DESKTOP] ERROR: server.js not found in server dir!");
+                        // List what IS in the server dir
+                        if let Ok(entries) = std::fs::read_dir(&server_dir) {
+                            println!("[DESKTOP] Server dir contents:");
+                            for entry in entries.flatten() {
+                                println!("[DESKTOP]   - {}", entry.file_name().to_string_lossy());
+                            }
+                        }
                         if let Some(window) = app_handle_clone.get_webview_window("main") {
                             let _ = window.eval(
-                                "document.body.innerHTML = '<div style=\"font-family:sans-serif;text-align:center;padding:50px\"><h1 style=\"color:red\">Server files not found</h1><p>The application data directory could not be located. Please reinstall the application.</p></div>'"
+                                "document.body.innerHTML = '<div style=\"font-family:sans-serif;text-align:center;padding:50px\"><h1 style=\"color:red\">server.js not found</h1><p>The server file is missing. Please reinstall.</p></div>'"
                             );
                         }
                         return;
@@ -943,26 +994,27 @@ fn main() {
                         println!("[DESKTOP] Using bundled Node.js: {:?}", node_portable);
                         node_portable.to_string_lossy().to_string()
                     } else {
-                        println!("[DESKTOP] Using system Node.js (node-portable not found)");
+                        println!("[DESKTOP] Bundled Node.js not found, trying system Node.js");
+                        // Also check if node-portable dir exists but node.exe is missing
+                        let np_dir = server_dir.join("node-portable");
+                        if np_dir.exists() {
+                            println!("[DESKTOP] node-portable dir exists but node.exe missing!");
+                            if let Ok(entries) = std::fs::read_dir(&np_dir) {
+                                for entry in entries.flatten() {
+                                    println!("[DESKTOP]   node-portable/: {}", entry.file_name().to_string_lossy());
+                                }
+                            }
+                        }
                         "node".to_string()
                     };
 
-                    // Determine hostname (server mode = 0.0.0.0, standalone = 127.0.0.1)
-                    let hostname = {
-                        if let Some(ds) = app_handle_clone.try_state::<DbState>() {
-                            let conn = ds.0.lock().unwrap();
-                            let mode: Option<String> = conn.query_row(
-                                "SELECT value FROM app_config WHERE key = 'office_mode'",
-                                [], |row| row.get(0)
-                            ).ok();
-                            if mode.as_deref() == Some("server") {
-                                "0.0.0.0"
-                            } else {
-                                "127.0.0.1"
-                            }
-                        } else {
-                            "127.0.0.1"
-                        }
+                    // Create a log file for the server output (for debugging)
+                    let log_path = resource_path.join("server-output.log");
+                    let log_file = std::fs::File::create(&log_path).ok();
+                    let stderr_target = if log_file.is_some() {
+                        Stdio::from(log_file.unwrap())
+                    } else {
+                        Stdio::null()
                     };
 
                     // Start the Node.js standalone server
@@ -971,26 +1023,26 @@ fn main() {
                         .current_dir(&server_dir)
                         .env("NODE_ENV", "production")
                         .env("PORT", "3000")
-                        .env("HOSTNAME", hostname)
+                        .env("HOSTNAME", "127.0.0.1")
                         .stdout(Stdio::null())
-                        .stderr(Stdio::null())
+                        .stderr(stderr_target)
                         .spawn();
 
                     match server_process {
                         Ok(child) => {
                             println!("[DESKTOP] Next.js server started (PID: {})", child.id());
-                            // Store the child process so we can kill it on exit
                             if let Some(sp) = app_handle_clone.try_state::<ServerProcess>() {
                                 *sp.0.lock().unwrap() = Some(child);
                             }
                         }
                         Err(e) => {
-                            println!("[DESKTOP] WARNING: Could not start Node.js server: {}", e);
-                            // Show error in the window
+                            println!("[DESKTOP] FAILED to start Node.js: {}", e);
+                            println!("[DESKTOP] Node exe: {}", node_exe);
                             if let Some(window) = app_handle_clone.get_webview_window("main") {
+                                let err_msg = e.to_string().replace('\'", "\\'").replace('\\n', " ");
                                 let _ = window.eval(&format!(
-                                    "document.body.innerHTML = '<div style=\"font-family:sans-serif;text-align:center;padding:50px\"><h1 style=\"color:red\">Failed to start server</h1><p>{}</p><p>Make sure Node.js is installed on this machine.</p></div>'",
-                                    e.to_string().replace('\'', "\\'")
+                                    "document.body.innerHTML = '<div style=\"font-family:sans-serif;text-align:center;padding:50px\"><h1 style=\"color:red\">Failed to start server</h1><p>Error: {}</p><p>Node exe: {}</p></div>'",
+                                    err_msg, node_exe
                                 ));
                             }
                             return;
@@ -1001,12 +1053,18 @@ fn main() {
                     println!("[DESKTOP] Waiting for server to be ready...");
                     let client = reqwest::blocking::Client::new();
                     let mut server_ready = false;
+                    let mut last_error = String::new();
                     for i in 1..=120 {
-                        if let Ok(resp) = client.get("http://127.0.0.1:3000/api/health").timeout(Duration::from_secs(1)).send() {
-                            if resp.status().is_success() {
-                                println!("[DESKTOP] Server is ready! (attempt {})", i);
-                                server_ready = true;
-                                break;
+                        match client.get("http://127.0.0.1:3000/api/health").timeout(Duration::from_secs(1)).send() {
+                            Ok(resp) => {
+                                if resp.status().is_success() {
+                                    println!("[DESKTOP] Server is ready! (attempt {})", i);
+                                    server_ready = true;
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                last_error = e.to_string();
                             }
                         }
                         std::thread::sleep(Duration::from_millis(500));
@@ -1019,11 +1077,18 @@ fn main() {
                             let _ = window.eval("window.location.href = 'http://127.0.0.1:3000';");
                         }
                     } else {
-                        println!("[DESKTOP] WARNING: Server did not become ready in 60 seconds");
+                        println!("[DESKTOP] Server did not become ready in 60 seconds");
+                        println!("[DESKTOP] Last health check error: {}", last_error);
+                        // Read the log file for debugging
+                        if let Ok(log_contents) = std::fs::read_to_string(&log_path) {
+                            println!("[DESKTOP] Server log:\n{}", log_contents);
+                        }
                         if let Some(window) = app_handle_clone.get_webview_window("main") {
-                            let _ = window.eval(
-                                "document.body.innerHTML = '<div style=\"font-family:sans-serif;text-align:center;padding:50px\"><h1 style=\"color:red\">Server startup timeout</h1><p>The application server took too long to start. Please restart the app.</p></div>'"
-                            );
+                            let log_path_str = log_path.to_string_lossy().replace('\\', "/");
+                            let _ = window.eval(&format!(
+                                "document.body.innerHTML = '<div style=\"font-family:sans-serif;text-align:center;padding:50px\"><h1 style=\"color:red\">Server startup timeout</h1><p>The server took too long to start.</p><p>Log file: {}</p><p>Last error: {}</p></div>'",
+                                log_path_str, last_error.replace('\'", "\\'")
+                            ));
                         }
                     }
                 });
