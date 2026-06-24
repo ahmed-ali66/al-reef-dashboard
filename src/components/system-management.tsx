@@ -546,7 +546,7 @@ export default function SystemManagement() {
                 <p className="text-lg font-medium">{t('noBackups', language)}</p>
               </div>
             ) : (
-              <ScrollArea className="max-h-96">
+              <ScrollArea className="h-[400px] overflow-hidden">
                 <div className="divide-y">
                   {backupRecords.map((record) => (
                     <div
