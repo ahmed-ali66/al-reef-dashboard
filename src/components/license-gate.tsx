@@ -68,8 +68,15 @@ export default function LicenseGate({ children }: { children: React.ReactNode })
       const { invoke } = await import('@tauri-apps/api/core')
 
       // Get hardware fingerprint
-      const fingerprint = await invoke<string>('get_hardware_fingerprint')
-      const machineName = await invoke<string>('get_machine_name')
+      let fingerprint = 'unknown'
+      let machineName = 'unknown'
+      try {
+        fingerprint = await invoke<string>('get_hardware_fingerprint')
+        machineName = await invoke<string>('get_machine_name')
+      } catch (e: any) {
+        console.log('[LICENSE] Fingerprint error:', e)
+        // Continue anyway — fingerprint is optional for activation
+      }
 
       // Call activation API
       const response = await fetch('https://al-reef-al-junoobi.vercel.app/api/license/activate', {
@@ -85,7 +92,7 @@ export default function LicenseGate({ children }: { children: React.ReactNode })
       const result = await response.json()
 
       if (!response.ok) {
-        throw new Error(result.error || 'Activation failed')
+        throw new Error(result.error || `Activation failed (HTTP ${response.status})`)
       }
 
       // Store the activation token locally
@@ -97,7 +104,8 @@ export default function LicenseGate({ children }: { children: React.ReactNode })
       setLicenseInfo(result.license)
       setState('activated')
     } catch (e: any) {
-      setError(e.message || 'Activation failed')
+      console.error('[LICENSE] Activation error:', e)
+      setError(e.message || 'Activation failed — check your internet connection and try again')
       setState('error')
     }
   }
