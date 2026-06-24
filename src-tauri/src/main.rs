@@ -179,7 +179,7 @@ fn get_stored_license_key(state: tauri::State<DbState>) -> Option<String> {
 #[tauri::command]
 async fn activate_license_rust(
     license_key: String,
-    state: tauri::State<DbState>,
+    state: tauri::State<'_, DbState>,
 ) -> Result<String, String> {
     log_msg(&format!("[LICENSE] Activating key: {}", license_key));
 
