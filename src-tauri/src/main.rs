@@ -1,13 +1,29 @@
 // ─────────────────────────────────────────────────────────────────────────
 // Tauri Desktop App — Generic Sync Engine (Phase 1 Step 4)
 // ─────────────────────────────────────────────────────────────────────────
-// This version uses a GENERIC sync approach:
-//   - One local_data table stores ALL records as JSON (keyed by table + id)
-//   - One sync-pull-all endpoint pulls every table in one request
-//   - Generic Tauri commands: get_local_data(tableName), save_local_data(...)
-//   - Works for ANY table — no per-table code needed
-
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+// ── CRASH LOG — write to a file from the very first line, before ANYTHING else ──
+use std::fs::OpenOptions;
+use std::io::Write;
+
+fn log_msg(msg: &str) {
+    // Try to write to APPDATA
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        let dir = std::path::PathBuf::from(&appdata).join("com.alreef.desktop");
+        let _ = std::fs::create_dir_all(&dir);
+        let log_path = dir.join("crash.log");
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+            let _ = writeln!(file, "{}", msg);
+        }
+    }
+    // Also try current directory
+    let log_path2 = std::path::PathBuf::from("crash.log");
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path2) {
+        let _ = writeln!(file, "{}", msg);
+    }
+    println!("{}", msg);
+}
 
 use std::sync::Mutex;
 use tauri::Manager;
@@ -71,14 +87,14 @@ fn get_local_cheque_count(state: tauri::State<DbState>) -> i64 {
 
 #[tauri::command]
 async fn trigger_sync(app_handle: tauri::AppHandle) -> Result<String, String> {
-    println!("[SYNC] Manual sync triggered");
+    log_msg("[SYNC] Manual sync triggered");
     perform_sync_cycle(&app_handle).await;
     Ok("Sync completed".to_string())
 }
 
 #[tauri::command]
 fn set_company_id(company_id: String, state: tauri::State<SyncState>) {
-    println!("[SYNC] Company ID set: {}", company_id);
+    log_msg(&format!("[SYNC] Company ID set: {}", company_id));
     *state.company_id.lock().unwrap() = Some(company_id);
 }
 
@@ -132,7 +148,7 @@ fn store_license(activation_token: String, license_key: String, state: tauri::St
         "INSERT OR REPLACE INTO app_config (key, value) VALUES ('license_key', ?1);",
         rusqlite::params![&license_key],
     ).map_err(|e| e.to_string())?;
-    println!("[LICENSE] License stored locally: {}", license_key);
+    log_msg(&format!("[LICENSE] License stored locally: {}", license_key));
     Ok(())
 }
 
@@ -142,7 +158,7 @@ fn clear_stored_license(state: tauri::State<DbState>) -> Result<(), String> {
     let conn = state.0.lock().unwrap();
     conn.execute("DELETE FROM app_config WHERE key IN ('activation_token', 'license_key');", [])
         .map_err(|e| e.to_string())?;
-    println!("[LICENSE] License cleared");
+    log_msg("[LICENSE] License cleared");
     Ok(())
 }
 
@@ -195,7 +211,7 @@ fn set_office_mode(mode: String, server_ip: Option<String>, state: tauri::State<
         ).map_err(|e| e.to_string())?;
     }
 
-    println!("[OFFICE] Mode set to: {} (server_ip: {:?})", mode, server_ip);
+    log_msg(&format!("[OFFICE] Mode set to: {} (server_ip: {:?})", mode, server_ip));
     Ok(())
 }
 
@@ -262,7 +278,7 @@ fn create_local_backup(app_handle: tauri::AppHandle, state: tauri::State<DbState
     // Clean up old backups: keep last 24 hourly + 7 daily
     cleanup_old_backups(&backup_dir);
 
-    println!("[BACKUP] Created: {}", backup_filename);
+    log_msg(&format!("[BACKUP] Created: {}", backup_filename));
     Ok(backup_filename)
 }
 
@@ -342,7 +358,7 @@ fn restore_local_backup(
     // Replace the database
     std::fs::copy(&backup_path, &db_path).map_err(|e| e.to_string())?;
 
-    println!("[BACKUP] Restored from: {}", backup_filename);
+    log_msg(&format!("[BACKUP] Restored from: {}", backup_filename));
     Ok(format!("Database restored from {}. Please restart the application.", backup_filename))
 }
 
@@ -515,7 +531,7 @@ fn save_local_data(
         rusqlite::params![&table_name, &record_id, &action, &record_json],
     ).map_err(|e| e.to_string())?;
 
-    println!("[DESKTOP] Saved {} {} locally + queued for sync (action: {})", table_name, record_id, action);
+    log_msg(&format!("[DESKTOP] Saved {} {} locally + queued for sync (action: {})", table_name, record_id, action));
     Ok(record_id)
 }
 
@@ -528,7 +544,7 @@ fn init_database(app: &tauri::App) -> Result<Connection, Box<dyn std::error::Err
     std::fs::create_dir_all(&app_data_dir)?;
 
     let db_path = app_data_dir.join("al-reef-local.db");
-    println!("[DESKTOP] Database path: {:?}", db_path);
+    log_msg(&format!("[DESKTOP] Database path: {:?}", db_path));
 
     // If the database file exists but is corrupted, delete it and start fresh
     if db_path.exists() {
@@ -541,7 +557,7 @@ fn init_database(app: &tauri::App) -> Result<Connection, Box<dyn std::error::Err
                         drop(test_conn);
                     }
                     Err(_) => {
-                        println!("[DESKTOP] Database corrupted — deleting and recreating");
+                        log_msg("[DESKTOP] Database corrupted — deleting and recreating");
                         let _ = std::fs::remove_file(&db_path);
                         let _ = std::fs::remove_file(format!("{}-wal", db_path.to_string_lossy()));
                         let _ = std::fs::remove_file(format!("{}-shm", db_path.to_string_lossy()));
@@ -549,7 +565,7 @@ fn init_database(app: &tauri::App) -> Result<Connection, Box<dyn std::error::Err
                 }
             }
             Err(_) => {
-                println!("[DESKTOP] Database cannot be opened — deleting and recreating");
+                log_msg("[DESKTOP] Database cannot be opened — deleting and recreating");
                 let _ = std::fs::remove_file(&db_path);
                 let _ = std::fs::remove_file(format!("{}-wal", db_path.to_string_lossy()));
                 let _ = std::fs::remove_file(format!("{}-shm", db_path.to_string_lossy()));
@@ -610,7 +626,7 @@ fn init_database(app: &tauri::App) -> Result<Connection, Box<dyn std::error::Err
         [],
     )?;
 
-    println!("[DESKTOP] Database initialized (schema v2.0.0 — generic sync)");
+    log_msg("[DESKTOP] Database initialized (schema v2.0.0 — generic sync)");
     Ok(conn)
 }
 
@@ -619,7 +635,7 @@ fn init_database(app: &tauri::App) -> Result<Connection, Box<dyn std::error::Err
 // ─────────────────────────────────────────────────────────────────────────
 
 async fn run_sync_agent(app_handle: tauri::AppHandle) {
-    println!("[SYNC] Background sync agent started");
+    log_msg("[SYNC] Background sync agent started");
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     perform_sync_cycle(&app_handle).await;
 
@@ -655,7 +671,7 @@ async fn run_sync_agent(app_handle: tauri::AppHandle) {
 
                     let _ = std::fs::copy(&db_path, &backup_path);
                     cleanup_old_backups(&backup_dir);
-                    println!("[BACKUP] Created: {}", backup_filename);
+                    log_msg(&format!("[BACKUP] Created: {}", backup_filename));
                 }
             }).await;
         }
@@ -684,12 +700,12 @@ async fn perform_sync_cycle(app_handle: &tauri::AppHandle) {
     match &push_result {
         Ok(count) => {
             if *count > 0 {
-                println!("[SYNC] Pushed {} changes to cloud", count);
+                log_msg(&format!("[SYNC] Pushed {} changes to cloud", count));
             }
             *sync_state.last_error.lock().unwrap() = None;
         }
         Err(e) => {
-            println!("[SYNC] Push error: {}", e);
+            log_msg(&format!("[SYNC] Push error: {}", e));
             *sync_state.last_error.lock().unwrap() = Some(e.clone());
         }
     }
@@ -699,7 +715,7 @@ async fn perform_sync_cycle(app_handle: &tauri::AppHandle) {
     match &pull_result {
         Ok(count) => {
             if *count > 0 {
-                println!("[SYNC] Pulled {} changes from cloud", count);
+                log_msg(&format!("[SYNC] Pulled {} changes from cloud", count));
             }
             let now = chrono::Utc::now().to_rfc3339();
             *sync_state.last_sync.lock().unwrap() = Some(now.clone());
@@ -712,7 +728,7 @@ async fn perform_sync_cycle(app_handle: &tauri::AppHandle) {
             }
         }
         Err(e) => {
-            println!("[SYNC] Pull error: {}", e);
+            log_msg(&format!("[SYNC] Pull error: {}", e));
             *sync_state.last_error.lock().unwrap() = Some(e.clone());
         }
     }
@@ -903,27 +919,27 @@ async fn pull_cloud_changes(app_handle: &tauri::AppHandle, company_id: &str) -> 
 // ─────────────────────────────────────────────────────────────────────────
 
 fn main() {
-    println!("[DESKTOP] Al Reef Al Madeena Desktop App starting...");
+    log_msg("[DESKTOP] Al Reef Al Madeena Desktop App starting...");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            log_msg("[DESKTOP] Setup function started");
             // ── Initialize database + state BEFORE anything else ────────
             // NEVER panic — if anything fails, fall back gracefully
             let conn = match init_database(app) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("[DESKTOP] Database init failed: {}. Using in-memory fallback.", e);
+                    log_msg(&format!("[DESKTOP] Database init failed: {}. Using in-memory fallback.", e));
                     // Fall back to in-memory database so the app doesn't crash
                     Connection::open_in_memory().unwrap_or_else(|e2| {
-                        eprintln!("[DESKTOP] Even in-memory failed: {}", e2);
+                        log_msg(&format!("[DESKTOP] Even in-memory failed: {}", e2));
                         panic!("Cannot create any database")
                     })
                 }
             };
             app.manage(DbState(Mutex::new(conn)));
+            log_msg("[DESKTOP] DbState managed");
             app.manage(SyncState {
                 last_sync: Mutex::new(None),
                 pending_count: Mutex::new(0),
@@ -932,6 +948,7 @@ fn main() {
                 company_id: Mutex::new(None),
             });
             app.manage(ServerProcess(Mutex::new(None)));
+            log_msg("[DESKTOP] ServerProcess managed");
 
             // ── Start the Next.js server (production mode only) ────────
             // In dev mode, the Next.js dev server is already running (beforeDevCommand).
@@ -954,35 +971,35 @@ fn main() {
                                 .unwrap_or_else(|| std::path::PathBuf::from("."))
                         });
 
-                    println!("[DESKTOP] Resource dir: {:?}", resource_path);
+                    log_msg(&format!("[DESKTOP] Resource dir: {:?}", resource_path));
 
                     // List contents of resource dir for debugging
                     if let Ok(entries) = std::fs::read_dir(&resource_path) {
-                        println!("[DESKTOP] Resource dir contents:");
+                        log_msg("[DESKTOP] Resource dir contents:");
                         for entry in entries.flatten() {
-                            println!("[DESKTOP]   - {}", entry.file_name().to_string_lossy());
+                            log_msg(&format!("[DESKTOP]   - {}", entry.file_name().to_string_lossy()));
                         }
                     }
 
                     // The desktop-server folder is bundled as a resource
                     let server_dir = resource_path.join("desktop-server");
-                    println!("[DESKTOP] Server dir: {:?}", server_dir);
-                    println!("[DESKTOP] Server dir exists: {}", server_dir.exists());
+                    log_msg(&format!("[DESKTOP] Server dir: {:?}", server_dir));
+                    log_msg(&format!("[DESKTOP] Server dir exists: {}", server_dir.exists()));
 
                     // If not found, try listing parent directories
                     if !server_dir.exists() {
                         // Try parent of resource dir
                         if let Some(parent) = resource_path.parent() {
-                            println!("[DESKTOP] Trying parent: {:?}", parent);
+                            log_msg(&format!("[DESKTOP] Trying parent: {:?}", parent));
                             if let Ok(entries) = std::fs::read_dir(parent) {
-                                println!("[DESKTOP] Parent dir contents:");
+                                log_msg("[DESKTOP] Parent dir contents:");
                                 for entry in entries.flatten() {
-                                    println!("[DESKTOP]   - {}", entry.file_name().to_string_lossy());
+                                    log_msg(&format!("[DESKTOP]   - {}", entry.file_name().to_string_lossy()));
                                 }
                             }
                             let alt = parent.join("desktop-server");
                             if alt.exists() {
-                                println!("[DESKTOP] Found desktop-server in parent!");
+                                log_msg("[DESKTOP] Found desktop-server in parent!");
                                 // Use alt path — but we can't reassign server_dir since it's used later
                                 // Instead, fall through to the error below with debug info
                             }
@@ -992,19 +1009,19 @@ fn main() {
                     if !server_dir.exists() {
                         // Also try next to the exe
                         if let Ok(exe) = std::env::current_exe() {
-                            println!("[DESKTOP] Exe path: {:?}", exe);
+                            log_msg(&format!("[DESKTOP] Exe path: {:?}", exe));
                             if let Some(exe_dir) = exe.parent() {
-                                println!("[DESKTOP] Exe dir: {:?}", exe_dir);
+                                log_msg(&format!("[DESKTOP] Exe dir: {:?}", exe_dir));
                                 if let Ok(entries) = std::fs::read_dir(exe_dir) {
-                                    println!("[DESKTOP] Exe dir contents:");
+                                    log_msg("[DESKTOP] Exe dir contents:");
                                     for entry in entries.flatten() {
-                                        println!("[DESKTOP]   - {}", entry.file_name().to_string_lossy());
+                                        log_msg(&format!("[DESKTOP]   - {}", entry.file_name().to_string_lossy()));
                                     }
                                 }
                             }
                         }
 
-                        println!("[DESKTOP] ERROR: desktop-server directory not found in any location!");
+                        log_msg("[DESKTOP] ERROR: desktop-server directory not found in any location!");
                         if let Some(window) = app_handle_clone.get_webview_window("main") {
                             let resource_str = resource_path.to_string_lossy().replace('\\', "/");
                             let _ = window.eval(&format!(
@@ -1017,15 +1034,15 @@ fn main() {
 
                     // Check if server.js exists
                     let server_js = server_dir.join("server.js");
-                    println!("[DESKTOP] server.js exists: {}", server_js.exists());
+                    log_msg(&format!("[DESKTOP] server.js exists: {}", server_js.exists()));
 
                     if !server_js.exists() {
-                        println!("[DESKTOP] ERROR: server.js not found in server dir!");
+                        log_msg("[DESKTOP] ERROR: server.js not found in server dir!");
                         // List what IS in the server dir
                         if let Ok(entries) = std::fs::read_dir(&server_dir) {
-                            println!("[DESKTOP] Server dir contents:");
+                            log_msg("[DESKTOP] Server dir contents:");
                             for entry in entries.flatten() {
-                                println!("[DESKTOP]   - {}", entry.file_name().to_string_lossy());
+                                log_msg(&format!("[DESKTOP]   - {}", entry.file_name().to_string_lossy()));
                             }
                         }
                         if let Some(window) = app_handle_clone.get_webview_window("main") {
@@ -1036,22 +1053,22 @@ fn main() {
                         return;
                     }
 
-                    println!("[DESKTOP] Starting Next.js server from: {:?}", server_dir);
+                    log_msg(&format!("[DESKTOP] Starting Next.js server from: {:?}", server_dir));
 
                     // Use bundled Node.js if available, otherwise fall back to system Node.js
                     let node_portable = server_dir.join("node-portable").join("node.exe");
                     let node_exe = if node_portable.exists() {
-                        println!("[DESKTOP] Using bundled Node.js: {:?}", node_portable);
+                        log_msg(&format!("[DESKTOP] Using bundled Node.js: {:?}", node_portable));
                         node_portable.to_string_lossy().to_string()
                     } else {
-                        println!("[DESKTOP] Bundled Node.js not found, trying system Node.js");
+                        log_msg("[DESKTOP] Bundled Node.js not found, trying system Node.js");
                         // Also check if node-portable dir exists but node.exe is missing
                         let np_dir = server_dir.join("node-portable");
                         if np_dir.exists() {
-                            println!("[DESKTOP] node-portable dir exists but node.exe missing!");
+                            log_msg("[DESKTOP] node-portable dir exists but node.exe missing!");
                             if let Ok(entries) = std::fs::read_dir(&np_dir) {
                                 for entry in entries.flatten() {
-                                    println!("[DESKTOP]   node-portable/: {}", entry.file_name().to_string_lossy());
+                                    log_msg(&format!("[DESKTOP]   node-portable/: {}", entry.file_name().to_string_lossy()));
                                 }
                             }
                         }
@@ -1080,14 +1097,14 @@ fn main() {
 
                     match server_process {
                         Ok(child) => {
-                            println!("[DESKTOP] Next.js server started (PID: {})", child.id());
+                            log_msg(&format!("[DESKTOP] Next.js server started (PID: {})", child.id()));
                             if let Some(sp) = app_handle_clone.try_state::<ServerProcess>() {
                                 *sp.0.lock().unwrap() = Some(child);
                             }
                         }
                         Err(e) => {
-                            println!("[DESKTOP] FAILED to start Node.js: {}", e);
-                            println!("[DESKTOP] Node exe: {}", node_exe);
+                            log_msg(&format!("[DESKTOP] FAILED to start Node.js: {}", e));
+                            log_msg(&format!("[DESKTOP] Node exe: {}", node_exe));
                             if let Some(window) = app_handle_clone.get_webview_window("main") {
                                 let err_msg = e.to_string().replace("'", "").replace("\n", " ");
                                 let _ = window.eval(&format!(
@@ -1100,7 +1117,7 @@ fn main() {
                     }
 
                     // Wait for the server to be ready (up to 60 seconds)
-                    println!("[DESKTOP] Waiting for server to be ready...");
+                    log_msg("[DESKTOP] Waiting for server to be ready...");
                     let client = reqwest::blocking::Client::new();
                     let mut server_ready = false;
                     let mut last_error = String::new();
@@ -1108,7 +1125,7 @@ fn main() {
                         match client.get("http://127.0.0.1:3000/api/health").timeout(Duration::from_secs(1)).send() {
                             Ok(resp) => {
                                 if resp.status().is_success() {
-                                    println!("[DESKTOP] Server is ready! (attempt {})", i);
+                                    log_msg(&format!("[DESKTOP] Server is ready! (attempt {})", i));
                                     server_ready = true;
                                     break;
                                 }
@@ -1123,15 +1140,15 @@ fn main() {
                     // Navigate the window to localhost:3000
                     if server_ready {
                         if let Some(window) = app_handle_clone.get_webview_window("main") {
-                            println!("[DESKTOP] Navigating window to http://127.0.0.1:3000");
+                            log_msg("[DESKTOP] Navigating window to http://127.0.0.1:3000");
                             let _ = window.eval("window.location.href = 'http://127.0.0.1:3000';");
                         }
                     } else {
-                        println!("[DESKTOP] Server did not become ready in 60 seconds");
-                        println!("[DESKTOP] Last health check error: {}", last_error);
+                        log_msg("[DESKTOP] Server did not become ready in 60 seconds");
+                        log_msg(&format!("[DESKTOP] Last health check error: {}", last_error));
                         // Read the log file for debugging
                         if let Ok(log_contents) = std::fs::read_to_string(&log_path) {
-                            println!("[DESKTOP] Server log:\n{}", log_contents);
+                            log_msg(&format!("[DESKTOP] Server log:\n{}", log_contents));
                         }
                         if let Some(window) = app_handle_clone.get_webview_window("main") {
                             let log_path_str = log_path.to_string_lossy().replace('\\', "/");
@@ -1149,7 +1166,7 @@ fn main() {
                 run_sync_agent(app_handle).await;
             });
 
-            println!("[DESKTOP] App ready — window opening");
+            log_msg("[DESKTOP] App ready — window opening");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
