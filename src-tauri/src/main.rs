@@ -886,92 +886,111 @@ fn main() {
             // ── Start the Next.js server (production mode only) ────────
             // In dev mode, the Next.js dev server is already running (beforeDevCommand).
             // In production (built .exe), we need to start the standalone server.
+            // CRITICAL: This must NOT block the main thread, or Windows kills the app
+            // for "not responding". We spawn a background thread that starts the server
+            // and then navigates the window once it's ready.
             #[cfg(not(debug_assertions))]
             {
-                let resource_path = app.path().resource_dir()
-                    .expect("Failed to get resource dir");
-                let server_dir = resource_path.join("desktop-server");
+                let app_handle_clone = app.handle().clone();
 
-                println!("[DESKTOP] Starting Next.js server from: {:?}", server_dir);
+                // Spawn a background OS thread (not async) to start Node.js + wait
+                std::thread::spawn(move || {
+                    let resource_path = app_handle_clone.path().resource_dir()
+                        .expect("Failed to get resource dir");
+                    let server_dir = resource_path.join("desktop-server");
 
-                // Use bundled Node.js if available, otherwise fall back to system Node.js
-                let node_portable = server_dir.join("node-portable").join("node.exe");
-                let node_exe = if node_portable.exists() {
-                    println!("[DESKTOP] Using bundled Node.js: {:?}", node_portable);
-                    node_portable.to_string_lossy().to_string()
-                } else {
-                    println!("[DESKTOP] Using system Node.js (node-portable not found)");
-                    "node".to_string()
-                };
+                    println!("[DESKTOP] Starting Next.js server from: {:?}", server_dir);
 
-                // Start the Node.js standalone server
-                // In server mode: bind to 0.0.0.0 (accessible from LAN)
-                // In standalone mode: bind to 127.0.0.1 (localhost only)
-                let hostname = {
-                    let db_state = app.try_state::<DbState>();
-                    if let Some(ds) = db_state {
-                        let conn = ds.0.lock().unwrap();
-                        let mode: Option<String> = conn.query_row(
-                            "SELECT value FROM app_config WHERE key = 'office_mode'",
-                            [], |row| row.get(0)
-                        ).ok();
-                        if mode.as_deref() == Some("server") {
-                            "0.0.0.0"
+                    // Use bundled Node.js if available, otherwise fall back to system Node.js
+                    let node_portable = server_dir.join("node-portable").join("node.exe");
+                    let node_exe = if node_portable.exists() {
+                        println!("[DESKTOP] Using bundled Node.js: {:?}", node_portable);
+                        node_portable.to_string_lossy().to_string()
+                    } else {
+                        println!("[DESKTOP] Using system Node.js (node-portable not found)");
+                        "node".to_string()
+                    };
+
+                    // Determine hostname (server mode = 0.0.0.0, standalone = 127.0.0.1)
+                    let hostname = {
+                        if let Some(ds) = app_handle_clone.try_state::<DbState>() {
+                            let conn = ds.0.lock().unwrap();
+                            let mode: Option<String> = conn.query_row(
+                                "SELECT value FROM app_config WHERE key = 'office_mode'",
+                                [], |row| row.get(0)
+                            ).ok();
+                            if mode.as_deref() == Some("server") {
+                                "0.0.0.0"
+                            } else {
+                                "127.0.0.1"
+                            }
                         } else {
                             "127.0.0.1"
                         }
-                    } else {
-                        "127.0.0.1"
-                    }
-                };
+                    };
 
-                let server_process = Command::new(&node_exe)
-                    .arg("server.js")
-                    .current_dir(&server_dir)
-                    .env("NODE_ENV", "production")
-                    .env("PORT", "3000")
-                    .env("HOSTNAME", hostname)
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn();
+                    // Start the Node.js standalone server
+                    let server_process = Command::new(&node_exe)
+                        .arg("server.js")
+                        .current_dir(&server_dir)
+                        .env("NODE_ENV", "production")
+                        .env("PORT", "3000")
+                        .env("HOSTNAME", hostname)
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .spawn();
 
-                match server_process {
-                    Ok(child) => {
-                        println!("[DESKTOP] Next.js server started (PID: {})", child.id());
-                        // Store the child process so we can kill it on exit
-                        app.manage(ServerProcess(Mutex::new(Some(child))));
-                    }
-                    Err(e) => {
-                        println!("[DESKTOP] WARNING: Could not start Node.js server: {}", e);
-                        println!("[DESKTOP] The app will try to connect to an existing server at localhost:3000");
-                    }
-                }
-
-                // Wait for the server to be ready (up to 30 seconds)
-                println!("[DESKTOP] Waiting for server to be ready...");
-                let client = reqwest::blocking::Client::new();
-                let mut server_ready = false;
-                for i in 1..=60 {
-                    if let Ok(resp) = client.get("http://127.0.0.1:3000/api/health").timeout(Duration::from_secs(1)).send() {
-                        if resp.status().is_success() {
-                            println!("[DESKTOP] Server is ready! (attempt {})", i);
-                            server_ready = true;
-                            break;
+                    match server_process {
+                        Ok(child) => {
+                            println!("[DESKTOP] Next.js server started (PID: {})", child.id());
+                            // Store the child process so we can kill it on exit
+                            if let Some(sp) = app_handle_clone.try_state::<ServerProcess>() {
+                                *sp.0.lock().unwrap() = Some(child);
+                            }
+                        }
+                        Err(e) => {
+                            println!("[DESKTOP] WARNING: Could not start Node.js server: {}", e);
+                            // Show error in the window
+                            if let Some(window) = app_handle_clone.get_webview_window("main") {
+                                let _ = window.eval(&format!(
+                                    "document.body.innerHTML = '<div style=\"font-family:sans-serif;text-align:center;padding:50px\"><h1 style=\"color:red\">Failed to start server</h1><p>{}</p><p>Make sure Node.js is installed on this machine.</p></div>'",
+                                    e.to_string().replace('\'', "\\'")
+                                ));
+                            }
+                            return;
                         }
                     }
-                    std::thread::sleep(Duration::from_millis(500));
-                }
 
-                // Navigate the window to localhost:3000 (the Next.js app)
-                if server_ready {
-                    if let Some(window) = app.get_webview_window("main") {
-                        println!("[DESKTOP] Navigating window to http://127.0.0.1:3000");
-                        let _ = window.eval("window.location.href = 'http://127.0.0.1:3000';");
+                    // Wait for the server to be ready (up to 60 seconds)
+                    println!("[DESKTOP] Waiting for server to be ready...");
+                    let client = reqwest::blocking::Client::new();
+                    let mut server_ready = false;
+                    for i in 1..=120 {
+                        if let Ok(resp) = client.get("http://127.0.0.1:3000/api/health").timeout(Duration::from_secs(1)).send() {
+                            if resp.status().is_success() {
+                                println!("[DESKTOP] Server is ready! (attempt {})", i);
+                                server_ready = true;
+                                break;
+                            }
+                        }
+                        std::thread::sleep(Duration::from_millis(500));
                     }
-                } else {
-                    println!("[DESKTOP] WARNING: Server did not become ready in 30 seconds");
-                    println!("[DESKTOP] The app will show a loading screen. Check if Node.js is installed.");
-                }
+
+                    // Navigate the window to localhost:3000
+                    if server_ready {
+                        if let Some(window) = app_handle_clone.get_webview_window("main") {
+                            println!("[DESKTOP] Navigating window to http://127.0.0.1:3000");
+                            let _ = window.eval("window.location.href = 'http://127.0.0.1:3000';");
+                        }
+                    } else {
+                        println!("[DESKTOP] WARNING: Server did not become ready in 60 seconds");
+                        if let Some(window) = app_handle_clone.get_webview_window("main") {
+                            let _ = window.eval(
+                                "document.body.innerHTML = '<div style=\"font-family:sans-serif;text-align:center;padding:50px\"><h1 style=\"color:red\">Server startup timeout</h1><p>The application server took too long to start. Please restart the app.</p></div>'"
+                            );
+                        }
+                    }
+                });
             }
 
             let conn = init_database(app).expect("Failed to initialize database");
