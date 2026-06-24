@@ -883,6 +883,20 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            // ── Initialize database + state BEFORE anything else ────────
+            // This must happen before the background thread starts, so the thread
+            // can access DbState and SyncState via try_state().
+            let conn = init_database(app).expect("Failed to initialize database");
+            app.manage(DbState(Mutex::new(conn)));
+            app.manage(SyncState {
+                last_sync: Mutex::new(None),
+                pending_count: Mutex::new(0),
+                is_online: Mutex::new(false),
+                last_error: Mutex::new(None),
+                company_id: Mutex::new(None),
+            });
+            app.manage(ServerProcess(Mutex::new(None)));
+
             // ── Start the Next.js server (production mode only) ────────
             // In dev mode, the Next.js dev server is already running (beforeDevCommand).
             // In production (built .exe), we need to start the standalone server.
@@ -1093,16 +1107,6 @@ fn main() {
                     }
                 });
             }
-
-            let conn = init_database(app).expect("Failed to initialize database");
-            app.manage(DbState(Mutex::new(conn)));
-            app.manage(SyncState {
-                last_sync: Mutex::new(None),
-                pending_count: Mutex::new(0),
-                is_online: Mutex::new(false),
-                last_error: Mutex::new(None),
-                company_id: Mutex::new(None),
-            });
 
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
