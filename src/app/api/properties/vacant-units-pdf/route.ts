@@ -409,8 +409,9 @@ export async function GET() {
     // ═══════════════════════════════════════════════════════════════════════
     // FOOTER on every page
     // ═══════════════════════════════════════════════════════════════════════
-    const pages = doc.bufferedPageCount()
-    for (let i = 0; i < pages; i++) {
+    const pages = doc.bufferedPageRange()
+    const totalPages = pages.start + pages.count
+    for (let i = pages.start; i < totalPages; i++) {
       doc.switchToPage(i)
       // Footer line
       doc.moveTo(marginLeft, pageHeight - 40).lineTo(marginLeft + pageWidth, pageHeight - 40)
@@ -422,7 +423,7 @@ export async function GET() {
         marginLeft, pageHeight - 30, { width: pageWidth / 2 - 10, align: 'left' }
       )
       doc.text(
-        `Page ${i + 1} of ${pages}`,
+        `Page ${i + 1} of ${totalPages}`,
         marginLeft + pageWidth / 2, pageHeight - 30, { width: pageWidth / 2 - 10, align: 'right' }
       )
     }
