@@ -230,13 +230,11 @@ export async function GET() {
     // Top accent bar (full width, 6px thick)
     doc.rect(0, 0, doc.page.width, 6).fillColor(COLORS.accent).fill()
 
-    // Company name
+    // Company name — allow wrapping for long names (auto-measure height)
     doc.fontSize(18).fillColor(COLORS.primary).font('Helvetica-Bold')
     const companyName = company.name || 'Al Reef Al Madeena'
-    // Use lineBreak: false + manual truncation to prevent auto-wrap pagination
-    const companyNameDisplay = truncate(companyName, pageWidth, 'Helvetica-Bold', 18)
-    doc.text(companyNameDisplay, marginLeft, y, { width: pageWidth, lineBreak: false })
-    y += 22
+    doc.text(companyName, marginLeft, y, { width: pageWidth, lineBreak: true })
+    y += doc.heightOfString(companyName, { width: pageWidth, fontSize: 18 }) + 4
 
     // Report title
     doc.fontSize(13).fillColor(COLORS.textDark).font('Helvetica-Bold')
