@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
-import { Building2, Plus, Pencil, Trash2, Users, Loader2, Archive, ArchiveRestore } from 'lucide-react'
+import { Building2, Plus, Pencil, Trash2, Users, Loader2, Archive, ArchiveRestore, FileDown } from 'lucide-react'
 import { calculateEffectivePaymentsReceived } from '@/lib/financial-utils'
 
 export default function Properties() {
@@ -23,6 +23,7 @@ export default function Properties() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<PropertyData | null>(null)
   const [showArchived, setShowArchived] = useState(false)
+  const [exportingVacantPDF, setExportingVacantPDF] = useState(false)
   const [form, setForm] = useState({
     name: '',
     nameAr: '',
@@ -106,6 +107,30 @@ export default function Properties() {
     }
   }
 
+  const handleDownloadVacantPDF = async () => {
+    setExportingVacantPDF(true)
+    try {
+      const res = await fetch('/api/properties/vacant-units-pdf')
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        alert(err.message || 'Failed to generate PDF')
+        return
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Vacant_Units_Report_${new Date().toISOString().split('T')[0]}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (error: any) {
+      console.error('Vacant PDF export failed:', error)
+      alert(error.message || 'Failed to generate PDF')
+    } finally {
+      setExportingVacantPDF(false)
+    }
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-emerald" /></div>
   }
@@ -120,6 +145,20 @@ export default function Properties() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleDownloadVacantPDF}
+            disabled={exportingVacantPDF}
+            title="Download a visually engaging PDF of all vacant units across your properties"
+          >
+            {exportingVacantPDF ? (
+              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+            ) : (
+              <FileDown className="w-4 h-4 mr-1" />
+            )}
+            {exportingVacantPDF ? 'Generating...' : 'Vacant Units PDF'}
+          </Button>
           <Button
             variant={showArchived ? 'default' : 'outline'}
             size="sm"
