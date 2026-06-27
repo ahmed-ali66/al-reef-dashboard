@@ -27,6 +27,7 @@ import {
   BellOff,
   Filter,
   Database,
+  ChevronRight,
 } from 'lucide-react'
 import { usePushNotifications } from '@/lib/use-push-notifications'
 import { toast } from 'sonner'
@@ -54,7 +55,7 @@ interface FilterDef {
 }
 const FILTERS: FilterDef[] = [
   { id: 'all', label: 'All', icon: Bell },
-  { id: 'cheques', label: 'Cheques', icon: Receipt, types: ['cheque_reminder_7d', 'cheque_reminder_3d', 'cheque_reminder_1d', 'cheque_overdue'] },
+  { id: 'cheques', label: 'Cheques', icon: Receipt, types: ['cheque_reminder_15d', 'cheque_reminder_7d', 'cheque_reminder_5d', 'cheque_reminder_3d', 'cheque_reminder_1d', 'cheque_overdue'] },
   { id: 'utilities', label: 'Utilities', icon: Calendar, types: ['recurring_bill_reminder', 'bill_overdue', 'BILL_UPCOMING', 'BILL_OVERDUE'] },
   { id: 'dsr', label: 'DSR', icon: FileText, types: ['daily_report', 'daily_report_summary'] },
   { id: 'backup', label: 'Backup', icon: Database, types: ['backup_success', 'backup_failed'] },
@@ -64,7 +65,7 @@ const FILTERS: FilterDef[] = [
 type FilterId = string
 
 export default function Notifications() {
-  const { language, authUser } = useAppStore()
+  const { language, authUser, setCurrentPage } = useAppStore()
   const isRtl = rtlLanguages.includes(language)
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
@@ -235,6 +236,47 @@ export default function Notifications() {
     } catch (e) {
       console.error('Failed to mark as read:', e)
     }
+  }
+
+  // ─── Handle notification click — navigate to actionUrl if present ───
+  const handleNotificationClick = (notification: NotificationItem) => {
+    // Mark as read first
+    if (!notification.read) markAsRead(notification.id)
+
+    // Parse data field to get actionUrl
+    let actionUrl: string | null = null
+    let actionLabel: string | null = null
+    if (notification.data) {
+      try {
+        const parsed = JSON.parse(notification.data)
+        actionUrl = parsed.actionUrl || null
+        actionLabel = parsed.actionLabel || null
+      } catch { /* invalid JSON, ignore */ }
+    }
+
+    // Map URL paths to app pages
+    // The app uses a currentPage state in the store, not real URL routing
+    if (actionUrl) {
+      const pageMap: Record<string, string> = {
+        '/cheques': 'cheques',
+        '/rent': 'rent',
+        '/tenants': 'tenants',
+        '/properties': 'properties',
+        '/maintenance': 'maintenance',
+        '/expenses': 'expenses',
+        '/recurring-bills': 'recurring-bills',
+        '/reports': 'reports',
+        '/dashboard': 'dashboard',
+      }
+      const page = pageMap[actionUrl]
+      if (page) {
+        setCurrentPage(page as any)
+        setIsOpen(false)
+        return
+      }
+    }
+
+    // No actionUrl or unmapped — just mark as read (already done above)
   }
 
   const markAllAsRead = async () => {
@@ -439,16 +481,28 @@ export default function Notifications() {
                 </div>
               ) : (
                 <div className="divide-y divide-border">
-                  {filteredNotifications.map((notification) => (
+                  {filteredNotifications.map((notification) => {
+                    // Parse actionUrl from data
+                    let actionUrl: string | null = null
+                    let actionLabel: string | null = null
+                    if (notification.data) {
+                      try {
+                        const parsed = JSON.parse(notification.data)
+                        actionUrl = parsed.actionUrl || null
+                        actionLabel = parsed.actionLabel || null
+                      } catch { /* ignore */ }
+                    }
+                    const isClickable = !!actionUrl
+
+                    return (
                     <div
                       key={notification.id}
                       className={cn(
-                        'px-4 py-3 transition-colors cursor-pointer hover:bg-muted/50',
+                        'px-4 py-3 transition-colors',
+                        isClickable && 'cursor-pointer hover:bg-muted/50',
                         !notification.read && 'bg-deep-teal/5',
                       )}
-                      onClick={() => {
-                        if (!notification.read) markAsRead(notification.id)
-                      }}
+                      onClick={() => handleNotificationClick(notification)}
                     >
                       <div className="flex items-start gap-3">
                         <div className={cn('w-8 h-8 rounded-full flex items-center justify-center shrink-0 border', getNotificationBg(notification.type))}>
@@ -466,13 +520,22 @@ export default function Notifications() {
                           <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
                             {notification.message}
                           </p>
-                          <p className="text-[10px] text-muted-foreground/70 mt-1">
-                            {formatTimeAgo(notification.createdAt, language)}
-                          </p>
+                          <div className="flex items-center justify-between gap-2 mt-1.5">
+                            <p className="text-[10px] text-muted-foreground/70">
+                              {formatTimeAgo(notification.createdAt, language)}
+                            </p>
+                            {isClickable && actionLabel && (
+                              <span className="text-[10px] font-medium text-deep-teal flex items-center gap-0.5 hover:underline">
+                                {actionLabel}
+                                <ChevronRight className="w-3 h-3" />
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -521,7 +584,9 @@ function getNotificationIcon(type: string) {
     case 'daily_report':
     case 'daily_report_summary':
       return <FileText className="w-4 h-4 text-blue-500" />
+    case 'cheque_reminder_15d':
     case 'cheque_reminder_7d':
+    case 'cheque_reminder_5d':
     case 'cheque_reminder_3d':
     case 'cheque_reminder_1d':
     case 'cheque_overdue':
@@ -550,7 +615,9 @@ function getNotificationBg(type: string) {
     case 'daily_report':
     case 'daily_report_summary':
       return 'bg-blue-50 border-blue-200'
+    case 'cheque_reminder_15d':
     case 'cheque_reminder_7d':
+    case 'cheque_reminder_5d':
     case 'cheque_reminder_3d':
     case 'cheque_reminder_1d':
     case 'cheque_overdue':

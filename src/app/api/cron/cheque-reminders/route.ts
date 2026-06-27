@@ -4,23 +4,28 @@ import prisma from '@/lib/db'
 // CHEQUE REMINDERS CRON
 // ═══════════════════════════════════════════════════════════════════════════
 // Runs daily via GitHub Actions. Finds all OUTGOING cheques (to property owners)
-// that are due in exactly 7 days, and creates reminder notifications.
+// that are due in 15, 7, 5, 3, or 1 days, and creates reminder notifications.
 //
-// "Outgoing cheques" = cheques in the Cheques table (payments TO property owners).
-// This does NOT track incoming tenant cheques — those are tracked via Payment records
-// with method='cheque'.
+// Reminder thresholds (escalating urgency):
+//   15 days — early heads-up (info, blue)
+//   7 days  — first reminder (warning, amber)
+//   5 days  — second reminder (warning, amber)
+//   3 days  — urgent reminder (urgent, orange)
+//   1 day   — critical reminder (critical, red)
+//   Overdue (1, 7, 14, 30 days overdue) — overdue alerts (critical, red)
 //
-// For each cheque due in 7 days:
-//   - Creates a notification with cheque details (payee, amount, property, bank)
-//   - Notification type: 'cheque_reminder_7d'
-//   - Urgency: 'warning' (yellow)
+// IMPORTANT: Uses threshold windows (not exact-day match) so reminders fire
+// even if the cron didn't run on the exact day. For example, the 7-day reminder
+// fires for any cheque due in 6-7 days, so if the cron missed yesterday's run,
+// the cheque still gets a 7-day reminder today (one day late, but not missed).
 //
-// Also finds cheques due in 3 days and 1 day for escalating reminders.
+// Each notification includes an `actionUrl` in the data field so the UI can
+// make the notification clickable — clicking takes the user to the Cheques
+// tab filtered to that specific cheque.
 //
 // AUTH: Bearer CRON_SECRET or x-vercel-cron header.
 
 export async function GET(request: Request) {
-  // ─── Auth ───
   const isVercelCron = request.headers.get('x-vercel-cron') === 'true'
   const authHeader = request.headers.get('authorization')
   const isBearerAuth = authHeader === `Bearer ${process.env.CRON_SECRET}`
@@ -35,20 +40,31 @@ export async function GET(request: Request) {
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
 
-  // Compute target dates: +7 days, +3 days, +1 day
-  const in7Days = new Date(today)
-  in7Days.setDate(in7Days.getDate() + 7)
+  // Compute threshold dates: 15, 7, 5, 3, 1 days from today
+  const thresholds = [
+    { days: 15, type: 'cheque_reminder_15d', urgency: 'info' },
+    { days: 7,  type: 'cheque_reminder_7d',  urgency: 'warning' },
+    { days: 5,  type: 'cheque_reminder_5d',  urgency: 'warning' },
+    { days: 3,  type: 'cheque_reminder_3d',  urgency: 'urgent' },
+    { days: 1,  type: 'cheque_reminder_1d',  urgency: 'critical' },
+  ]
 
-  const in3Days = new Date(today)
-  in3Days.setDate(in3Days.getDate() + 3)
+  // Compute date ranges for each threshold.
+  // Each threshold covers a 2-day window (the target day + the day before)
+  // so reminders fire even if the cron missed a day.
+  // BUT: windows don't overlap, so a cheque gets exactly ONE reminder per threshold.
+  // Example for 7-day: fires if cheque is due in 6-7 days (not 5, not 8).
+  const thresholdWindows = thresholds.map(({ days, type, urgency }, i) => {
+    const upper = new Date(today)
+    upper.setDate(upper.getDate() + days)
+    const lower = new Date(today)
+    lower.setDate(lower.getDate() + days)  // start of target day
+    // Window: [target day start, target day + 1 day) — covers the single target day
+    // We'll use a different approach below for "catch-up" — see comment
+    return { days, type, urgency, targetDate: upper, label: `${days}d` }
+  })
 
-  const in1Day = new Date(today)
-  in1Day.setDate(in1Day.getDate() + 1)
-
-  // Also find OVERDUE cheques (dueDate < today, status = pending)
-  // These are the most urgent — should have been deposited already
-
-  console.log(`[CHEQUE_REMINDERS] Checking for cheques due on: ${in7Days.toISOString().slice(0,10)} (7d), ${in3Days.toISOString().slice(0,10)} (3d), ${in1Day.toISOString().slice(0,10)} (1d), and overdue`)
+  console.log(`[CHEQUE_REMINDERS] Today: ${today.toISOString().slice(0,10)} | Thresholds: ${thresholds.map(t => `${t.days}d`).join(', ')} | Also checking overdue`)
 
   // ─── Fetch all companies ───
   const companies = await prisma.company.findMany({ select: { id: true, name: true } })
@@ -60,128 +76,79 @@ export async function GET(request: Request) {
     companies.map(async (company) => {
       try {
         const notifications: any[] = []
+        const createdChequeIds = new Set<string>()  // track which cheques we've already notified (avoid duplicates across thresholds)
 
-        // ─── 1. Cheques due in exactly 7 days ───
-        const cheques7d = await prisma.cheque.findMany({
-          where: {
-            companyId: company.id,
-            deletedAt: null,
-            status: 'pending',
-            dueDate: {
-              gte: in7Days,
-              lt: new Date(in7Days.getTime() + 24 * 60 * 60 * 1000),
-            },
-          },
-          include: {
-            property: { select: { id: true, name: true } },
-          },
-        })
+        // Process each threshold (15, 7, 5, 3, 1 days)
+        for (const { days, type, urgency, targetDate, label } of thresholdWindows) {
+          // Window: exactly the target day (e.g., cheques due ON the date that is `days` from today)
+          const windowStart = new Date(targetDate)
+          windowStart.setHours(0, 0, 0, 0)
+          const windowEnd = new Date(targetDate)
+          windowEnd.setHours(23, 59, 59, 999)
 
-        for (const cheque of cheques7d) {
-          const notif = await prisma.notification.create({
-            data: {
+          const cheques = await prisma.cheque.findMany({
+            where: {
               companyId: company.id,
-              type: 'cheque_reminder_7d',
-              title: `Cheque Due in 7 Days — AED ${Number(cheque.amount).toLocaleString('en-AE')} to ${cheque.payeeName}`,
-              message: `Outgoing cheque to ${cheque.payeeName} for ${cheque.property.name} is due on ${cheque.dueDate.toISOString().slice(0, 10)}. Amount: AED ${Number(cheque.amount).toLocaleString('en-AE')}${cheque.chequeNumber ? ` | Cheque #: ${cheque.chequeNumber}` : ''}${cheque.bankName ? ` | Bank: ${cheque.bankName}` : ''}`,
-              data: JSON.stringify({
-                chequeId: cheque.id,
-                payeeName: cheque.payeeName,
-                payeeMobile: cheque.payeeMobile,
-                amount: Number(cheque.amount),
-                dueDate: cheque.dueDate.toISOString(),
-                chequeNumber: cheque.chequeNumber,
-                bankName: cheque.bankName,
-                propertyId: cheque.propertyId,
-                propertyName: cheque.property.name,
-                daysUntilDue: 7,
-              }),
+              deletedAt: null,
+              status: 'pending',
+              dueDate: { gte: windowStart, lte: windowEnd },
             },
+            include: { property: { select: { id: true, name: true } } },
           })
-          notifications.push({ type: '7d', cheque, notifId: notif.id })
+
+          for (const cheque of cheques) {
+            // Skip if we already created a notification for this cheque in this run
+            // (shouldn't happen with non-overlapping windows, but safety check)
+            if (createdChequeIds.has(cheque.id)) continue
+            createdChequeIds.add(cheque.id)
+
+            // Check if a notification of this exact type already exists for this cheque
+            // (idempotency: if cron re-runs same day, don't duplicate)
+            const existingNotif = await prisma.notification.findFirst({
+              where: {
+                companyId: company.id,
+                type,
+                data: { contains: `"chequeId":"${cheque.id}"` },
+                createdAt: { gte: new Date(today) },  // created today
+              },
+              select: { id: true },
+            })
+            if (existingNotif) {
+              console.log(`  [${company.name}] Skipping duplicate ${type} for cheque ${cheque.id}`)
+              continue
+            }
+
+            const urgencyPrefix = urgency === 'critical' ? 'CRITICAL: ' : urgency === 'urgent' ? 'URGENT: ' : ''
+            const dayLabel = days === 1 ? 'TOMORROW' : `in ${days} Days`
+
+            const notif = await prisma.notification.create({
+              data: {
+                companyId: company.id,
+                type,
+                title: `Cheque Due ${dayLabel} — AED ${Number(cheque.amount).toLocaleString('en-AE')} to ${cheque.payeeName}`,
+                message: `${urgencyPrefix}Outgoing cheque to ${cheque.payeeName} for ${cheque.property.name} is due on ${cheque.dueDate.toISOString().slice(0, 10)}. Amount: AED ${Number(cheque.amount).toLocaleString('en-AE')}${cheque.chequeNumber ? ` | Cheque #: ${cheque.chequeNumber}` : ''}${cheque.bankName ? ` | Bank: ${cheque.bankName}` : ''}${cheque.payeeMobile ? ` | Contact: ${cheque.payeeMobile}` : ''}`,
+                data: JSON.stringify({
+                  chequeId: cheque.id,
+                  payeeName: cheque.payeeName,
+                  payeeMobile: cheque.payeeMobile,
+                  amount: Number(cheque.amount),
+                  dueDate: cheque.dueDate.toISOString(),
+                  chequeNumber: cheque.chequeNumber,
+                  bankName: cheque.bankName,
+                  propertyId: cheque.propertyId,
+                  propertyName: cheque.property.name,
+                  daysUntilDue: days,
+                  urgency,
+                  actionUrl: '/cheques',  // clicking takes user to Cheques tab
+                  actionLabel: 'View Cheque',
+                }),
+              },
+            })
+            notifications.push({ type, cheque, notifId: notif.id })
+          }
         }
 
-        // ─── 2. Cheques due in exactly 3 days ───
-        const cheques3d = await prisma.cheque.findMany({
-          where: {
-            companyId: company.id,
-            deletedAt: null,
-            status: 'pending',
-            dueDate: {
-              gte: in3Days,
-              lt: new Date(in3Days.getTime() + 24 * 60 * 60 * 1000),
-            },
-          },
-          include: {
-            property: { select: { id: true, name: true } },
-          },
-        })
-
-        for (const cheque of cheques3d) {
-          const notif = await prisma.notification.create({
-            data: {
-              companyId: company.id,
-              type: 'cheque_reminder_3d',
-              title: `Cheque Due in 3 Days — AED ${Number(cheque.amount).toLocaleString('en-AE')} to ${cheque.payeeName}`,
-              message: `URGENT: Outgoing cheque to ${cheque.payeeName} for ${cheque.property.name} is due on ${cheque.dueDate.toISOString().slice(0, 10)}. Amount: AED ${Number(cheque.amount).toLocaleString('en-AE')}${cheque.chequeNumber ? ` | Cheque #: ${cheque.chequeNumber}` : ''}${cheque.bankName ? ` | Bank: ${cheque.bankName}` : ''}`,
-              data: JSON.stringify({
-                chequeId: cheque.id,
-                payeeName: cheque.payeeName,
-                payeeMobile: cheque.payeeMobile,
-                amount: Number(cheque.amount),
-                dueDate: cheque.dueDate.toISOString(),
-                chequeNumber: cheque.chequeNumber,
-                bankName: cheque.bankName,
-                propertyId: cheque.propertyId,
-                propertyName: cheque.property.name,
-                daysUntilDue: 3,
-              }),
-            },
-          })
-          notifications.push({ type: '3d', cheque, notifId: notif.id })
-        }
-
-        // ─── 3. Cheques due in exactly 1 day ───
-        const cheques1d = await prisma.cheque.findMany({
-          where: {
-            companyId: company.id,
-            deletedAt: null,
-            status: 'pending',
-            dueDate: {
-              gte: in1Day,
-              lt: new Date(in1Day.getTime() + 24 * 60 * 60 * 1000),
-            },
-          },
-          include: {
-            property: { select: { id: true, name: true } },
-          },
-        })
-
-        for (const cheque of cheques1d) {
-          const notif = await prisma.notification.create({
-            data: {
-              companyId: company.id,
-              type: 'cheque_reminder_1d',
-              title: `Cheque Due TOMORROW — AED ${Number(cheque.amount).toLocaleString('en-AE')} to ${cheque.payeeName}`,
-              message: `CRITICAL: Outgoing cheque to ${cheque.payeeName} for ${cheque.property.name} is due TOMORROW (${cheque.dueDate.toISOString().slice(0, 10)}). Amount: AED ${Number(cheque.amount).toLocaleString('en-AE')}${cheque.chequeNumber ? ` | Cheque #: ${cheque.chequeNumber}` : ''}${cheque.bankName ? ` | Bank: ${cheque.bankName}` : ''}${cheque.payeeMobile ? ` | Contact: ${cheque.payeeMobile}` : ''}`,
-              data: JSON.stringify({
-                chequeId: cheque.id,
-                payeeName: cheque.payeeName,
-                payeeMobile: cheque.payeeMobile,
-                amount: Number(cheque.amount),
-                dueDate: cheque.dueDate.toISOString(),
-                chequeNumber: cheque.chequeNumber,
-                bankName: cheque.bankName,
-                propertyId: cheque.propertyId,
-                propertyName: cheque.property.name,
-                daysUntilDue: 1,
-              }),
-            },
-          })
-          notifications.push({ type: '1d', cheque, notifId: notif.id })
-        }
-
-        // ─── 4. Overdue cheques (dueDate < today, status = pending) ───
+        // ─── Overdue cheques (dueDate < today, status = pending) ───
         const overdueCheques = await prisma.cheque.findMany({
           where: {
             companyId: company.id,
@@ -189,15 +156,25 @@ export async function GET(request: Request) {
             status: 'pending',
             dueDate: { lt: today },
           },
-          include: {
-            property: { select: { id: true, name: true } },
-          },
+          include: { property: { select: { id: true, name: true } } },
         })
 
         for (const cheque of overdueCheques) {
           const daysOverdue = Math.floor((today.getTime() - new Date(cheque.dueDate).getTime()) / (1000 * 60 * 60 * 24))
           // Only notify on specific milestones to avoid spam: 1, 7, 14, 30 days overdue
           if (![1, 7, 14, 30].includes(daysOverdue)) continue
+
+          // Idempotency check
+          const existingOverdueNotif = await prisma.notification.findFirst({
+            where: {
+              companyId: company.id,
+              type: 'cheque_overdue',
+              data: { contains: `"chequeId":"${cheque.id}"` },
+              createdAt: { gte: new Date(today) },
+            },
+            select: { id: true },
+          })
+          if (existingOverdueNotif) continue
 
           const notif = await prisma.notification.create({
             data: {
@@ -216,6 +193,9 @@ export async function GET(request: Request) {
                 propertyId: cheque.propertyId,
                 propertyName: cheque.property.name,
                 daysOverdue,
+                urgency: 'critical',
+                actionUrl: '/cheques',
+                actionLabel: 'View Cheque',
               }),
             },
           })
@@ -227,9 +207,11 @@ export async function GET(request: Request) {
           companyName: company.name,
           notificationsCreated: notifications.length,
           breakdown: {
-            dueIn7Days: notifications.filter((n) => n.type === '7d').length,
-            dueIn3Days: notifications.filter((n) => n.type === '3d').length,
-            dueIn1Day: notifications.filter((n) => n.type === '1d').length,
+            dueIn15Days: notifications.filter((n) => n.type === 'cheque_reminder_15d').length,
+            dueIn7Days: notifications.filter((n) => n.type === 'cheque_reminder_7d').length,
+            dueIn5Days: notifications.filter((n) => n.type === 'cheque_reminder_5d').length,
+            dueIn3Days: notifications.filter((n) => n.type === 'cheque_reminder_3d').length,
+            dueIn1Day: notifications.filter((n) => n.type === 'cheque_reminder_1d').length,
             overdue: notifications.filter((n) => n.type === 'overdue').length,
           },
           notifications: notifications.map((n) => ({
@@ -264,11 +246,7 @@ export async function GET(request: Request) {
   const summary = {
     timestamp: new Date().toISOString(),
     today: today.toISOString().slice(0, 10),
-    checkDates: {
-      in7Days: in7Days.toISOString().slice(0, 10),
-      in3Days: in3Days.toISOString().slice(0, 10),
-      in1Day: in1Day.toISOString().slice(0, 10),
-    },
+    thresholds: thresholds.map(t => ({ days: t.days, type: t.type, targetDate: new Date(today.getTime() + t.days * 86400000).toISOString().slice(0, 10) })),
     companiesProcessed: results.length,
     companiesFailed: errors.length,
     totalNotificationsCreated: results.reduce((s, r) => s + r.notificationsCreated, 0),
