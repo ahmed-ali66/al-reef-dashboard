@@ -25,6 +25,7 @@ import {
   CalendarCheck,
   Zap,
 } from 'lucide-react'
+import Notifications from '@/components/notifications'
 import {
   BarChart,
   Bar,
@@ -116,13 +117,16 @@ export default function Dashboard() {
   return (
     <div className="space-y-6 stagger-children">
       {/* Page Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">
-          {t('dashboard', lang)}
-        </h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          {getMonthName(currentMonth, lang)} {currentYear}
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">
+            {t('dashboard', lang)}
+          </h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            {getMonthName(currentMonth, lang)} {currentYear}
+          </p>
+        </div>
+        <Notifications />
       </div>
 
       {/* Overdue Alert Banner */}

@@ -1,10 +1,9 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useAppStore } from '@/lib/store'
 import { t, rtlLanguages } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import {
   Bell,
@@ -21,11 +20,12 @@ import {
   Calendar,
   Receipt,
   RefreshCw,
-  ChevronRight,
   Settings,
   Volume2,
   VolumeX,
   BellOff,
+  Filter,
+  Database,
 } from 'lucide-react'
 import { usePushNotifications } from '@/lib/use-push-notifications'
 import { toast } from 'sonner'
@@ -41,9 +41,26 @@ interface NotificationItem {
 }
 
 // Track the last-seen notification ID so we only alert on NEW notifications
-// (not all notifications on every poll)
 let lastSeenNotificationId: string | null = null
 let isFirstLoad = true
+
+// ─── Filter categories ───
+interface FilterDef {
+  id: string
+  label: string
+  icon: any
+  types?: string[]
+}
+const FILTERS: FilterDef[] = [
+  { id: 'all', label: 'All', icon: Bell },
+  { id: 'cheques', label: 'Cheques', icon: Receipt, types: ['cheque_reminder_7d', 'cheque_reminder_3d', 'cheque_reminder_1d', 'cheque_overdue'] },
+  { id: 'utilities', label: 'Utilities', icon: Calendar, types: ['recurring_bill_reminder', 'bill_overdue', 'BILL_UPCOMING', 'BILL_OVERDUE'] },
+  { id: 'dsr', label: 'DSR', icon: FileText, types: ['daily_report', 'daily_report_summary'] },
+  { id: 'backup', label: 'Backup', icon: Database, types: ['backup_success', 'backup_failed'] },
+  { id: 'rollover', label: 'Rollover', icon: RefreshCw, types: ['monthly_rollover'] },
+]
+
+type FilterId = string
 
 export default function Notifications() {
   const { language, authUser } = useAppStore()
@@ -53,6 +70,7 @@ export default function Notifications() {
   const [isOpen, setIsOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [showPrefs, setShowPrefs] = useState(false)
+  const [activeFilter, setActiveFilter] = useState<FilterId>('all')
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   const {
@@ -68,26 +86,24 @@ export default function Notifications() {
     if (!authUser) return
     try {
       if (!silent) setLoading(true)
-      const res = await fetch('/api/notifications?limit=30')
+      const res = await fetch('/api/notifications?limit=50')
       if (res.ok) {
         const data = await res.json()
-        const newNotifications = data.notifications || []
+        const newNotifications: NotificationItem[] = data.notifications || []
         const newUnreadCount = data.unreadCount || 0
 
         // ─── Detect NEW notifications (only on subsequent loads, not first) ───
         if (!isFirstLoad && newNotifications.length > 0) {
           const newestId = newNotifications[0].id
           if (lastSeenNotificationId && newestId !== lastSeenNotificationId) {
-            // Find notifications that arrived since last poll
             const newOnes: NotificationItem[] = []
             for (const n of newNotifications) {
               if (n.id === lastSeenNotificationId) break
               if (!n.read) newOnes.push(n)
             }
 
-            // Show browser notification + sound + toast for each new one (max 3 to avoid spam)
+            // Show browser notification + sound + toast for each new one (max 3)
             for (const n of newOnes.slice(0, 3)) {
-              // Browser push notification (with sound)
               showNotification({
                 title: n.title,
                 body: n.message,
@@ -98,13 +114,10 @@ export default function Notifications() {
                 },
               })
 
-              // In-app toast popup
               if (preferences.toastEnabled) {
-                const icon = getNotificationIcon(n.type)
                 toast(n.title, {
                   description: n.message,
                   duration: 6000,
-                  icon: icon,
                   action: {
                     label: 'View',
                     onClick: () => {
@@ -118,7 +131,6 @@ export default function Notifications() {
           }
           lastSeenNotificationId = newestId
         } else {
-          // First load — just set the last-seen ID without alerting
           if (newNotifications.length > 0) {
             lastSeenNotificationId = newNotifications[0].id
           }
@@ -138,7 +150,6 @@ export default function Notifications() {
   useEffect(() => {
     if (authUser) {
       fetchNotifications()
-      // Poll every 15 seconds (more frequent than before for timely alerts)
       const interval = setInterval(() => fetchNotifications(true), 15000)
       return () => clearInterval(interval)
     }
@@ -156,10 +167,9 @@ export default function Notifications() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // ─── Request push permission on first user interaction (if supported) ───
+  // ─── Request push permission on first user interaction ───
   useEffect(() => {
     if (!isSupported || permission !== 'default') return
-
     const handleFirstClick = () => {
       requestPermission()
       document.removeEventListener('click', handleFirstClick)
@@ -172,9 +182,7 @@ export default function Notifications() {
     try {
       const res = await fetch(`/api/notifications/${id}`, { method: 'PATCH' })
       if (res.ok) {
-        setNotifications(prev =>
-          prev.map(n => (n.id === id ? { ...n, read: true } : n))
-        )
+        setNotifications(prev => prev.map(n => (n.id === id ? { ...n, read: true } : n)))
         setUnreadCount(prev => Math.max(0, prev - 1))
       }
     } catch (e) {
@@ -194,6 +202,27 @@ export default function Notifications() {
     }
   }
 
+  // ─── Filter notifications based on active filter ───
+  const filteredNotifications = useMemo(() => {
+    if (activeFilter === 'all') return notifications
+    const filterDef = FILTERS.find(f => f.id === activeFilter)
+    if (!filterDef || !filterDef.types) return notifications
+    return notifications.filter(n => filterDef.types!.includes(n.type))
+  }, [notifications, activeFilter])
+
+  // Count per filter for badge display
+  const filterCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const f of FILTERS) {
+      if (f.id === 'all') {
+        counts[f.id] = notifications.filter(n => !n.read).length
+      } else if (f.types) {
+        counts[f.id] = notifications.filter(n => !n.read && f.types!.includes(n.type)).length
+      }
+    }
+    return counts
+  }, [notifications])
+
   return (
     <div className="relative" ref={dropdownRef}>
       {/* Bell button */}
@@ -203,7 +232,7 @@ export default function Notifications() {
           setShowPrefs(false)
           if (!isOpen) fetchNotifications()
         }}
-        className="relative p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-lg transition-all"
+        className="relative p-2 text-foreground/70 hover:text-foreground hover:bg-muted rounded-lg transition-all"
         title={language === 'ar' ? 'الإشعارات' : language === 'bn' ? 'বিজ্ঞপ্তি' : language === 'ur' ? 'اطلاعات' : 'Notifications'}
       >
         {unreadCount > 0 ? (
@@ -218,14 +247,11 @@ export default function Notifications() {
         )}
       </button>
 
-      {/* Dropdown panel */}
+      {/* Dropdown panel — right-aligned to stay within frame */}
       {isOpen && (
-        <div className={cn(
-          'absolute top-full mt-2 w-96 bg-white rounded-xl shadow-xl border border-border z-50 overflow-hidden',
-          isRtl ? 'right-0' : 'left-0'
-        )}>
+        <div className="absolute top-full mt-2 right-0 w-[400px] max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-2xl border border-border z-50 overflow-hidden flex flex-col">
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
+          <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30 shrink-0">
             <h3 className="font-semibold text-sm flex items-center gap-2">
               {language === 'ar' ? 'الإشعارات' : language === 'bn' ? 'বিজ্ঞপ্তি' : language === 'ur' ? 'اطلاعات' : 'Notifications'}
               {unreadCount > 0 && (
@@ -272,7 +298,7 @@ export default function Notifications() {
 
           {/* Permission banner (if not granted) */}
           {!showPrefs && isSupported && permission !== 'granted' && (
-            <div className="px-4 py-3 bg-amber-50 border-b border-amber-200">
+            <div className="px-4 py-3 bg-amber-50 border-b border-amber-200 shrink-0">
               <div className="flex items-start gap-2">
                 <BellOff className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
                 <div className="flex-1">
@@ -296,72 +322,113 @@ export default function Notifications() {
             </div>
           )}
 
-          {/* Notifications list */}
-          <ScrollArea className="max-h-96">
-            {loading ? (
-              <div className="p-6 text-center">
-                <div className="w-6 h-6 border-2 border-deep-teal border-t-transparent rounded-full animate-spin mx-auto" />
-              </div>
-            ) : notifications.length === 0 ? (
-              <div className="p-6 text-center">
-                <Bell className="w-8 h-8 text-muted-foreground/40 mx-auto mb-2" />
-                <p className="text-sm text-muted-foreground">
-                  {language === 'ar' ? 'لا توجد إشعارات' : language === 'bn' ? 'কোনো বিজ্ঞপ্তি নেই' : language === 'ur' ? 'کوئی اطلاعات نہیں' : 'No notifications'}
-                </p>
-              </div>
-            ) : (
-              <div className="divide-y divide-border">
-                {notifications.map((notification) => (
-                  <div
-                    key={notification.id}
+          {/* Filter tabs */}
+          {!showPrefs && (
+            <div className="flex items-center gap-1 px-2 py-2 border-b bg-muted/20 overflow-x-auto shrink-0">
+              <Filter className="w-3 h-3 text-muted-foreground shrink-0 ml-1" />
+              {FILTERS.map(filter => {
+                const Icon = filter.icon
+                const count = filterCounts[filter.id] || 0
+                const isActive = activeFilter === filter.id
+                return (
+                  <button
+                    key={filter.id}
+                    onClick={() => setActiveFilter(filter.id)}
                     className={cn(
-                      'px-4 py-3 transition-colors cursor-pointer hover:bg-muted/50',
-                      !notification.read && 'bg-deep-teal/5',
+                      'flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all shrink-0',
+                      isActive
+                        ? 'bg-deep-teal text-white'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                     )}
-                    onClick={() => {
-                      if (!notification.read) markAsRead(notification.id)
-                    }}
                   >
-                    <div className="flex items-start gap-3">
-                      <div className={cn('w-8 h-8 rounded-full flex items-center justify-center shrink-0 border', getNotificationBg(notification.type))}>
-                        {getNotificationIcon(notification.type)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className={cn('text-sm truncate', !notification.read && 'font-semibold')}>
-                            {notification.title}
-                          </p>
-                          {!notification.read && (
-                            <span className="w-2 h-2 rounded-full bg-deep-teal shrink-0" />
-                          )}
+                    <Icon className="w-3 h-3" />
+                    {filter.label}
+                    {count > 0 && (
+                      <span className={cn(
+                        'ml-1 text-[10px] rounded-full px-1.5 py-0.5',
+                        isActive ? 'bg-white/20' : 'bg-red-100 text-red-700'
+                      )}>
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Notifications list — scrollable */}
+          {!showPrefs && (
+            <div className="overflow-y-auto max-h-[450px]">
+              {loading ? (
+                <div className="p-6 text-center">
+                  <div className="w-6 h-6 border-2 border-deep-teal border-t-transparent rounded-full animate-spin mx-auto" />
+                </div>
+              ) : filteredNotifications.length === 0 ? (
+                <div className="p-6 text-center">
+                  <Bell className="w-8 h-8 text-muted-foreground/40 mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">
+                    {activeFilter === 'all'
+                      ? (language === 'ar' ? 'لا توجد إشعارات' : language === 'bn' ? 'কোনো বিজ্ঞপ্তি নেই' : language === 'ur' ? 'کوئی اطلاعات نہیں' : 'No notifications')
+                      : 'No notifications in this category'}
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-border">
+                  {filteredNotifications.map((notification) => (
+                    <div
+                      key={notification.id}
+                      className={cn(
+                        'px-4 py-3 transition-colors cursor-pointer hover:bg-muted/50',
+                        !notification.read && 'bg-deep-teal/5',
+                      )}
+                      onClick={() => {
+                        if (!notification.read) markAsRead(notification.id)
+                      }}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className={cn('w-8 h-8 rounded-full flex items-center justify-center shrink-0 border', getNotificationBg(notification.type))}>
+                          {getNotificationIcon(notification.type)}
                         </div>
-                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
-                          {notification.message}
-                        </p>
-                        <p className="text-[10px] text-muted-foreground/70 mt-1">
-                          {formatTimeAgo(notification.createdAt, language)}
-                        </p>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className={cn('text-sm truncate', !notification.read && 'font-semibold')}>
+                              {notification.title}
+                            </p>
+                            {!notification.read && (
+                              <span className="w-2 h-2 rounded-full bg-deep-teal shrink-0" />
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                            {notification.message}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground/70 mt-1">
+                            {formatTimeAgo(notification.createdAt, language)}
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </ScrollArea>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Footer */}
-          <div className="px-4 py-2 border-t bg-muted/30 flex items-center justify-between">
-            <span className="text-[10px] text-muted-foreground">
-              {language === 'en' ? 'Polling every 15s' : 'تحديث كل 15 ثانية'}
-            </span>
-            <button
-              onClick={() => fetchNotifications()}
-              className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1"
-            >
-              <RefreshCw className="w-3 h-3" />
-              {language === 'en' ? 'Refresh' : 'تحديث'}
-            </button>
-          </div>
+          {!showPrefs && (
+            <div className="px-4 py-2 border-t bg-muted/30 flex items-center justify-between shrink-0">
+              <span className="text-[10px] text-muted-foreground">
+                {language === 'en' ? 'Polling every 15s' : 'تحديث كل 15 ثانية'}
+              </span>
+              <button
+                onClick={() => fetchNotifications()}
+                className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+              >
+                <RefreshCw className="w-3 h-3" />
+                {language === 'en' ? 'Refresh' : 'تحديث'}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -387,6 +454,7 @@ function getNotificationIcon(type: string) {
     case 'backup_failed':
       return <AlertTriangle className="w-4 h-4 text-red-500" />
     case 'daily_report':
+    case 'daily_report_summary':
       return <FileText className="w-4 h-4 text-blue-500" />
     case 'cheque_reminder_7d':
     case 'cheque_reminder_3d':
@@ -395,6 +463,8 @@ function getNotificationIcon(type: string) {
       return <Receipt className="w-4 h-4 text-orange-500" />
     case 'recurring_bill_reminder':
     case 'bill_overdue':
+    case 'BILL_UPCOMING':
+    case 'BILL_OVERDUE':
       return <Calendar className="w-4 h-4 text-purple-500" />
     case 'monthly_rollover':
       return <RefreshCw className="w-4 h-4 text-indigo-500" />
@@ -412,7 +482,9 @@ function getNotificationBg(type: string) {
     case 'maintenance_update': return 'bg-blue-50 border-blue-200'
     case 'backup_success': return 'bg-emerald-50 border-emerald-200'
     case 'backup_failed': return 'bg-red-50 border-red-200'
-    case 'daily_report': return 'bg-blue-50 border-blue-200'
+    case 'daily_report':
+    case 'daily_report_summary':
+      return 'bg-blue-50 border-blue-200'
     case 'cheque_reminder_7d':
     case 'cheque_reminder_3d':
     case 'cheque_reminder_1d':
@@ -420,6 +492,8 @@ function getNotificationBg(type: string) {
       return 'bg-orange-50 border-orange-200'
     case 'recurring_bill_reminder':
     case 'bill_overdue':
+    case 'BILL_UPCOMING':
+    case 'BILL_OVERDUE':
       return 'bg-purple-50 border-purple-200'
     case 'monthly_rollover':
       return 'bg-indigo-50 border-indigo-200'
@@ -446,7 +520,7 @@ function cn(...classes: (string | boolean | undefined)[]) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Preferences Panel (shown when user clicks the gear icon)
+// Preferences Panel
 // ═══════════════════════════════════════════════════════════════════════════
 
 function PreferencesPanel({
@@ -473,12 +547,11 @@ function PreferencesPanel({
   }
 
   return (
-    <div className="px-4 py-3 bg-muted/20 border-b">
+    <div className="px-4 py-3 bg-muted/20 border-b shrink-0">
       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
         {language === 'en' ? 'Notification Preferences' : 'تفضيلات الإشعارات'}
       </p>
 
-      {/* Browser push permission status */}
       {isSupported && (
         <div className="mb-3">
           <div className="flex items-center justify-between mb-1">
@@ -518,7 +591,6 @@ function PreferencesPanel({
         </div>
       )}
 
-      {/* Push toggle */}
       <PreferenceToggle
         label={language === 'en' ? 'Push notifications' : 'إشعارات منبثقة'}
         description={language === 'en' ? 'Show on desktop when browser is open' : 'إظهار على سطح المكتب'}
@@ -528,7 +600,6 @@ function PreferencesPanel({
         icon={preferences.pushEnabled ? <BellRing className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
       />
 
-      {/* Sound toggle */}
       <PreferenceToggle
         label={language === 'en' ? 'Sound alert' : 'تنبيه صوتي'}
         description={language === 'en' ? 'Play chime when new notification arrives' : 'تشغيل صوت عند وصول إشعار'}
@@ -538,7 +609,6 @@ function PreferencesPanel({
         icon={preferences.soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
       />
 
-      {/* Toast toggle */}
       <PreferenceToggle
         label={language === 'en' ? 'In-app popups' : 'نوافذ منبثقة داخل التطبيق'}
         description={language === 'en' ? 'Show toast popups while using the app' : 'إظهار نوافذ منبثقة أثناء استخدام التطبيق'}

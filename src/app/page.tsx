@@ -7,7 +7,6 @@ import { useDataStore } from '@/lib/data-store'
 import { t, rtlLanguages } from '@/lib/i18n'
 import Login from '@/components/login'
 import Sidebar from '@/components/sidebar'
-import Topbar from '@/components/topbar'
 import Dashboard from '@/components/dashboard'
 import Properties from '@/components/properties'
 import PropertyCollection from '@/components/property-collection'
@@ -171,7 +170,6 @@ function AppContent() {
           marginLeft: !isMobile && sidebarOpen ? '256px' : isMobile ? '0' : '0',
         }}
       >
-        <Topbar />
         <div className="p-4 md:p-6 lg:p-8 max-w-[1400px] mx-auto">
           {renderPage()}
         </div>
