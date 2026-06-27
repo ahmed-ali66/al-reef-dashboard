@@ -97,6 +97,20 @@ function AppContent() {
     return () => window.removeEventListener('resize', check)
   }, [setSidebarOpen])
 
+  // ─── Page transition loading bar ───
+  // Shows a thin animated bar at the top when changing pages.
+  // MUST be declared before any conditional returns (React Rules of Hooks).
+  const [pageTransitioning, setPageTransitioning] = useState(false)
+  const prevPageRef = useRef(currentPage)
+  useEffect(() => {
+    if (prevPageRef.current !== currentPage) {
+      setPageTransitioning(true)
+      const timer = setTimeout(() => setPageTransitioning(false), 600)
+      prevPageRef.current = currentPage
+      return () => clearTimeout(timer)
+    }
+  }, [currentPage])
+
   // Show loading while session is being checked
   if (status === 'loading') {
     return (
@@ -128,19 +142,6 @@ function AppContent() {
 
   const isFinancialUser = isOwnerOrAdmin(authUser.role)
   const isSystemAdmin = isAdminOnly(authUser.role)
-
-  // ─── Page transition loading bar ───
-  // Shows a thin animated bar at the top when changing pages
-  const [pageTransitioning, setPageTransitioning] = useState(false)
-  const prevPageRef = useRef(currentPage)
-  useEffect(() => {
-    if (prevPageRef.current !== currentPage) {
-      setPageTransitioning(true)
-      const timer = setTimeout(() => setPageTransitioning(false), 600)
-      prevPageRef.current = currentPage
-      return () => clearTimeout(timer)
-    }
-  }, [currentPage])
 
   const renderPage = () => {
     const pageContent = (() => {
