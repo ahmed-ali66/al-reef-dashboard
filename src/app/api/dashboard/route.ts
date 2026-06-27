@@ -170,6 +170,8 @@ export async function GET() {
         tenantScore: true,
         systemScore: true,
         manualScoreOverride: true,
+        leaseStart: true,
+        leaseEnd: true,
         property: {
           select: { id: true, name: true },
         },
@@ -229,11 +231,30 @@ export async function GET() {
       paymentByMonthMap.set(key, safeNumber(row._sum.amount))
     }
 
-    const chartData = chartMonths.map(({ month, year }) => ({
-      month: monthNames[month - 1],
-      expected: expectedRevenue,
-      collected: paymentByMonthMap.get(`${month}-${year}`) || 0,
-    }))
+    // LEASE-AWARE EXPECTED REVENUE per month
+    // For each chart month, sum rentAmount only for tenants whose lease was active
+    // during that month (leaseStart <= end_of_month AND (leaseEnd IS NULL OR leaseEnd >= start_of_month)).
+    // This replaces the old static expectedRevenue (same value for all 6 months) with
+    // an accurate per-month figure that reflects actual lease activity.
+    const chartData = chartMonths.map(({ month, year }) => {
+      const monthStart = new Date(year, month - 1, 1)
+      const monthEnd = new Date(year, month, 0, 23, 59, 59, 999)
+      let monthExpected = 0
+      for (const t of activeTenants) {
+        const leaseStart = t.leaseStart ? new Date(t.leaseStart) : null
+        const leaseEnd = t.leaseEnd ? new Date(t.leaseEnd) : null
+        // Skip tenants whose lease started after this month ended
+        if (leaseStart && leaseStart > monthEnd) continue
+        // Skip tenants whose lease ended before this month started
+        if (leaseEnd && leaseEnd < monthStart) continue
+        monthExpected += safeNumber(t.rentAmount)
+      }
+      return {
+        month: monthNames[month - 1],
+        expected: monthExpected,
+        collected: paymentByMonthMap.get(`${month}-${year}`) || 0,
+      }
+    })
 
     // ─── 6. Recent payments — top 10 only (bounded) ───
     const recentPayments = await prisma.payment.findMany({

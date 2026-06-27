@@ -231,7 +231,7 @@ export interface ReportData {
   occupiedUnits: number
   expenseBreakdown: Record<string, number>
   monthlyExpenses: ExpenseData[]
-  trend: { month: number; year: number; revenue: number; expenses: number; profit: number }[]
+  trend: { month: number; year: number; revenue: number; expenses: number; profit: number; expected?: number }[]
   // P&L fields
   rentalIncome: number
   otherIncome: number

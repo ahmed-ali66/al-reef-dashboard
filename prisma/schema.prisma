@@ -33,6 +33,7 @@ model Company {
   maintenance   Maintenance[]
   users         User[]
   backupRecords BackupRecord[]
+  rolloverLogs  RolloverLog[]
   receipts      Receipt[]
   notifications Notification[]
   reservations  Reservation[]
@@ -423,6 +424,33 @@ model BackupRecord {
   @@index([createdAt])
   @@index([status])
   @@map("backup_records")
+}
+
+// Monthly Rollover Log — tracks idempotent execution of the monthly rollover cron.
+// One row per (company, targetMonth, targetYear, dryRun) combination.
+// The unique constraint ensures the rollover can be safely re-run without double-processing.
+model RolloverLog {
+  id             String   @id @default(cuid())
+  companyId      String
+  company        Company  @relation(fields: [companyId], references: [id])
+  targetMonth    Int      // the NEW month being rolled into (e.g., 7 for July)
+  targetYear     Int
+  dryRun         Boolean  @default(false) // true = preview only, no DB changes
+  status         String   @default("completed") // "completed" | "failed" | "partial"
+  error          String?
+  // Stats captured at execution time for audit:
+  tenantsProcessed     Int  @default(0)
+  creditsConsumed      Int  @default(0) // count of tenants whose creditBalance was reduced
+  creditsConsumedTotal Decimal @default(0) @db.Decimal(14, 2) // total AED consumed
+  debtsCarriedForward  Int  @default(0) // count of tenants whose unpaid rent → openingBalance
+  debtsCarriedTotal    Decimal @default(0) @db.Decimal(14, 2) // total AED carried
+  billsAdvanced        Int  @default(0) // count of recurring bills whose cycle was advanced
+  triggeredBy   String? // userId (manual) or "cron" (automated)
+  createdAt     DateTime @default(now())
+
+  @@unique([companyId, targetMonth, targetYear, dryRun])
+  @@index([companyId, targetYear, targetMonth])
+  @@map("rollover_logs")
 }
 
 model Receipt {

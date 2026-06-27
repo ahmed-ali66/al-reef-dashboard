@@ -1764,10 +1764,12 @@ export default function Reports() {
   }))
 
   // Revenue analysis monthly trend data
+  // Uses per-month lease-aware expected revenue from the API (item.expected)
+  // instead of the static data.expectedRevenue (which was the same for all months).
   const revenueTrendData = data.trend.map(item => ({
     month: getMonthName(item.month, lang),
     revenue: item.revenue,
-    expected: data.expectedRevenue,
+    expected: (item as any).expected ?? data.expectedRevenue,
   }))
 
   const netProfitMargin = data.grossRevenue > 0 ? ((data.netIncome / data.grossRevenue) * 100) : 0
