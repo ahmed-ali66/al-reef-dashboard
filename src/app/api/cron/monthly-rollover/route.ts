@@ -234,6 +234,23 @@ async function processCompanyRollover(params: {
   })
   const tenantsAlreadyProcessed = new Set(existingRolloverPayments.map((p) => p.tenantId))
 
+  // ALL existing payments for the TARGET month (not just rollover ones).
+  // Used in Phase B to skip credit consumption for tenants who already paid the target month's rent.
+  // This prevents double-payment when a tenant has both a credit balance AND a manual payment for the same month.
+  const targetMonthAllPayments = await prisma.payment.findMany({
+    where: {
+      companyId,
+      month: targetMonth,
+      year: targetYear,
+      allocationType: { not: 'HISTORICAL_DEBT' },
+    },
+    select: { tenantId: true, amount: true },
+  })
+  const targetMonthPaidMap = new Map<string, number>()
+  for (const p of targetMonthAllPayments) {
+    targetMonthPaidMap.set(p.tenantId, (targetMonthPaidMap.get(p.tenantId) || 0) + safeNumber(p.amount))
+  }
+
   // Rent adjustments effective in the previous month
   const prevMonthAdjustments = await prisma.rentAdjustment.findMany({
     where: {
@@ -399,8 +416,20 @@ async function processCompanyRollover(params: {
     const monthlyMunFee = safeNumber(tenant.municipalityFee)
     const monthlyCharges = monthlyRent + monthlyMunFee
 
-    // Consume up to 1 month's charges from credit
-    const amountToConsume = Math.min(creditBalance, monthlyCharges)
+    // CRITICAL: Skip credit consumption if the tenant already has sufficient payments
+    // for the target month. This prevents double-payment when a tenant has both a credit
+    // balance AND a manual payment for the same month.
+    // Example: Tenant paid 11,000 advance in June → 3,667 to June rent, 7,333 to credit.
+    // If rollover also consumes 3,667 from credit for June, the tenant is double-paid.
+    const alreadyPaidTargetMonth = targetMonthPaidMap.get(tenant.id) || 0
+    if (alreadyPaidTargetMonth >= monthlyCharges) {
+      // Tenant already paid the target month's rent — don't consume credit
+      continue
+    }
+
+    // Consume up to 1 month's charges from credit (minus any partial payment already made)
+    const remainingCharges = Math.max(0, monthlyCharges - alreadyPaidTargetMonth)
+    const amountToConsume = Math.min(creditBalance, remainingCharges)
     if (amountToConsume <= 0) continue
 
     creditsConsumed++
@@ -414,6 +443,7 @@ async function processCompanyRollover(params: {
         property: tenant.property.name,
         targetMonth: `${targetYear}-${String(targetMonth).padStart(2, '0')}`,
         monthlyCharges,
+        alreadyPaidTargetMonth,
         creditBalanceBefore: creditBalance,
         amountToConsume,
         creditBalanceAfter: creditBalance - amountToConsume,
