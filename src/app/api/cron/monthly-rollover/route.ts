@@ -163,6 +163,41 @@ async function processCompanyRollover(params: {
 
   console.log(`  [${companyName}] Starting rollover (dryRun=${dryRun})`)
 
+  // ─── GO-LIVE DATE GUARD ───
+  // The system go-live date is the first month this company started using the system for production.
+  // The rollover will NEVER carry forward unpaid rent for months before this date.
+  // Historical debt for pre-go-live months must be entered manually via HISTORICAL_DEBT payments.
+  // If systemGoLiveDate is null, no restriction is applied (treat all months as live).
+  const company = await prisma.company.findUnique({
+    where: { id: companyId },
+    select: { systemGoLiveDate: true },
+  })
+  if (company?.systemGoLiveDate) {
+    const goLiveDate = new Date(company.systemGoLiveDate)
+    // Go-live month = the month containing systemGoLiveDate (e.g., June 1, 2026 → June 2026)
+    const goLiveMonth = goLiveDate.getMonth() + 1  // 1-indexed
+    const goLiveYear = goLiveDate.getFullYear()
+
+    // The PREVIOUS month is the one whose unpaid rent would be carried forward.
+    // If the previous month is before the go-live month, refuse to process.
+    const prevMonthIsBeforeGoLive = (prevYear < goLiveYear) || (prevYear === goLiveYear && prevMonth < goLiveMonth)
+
+    if (prevMonthIsBeforeGoLive) {
+      console.log(`  [${companyName}] SKIPPED — previous month ${prevYear}-${prevMonth} is before system go-live date ${goLiveDate.toISOString().slice(0, 10)}. Historical debt for pre-go-live months must be entered manually.`)
+      return {
+        companyId,
+        companyName,
+        status: 'skipped_before_go_live',
+        goLiveDate: goLiveDate.toISOString(),
+        targetMonth,
+        targetYear,
+        prevMonth,
+        prevYear,
+        message: `Skipped: previous month (${prevYear}-${String(prevMonth).padStart(2, '0')}) is before system go-live date (${goLiveDate.toISOString().slice(0, 10)}). Historical debt for pre-go-live months must be entered manually via HISTORICAL_DEBT payments.`,
+      }
+    }
+  }
+
   // ─── IDEMPOTENCY CHECK ───
   // If a NON-dry-run rollover already completed for this (company, month, year), skip.
   // Dry-run records don't block real runs (they have a different unique key).

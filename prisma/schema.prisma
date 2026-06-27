@@ -23,6 +23,11 @@ model Company {
   stripeCustomerId   String?
   subscriptionStatus String?
   subscriptionEnd    DateTime?
+  // System go-live date — the first month this company started using the system for production.
+  // The monthly rollover will NEVER carry forward unpaid rent for months before this date.
+  // Historical debt for pre-go-live months must be entered manually via HISTORICAL_DEBT payments.
+  // Editable via Settings page (admin only). Default: null = no restriction (treat all months as live).
+  systemGoLiveDate   DateTime?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
