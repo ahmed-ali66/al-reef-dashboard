@@ -6,22 +6,24 @@ import prisma from '@/lib/db'
 // Runs daily via GitHub Actions. Finds all OUTGOING cheques (to property owners)
 // that are due in 15, 7, 5, 3, or 1 days, and creates reminder notifications.
 //
-// Reminder thresholds (escalating urgency):
-//   15 days — early heads-up (info, blue)
-//   7 days  — first reminder (warning, amber)
-//   5 days  — second reminder (warning, amber)
-//   3 days  — urgent reminder (urgent, orange)
-//   1 day   — critical reminder (critical, red)
-//   Overdue (1, 7, 14, 30 days overdue) — overdue alerts (critical, red)
+// Reminder thresholds (escalating urgency) with NON-OVERLAPPING WINDOWS:
+//   15d window: due in 8-15 days  → early heads-up (info, blue)
+//   7d  window: due in 6-7 days   → first reminder (warning, amber)
+//   5d  window: due in 4-5 days   → second reminder (warning, amber)
+//   3d  window: due in 2-3 days   → urgent reminder (urgent, orange)
+//   1d  window: due in 0-1 days   → critical reminder (critical, red)
+//   Overdue (1, 7, 14, 30 days overdue) → overdue alerts (critical, red)
 //
-// IMPORTANT: Uses threshold windows (not exact-day match) so reminders fire
-// even if the cron didn't run on the exact day. For example, the 7-day reminder
-// fires for any cheque due in 6-7 days, so if the cron missed yesterday's run,
-// the cheque still gets a 7-day reminder today (one day late, but not missed).
+// WINDOWS ensure every cheque gets a reminder at each threshold, even if:
+//   - The cron missed a day (e.g., a cheque due in 4 days still gets the 5d reminder)
+//   - The cheque's due date doesn't fall on an exact threshold day
+//
+// Example: A cheque due in 13 days fires the 15-day reminder (13 is in the 8-15 window).
+// A cheque due in 4 days fires the 5-day reminder (4 is in the 4-5 window).
+// A cheque due in 6 days fires the 7-day reminder (6 is in the 6-7 window).
 //
 // Each notification includes an `actionUrl` in the data field so the UI can
-// make the notification clickable — clicking takes the user to the Cheques
-// tab filtered to that specific cheque.
+// make the notification clickable — clicking takes the user to the Cheques tab.
 //
 // AUTH: Bearer CRON_SECRET or x-vercel-cron header.
 
@@ -40,31 +42,17 @@ export async function GET(request: Request) {
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
 
-  // Compute threshold dates: 15, 7, 5, 3, 1 days from today
+  // Thresholds with non-overlapping windows
+  // Each window covers a range of days-until-due, ensuring every cheque gets exactly one reminder per threshold tier.
   const thresholds = [
-    { days: 15, type: 'cheque_reminder_15d', urgency: 'info' },
-    { days: 7,  type: 'cheque_reminder_7d',  urgency: 'warning' },
-    { days: 5,  type: 'cheque_reminder_5d',  urgency: 'warning' },
-    { days: 3,  type: 'cheque_reminder_3d',  urgency: 'urgent' },
-    { days: 1,  type: 'cheque_reminder_1d',  urgency: 'critical' },
+    { days: 15, type: 'cheque_reminder_15d', urgency: 'info',     windowMin: 8,  windowMax: 15 },
+    { days: 7,  type: 'cheque_reminder_7d',  urgency: 'warning',  windowMin: 6,  windowMax: 7  },
+    { days: 5,  type: 'cheque_reminder_5d',  urgency: 'warning',  windowMin: 4,  windowMax: 5  },
+    { days: 3,  type: 'cheque_reminder_3d',  urgency: 'urgent',   windowMin: 2,  windowMax: 3  },
+    { days: 1,  type: 'cheque_reminder_1d',  urgency: 'critical', windowMin: 0,  windowMax: 1  },
   ]
 
-  // Compute date ranges for each threshold.
-  // Each threshold covers a 2-day window (the target day + the day before)
-  // so reminders fire even if the cron missed a day.
-  // BUT: windows don't overlap, so a cheque gets exactly ONE reminder per threshold.
-  // Example for 7-day: fires if cheque is due in 6-7 days (not 5, not 8).
-  const thresholdWindows = thresholds.map(({ days, type, urgency }, i) => {
-    const upper = new Date(today)
-    upper.setDate(upper.getDate() + days)
-    const lower = new Date(today)
-    lower.setDate(lower.getDate() + days)  // start of target day
-    // Window: [target day start, target day + 1 day) — covers the single target day
-    // We'll use a different approach below for "catch-up" — see comment
-    return { days, type, urgency, targetDate: upper, label: `${days}d` }
-  })
-
-  console.log(`[CHEQUE_REMINDERS] Today: ${today.toISOString().slice(0,10)} | Thresholds: ${thresholds.map(t => `${t.days}d`).join(', ')} | Also checking overdue`)
+  console.log(`[CHEQUE_REMINDERS] Today: ${today.toISOString().slice(0,10)} | Thresholds: ${thresholds.map(t => `${t.days}d (${t.windowMin}-${t.windowMax}d window)`).join(', ')} | Also checking overdue`)
 
   // ─── Fetch all companies ───
   const companies = await prisma.company.findMany({ select: { id: true, name: true } })
@@ -76,14 +64,15 @@ export async function GET(request: Request) {
     companies.map(async (company) => {
       try {
         const notifications: any[] = []
-        const createdChequeIds = new Set<string>()  // track which cheques we've already notified (avoid duplicates across thresholds)
 
-        // Process each threshold (15, 7, 5, 3, 1 days)
-        for (const { days, type, urgency, targetDate, label } of thresholdWindows) {
-          // Window: exactly the target day (e.g., cheques due ON the date that is `days` from today)
-          const windowStart = new Date(targetDate)
+        // Process each threshold with its window
+        for (const { days, type, urgency, windowMin, windowMax } of thresholds) {
+          // Compute the date window: cheques due between windowMin and windowMax days from today
+          const windowStart = new Date(today)
+          windowStart.setDate(windowStart.getDate() + windowMin)
           windowStart.setHours(0, 0, 0, 0)
-          const windowEnd = new Date(targetDate)
+          const windowEnd = new Date(today)
+          windowEnd.setDate(windowEnd.getDate() + windowMax)
           windowEnd.setHours(23, 59, 59, 999)
 
           const cheques = await prisma.cheque.findMany({
@@ -97,19 +86,18 @@ export async function GET(request: Request) {
           })
 
           for (const cheque of cheques) {
-            // Skip if we already created a notification for this cheque in this run
-            // (shouldn't happen with non-overlapping windows, but safety check)
-            if (createdChequeIds.has(cheque.id)) continue
-            createdChequeIds.add(cheque.id)
+            // Compute actual days until due (for display)
+            const dueDate = new Date(cheque.dueDate)
+            dueDate.setHours(0, 0, 0, 0)
+            const actualDaysUntilDue = Math.round((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
 
-            // Check if a notification of this exact type already exists for this cheque
-            // (idempotency: if cron re-runs same day, don't duplicate)
+            // Idempotency: skip if a notification of this exact type already exists for this cheque today
             const existingNotif = await prisma.notification.findFirst({
               where: {
                 companyId: company.id,
                 type,
                 data: { contains: `"chequeId":"${cheque.id}"` },
-                createdAt: { gte: new Date(today) },  // created today
+                createdAt: { gte: new Date(today) },
               },
               select: { id: true },
             })
@@ -119,7 +107,7 @@ export async function GET(request: Request) {
             }
 
             const urgencyPrefix = urgency === 'critical' ? 'CRITICAL: ' : urgency === 'urgent' ? 'URGENT: ' : ''
-            const dayLabel = days === 1 ? 'TOMORROW' : `in ${days} Days`
+            const dayLabel = actualDaysUntilDue === 0 ? 'TODAY' : actualDaysUntilDue === 1 ? 'TOMORROW' : `in ${actualDaysUntilDue} Days`
 
             const notif = await prisma.notification.create({
               data: {
@@ -137,14 +125,15 @@ export async function GET(request: Request) {
                   bankName: cheque.bankName,
                   propertyId: cheque.propertyId,
                   propertyName: cheque.property.name,
-                  daysUntilDue: days,
+                  daysUntilDue: actualDaysUntilDue,
+                  threshold: days,
                   urgency,
-                  actionUrl: '/cheques',  // clicking takes user to Cheques tab
+                  actionUrl: '/cheques',
                   actionLabel: 'View Cheque',
                 }),
               },
             })
-            notifications.push({ type, cheque, notifId: notif.id })
+            notifications.push({ type, cheque, notifId: notif.id, actualDaysUntilDue })
           }
         }
 
@@ -161,7 +150,6 @@ export async function GET(request: Request) {
 
         for (const cheque of overdueCheques) {
           const daysOverdue = Math.floor((today.getTime() - new Date(cheque.dueDate).getTime()) / (1000 * 60 * 60 * 24))
-          // Only notify on specific milestones to avoid spam: 1, 7, 14, 30 days overdue
           if (![1, 7, 14, 30].includes(daysOverdue)) continue
 
           // Idempotency check
@@ -220,6 +208,7 @@ export async function GET(request: Request) {
             property: n.cheque.property.name,
             amount: Number(n.cheque.amount),
             dueDate: n.cheque.dueDate.toISOString().slice(0, 10),
+            daysUntilDue: n.actualDaysUntilDue,
             daysOverdue: n.daysOverdue,
           })),
         }
@@ -246,7 +235,13 @@ export async function GET(request: Request) {
   const summary = {
     timestamp: new Date().toISOString(),
     today: today.toISOString().slice(0, 10),
-    thresholds: thresholds.map(t => ({ days: t.days, type: t.type, targetDate: new Date(today.getTime() + t.days * 86400000).toISOString().slice(0, 10) })),
+    thresholds: thresholds.map(t => ({
+      days: t.days,
+      type: t.type,
+      window: `${t.windowMin}-${t.windowMax} days`,
+      windowStart: new Date(today.getTime() + t.windowMin * 86400000).toISOString().slice(0, 10),
+      windowEnd: new Date(today.getTime() + t.windowMax * 86400000).toISOString().slice(0, 10),
+    })),
     companiesProcessed: results.length,
     companiesFailed: errors.length,
     totalNotificationsCreated: results.reduce((s, r) => s + r.notificationsCreated, 0),
