@@ -74,6 +74,7 @@ model User {
   updatedAt            DateTime       @updatedAt
   resetRequests        ResetRequest[] @relation("ResolvedBy")
   auditLogs            AuditLog[]
+  notificationPreferences NotificationPreference?
 
   @@index([companyId])
   @@index([email])
@@ -497,6 +498,28 @@ model Notification {
   @@index([read])
   @@index([createdAt])
   @@map("notifications")
+}
+
+// Per-user notification preferences
+// Controls which notification types trigger browser push, sound, and toast popups.
+// One row per user. If no row exists, defaults are used (all enabled).
+model NotificationPreference {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Master switches
+  pushEnabled     Boolean  @default(true)   // browser push notifications
+  soundEnabled    Boolean  @default(true)   // sound alert
+  toastEnabled    Boolean  @default(true)   // in-app toast popups
+  // Per-category toggles (comma-separated list of disabled types, e.g. "daily_report,backup_success")
+  disabledTypes   String   @default("")     // empty = all types enabled
+  // Sound file to use (default: 'chime')
+  soundFile       String   @default("chime")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+  @@map("notification_preferences")
 }
 
 model ScoreAuditLog {
