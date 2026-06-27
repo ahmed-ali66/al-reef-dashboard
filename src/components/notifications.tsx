@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { useAppStore } from '@/lib/store'
 import { t, rtlLanguages } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
@@ -71,7 +72,41 @@ export default function Notifications() {
   const [loading, setLoading] = useState(false)
   const [showPrefs, setShowPrefs] = useState(false)
   const [activeFilter, setActiveFilter] = useState<FilterId>('all')
+  const [mounted, setMounted] = useState(false)
+  const bellRef = useRef<HTMLButtonElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 })
+
+  // ─── Mount check (for portal) ───
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  // ─── Compute dropdown position based on bell button location ───
+  const updateDropdownPosition = useCallback(() => {
+    if (!bellRef.current) return
+    const rect = bellRef.current.getBoundingClientRect()
+    // Position dropdown below the bell, right-aligned to the bell's right edge
+    // Use min() to keep it at least 16px from viewport's right edge
+    const right = window.innerWidth - rect.right
+    setDropdownPos({
+      top: rect.bottom + 8,
+      right: Math.max(16, right),
+    })
+  }, [])
+
+  // Recompute position when opening or on window resize/scroll
+  useEffect(() => {
+    if (!isOpen) return
+    updateDropdownPosition()
+    const handleResize = () => updateDropdownPosition()
+    window.addEventListener('resize', handleResize)
+    window.addEventListener('scroll', handleResize, true)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      window.removeEventListener('scroll', handleResize, true)
+    }
+  }, [isOpen, updateDropdownPosition])
 
   const {
     permission,
@@ -155,17 +190,29 @@ export default function Notifications() {
     }
   }, [authUser, fetchNotifications])
 
-  // Close dropdown when clicking outside
+  // Close dropdown when clicking outside (checks both bell + dropdown via portal)
   useEffect(() => {
+    if (!isOpen) return
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false)
-        setShowPrefs(false)
-      }
+      const target = event.target as Node
+      // Check if click is on the bell button
+      if (bellRef.current && bellRef.current.contains(target)) return
+      // Check if click is inside the dropdown (which is portaled to body)
+      if (dropdownRef.current && dropdownRef.current.contains(target)) return
+      // Click was outside both → close
+      setIsOpen(false)
+      setShowPrefs(false)
     }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
+    // Use mousedown for immediate response, but delay slightly so the bell's
+    // own onClick doesn't immediately close the dropdown
+    const timer = setTimeout(() => {
+      document.addEventListener('mousedown', handleClickOutside)
+    }, 0)
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [isOpen])
 
   // ─── Request push permission on first user interaction ───
   useEffect(() => {
@@ -224,13 +271,19 @@ export default function Notifications() {
   }, [notifications])
 
   return (
-    <div className="relative" ref={dropdownRef}>
-      {/* Bell button */}
+    <>
+      {/* Bell button — rendered in place (inside the heading) */}
       <button
+        ref={bellRef}
         onClick={() => {
-          setIsOpen(!isOpen)
+          const newOpen = !isOpen
+          setIsOpen(newOpen)
           setShowPrefs(false)
-          if (!isOpen) fetchNotifications()
+          if (newOpen) {
+            fetchNotifications()
+            // Compute position on next tick (after state update)
+            setTimeout(() => updateDropdownPosition(), 0)
+          }
         }}
         className="relative p-2 text-foreground/70 hover:text-foreground hover:bg-muted rounded-lg transition-all"
         title={language === 'ar' ? 'الإشعارات' : language === 'bn' ? 'বিজ্ঞপ্তি' : language === 'ur' ? 'اطلاعات' : 'Notifications'}
@@ -247,9 +300,20 @@ export default function Notifications() {
         )}
       </button>
 
-      {/* Dropdown panel — right-aligned to stay within frame */}
-      {isOpen && (
-        <div className="absolute top-full mt-2 right-0 w-[400px] max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-2xl border border-border z-50 overflow-hidden flex flex-col">
+      {/* Dropdown panel — rendered via PORTAL to document.body */}
+      {/* This escapes all parent stacking contexts (transform/opacity from animations) */}
+      {/* so z-index works correctly and the dropdown always appears on top */}
+      {isOpen && mounted && createPortal(
+        <div
+          ref={dropdownRef}
+          style={{
+            position: 'fixed',
+            top: `${dropdownPos.top}px`,
+            right: `${dropdownPos.right}px`,
+            zIndex: 9999,
+          }}
+          className="w-[400px] max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-2xl border border-border overflow-hidden flex flex-col"
+        >
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30 shrink-0">
             <h3 className="font-semibold text-sm flex items-center gap-2">
@@ -429,9 +493,10 @@ export default function Notifications() {
               </button>
             </div>
           )}
-        </div>
+        </div>,
+        document.body
       )}
-    </div>
+    </>
   )
 }
 
