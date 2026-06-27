@@ -1,0 +1,62 @@
+name: Recurring Bill Reminders
+
+# Triggers Vercel's /api/cron/recurring-bill-reminders endpoint to generate
+# reminder notifications for upcoming and overdue recurring bills.
+#
+# Schedule: 21:00 UTC daily (01:00 Dubai time)
+# Replaces: Vercel Cron (removed from vercel.json to stay within Hobby tier's 2-cron limit)
+#
+# Auth: Bearer CRON_SECRET (stored as GitHub Actions secret + Vercel env var)
+
+on:
+  schedule:
+    - cron: '0 21 * * *'  # 21:00 UTC daily = 01:00 Dubai
+  workflow_dispatch: {}  # Allow manual triggering for testing
+
+jobs:
+  trigger-bill-reminders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger recurring bill reminders endpoint
+        run: |
+          echo "[$(date -u)] Triggering recurring bill reminders on Vercel..."
+          RESPONSE=$(curl -sS -w "\n%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.VERCEL_APP_URL }}/api/cron/recurring-bill-reminders")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response (first 500 chars): $(echo "$BODY" | head -c 500)"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Bill reminders failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
+          echo "✅ Bill reminders completed successfully"
+
+  notify-failure:
+    needs: trigger-bill-reminders
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send email notification
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: '⚠️ [Al Reef] Recurring Bill Reminders workflow FAILED'
+          to: ${{ secrets.NOTIFICATION_EMAIL }}
+          from: GitHub Actions
+          body: |
+            The "Recurring Bill Reminders" GitHub Actions workflow has FAILED.
+
+            Repository: ${{ github.repository }}
+            Workflow: ${{ github.workflow }}
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Please check the workflow logs and the Vercel endpoint:
+            ${{ secrets.VERCEL_APP_URL }}/api/cron/recurring-bill-reminders
+
+            Timestamp: $(date -u)
