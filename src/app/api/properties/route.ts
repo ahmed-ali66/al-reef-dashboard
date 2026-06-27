@@ -160,6 +160,7 @@ export async function POST(request: Request) {
         totalUnits,
         floors,
         archived: body.archived === true,
+        isOperationalOnly: body.isOperationalOnly === true,
       },
     })
 

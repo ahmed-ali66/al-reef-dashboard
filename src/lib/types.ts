@@ -58,6 +58,7 @@ export interface PropertyData {
   totalUnits: number
   floors: number
   archived: boolean
+  isOperationalOnly?: boolean // true = utility-only property excluded from vacancy reports
   createdAt: string
   tenants: TenantData[]
 }

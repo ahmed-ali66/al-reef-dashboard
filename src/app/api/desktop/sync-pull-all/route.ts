@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
   // Properties
   const properties = await prisma.property.findMany({
     where: { companyId, deletedAt: null, updatedAt: { gte: sinceDate } },
-    select: { id: true, name: true, nameAr: true, nameBn: true, nameUr: true, type: true, totalUnits: true, floors: true, address: true, archived: true, createdAt: true, updatedAt: true },
+    select: { id: true, name: true, nameAr: true, nameBn: true, nameUr: true, type: true, totalUnits: true, floors: true, address: true, archived: true, isOperationalOnly: true, createdAt: true, updatedAt: true },
   })
   for (const r of properties) changes.push({ table: 'properties', action: 'upsert', record: serialize(r), recordId: r.id })
 

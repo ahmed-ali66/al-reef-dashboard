@@ -13,7 +13,8 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
-import { Building2, Plus, Pencil, Trash2, Users, Loader2, Archive, ArchiveRestore, FileDown } from 'lucide-react'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Building2, Plus, Pencil, Trash2, Users, Loader2, Archive, ArchiveRestore, FileDown, Plug } from 'lucide-react'
 import { calculateEffectivePaymentsReceived } from '@/lib/financial-utils'
 
 export default function Properties() {
@@ -33,6 +34,7 @@ export default function Properties() {
     address: '',
     totalUnits: 1,
     floors: 1,
+    isOperationalOnly: false,
   })
 
   const canSeeRevenue = isOwnerOrAdmin(authUser?.role || '')
@@ -54,7 +56,7 @@ export default function Properties() {
 
   const openNew = () => {
     setEditing(null)
-    setForm({ name: '', nameAr: '', nameBn: '', nameUr: '', type: 'apartment', address: '', totalUnits: 1, floors: 1 })
+    setForm({ name: '', nameAr: '', nameBn: '', nameUr: '', type: 'apartment', address: '', totalUnits: 1, floors: 1, isOperationalOnly: false })
     setDialogOpen(true)
   }
 
@@ -69,6 +71,7 @@ export default function Properties() {
       address: p.address || '',
       totalUnits: p.totalUnits,
       floors: p.floors || 1,
+      isOperationalOnly: p.isOperationalOnly === true,
     })
     setDialogOpen(true)
   }
@@ -215,6 +218,12 @@ export default function Properties() {
                         <Badge variant="secondary" className="text-xs">
                           {getPropertyTypeLabel(p.type, language)}
                         </Badge>
+                        {p.isOperationalOnly && (
+                          <Badge variant="outline" className="text-xs border-blue-400 text-blue-600 bg-blue-50" title="Non-rental property — excluded from vacancy reports">
+                            <Plug className="w-3 h-3 mr-0.5 inline" />
+                            Utility Only
+                          </Badge>
+                        )}
                         {p.archived && (
                           <Badge variant="outline" className="text-xs border-gray-400 text-gray-500">
                             {t('sellProperty', language)}
@@ -340,6 +349,21 @@ export default function Properties() {
               <div>
                 <Label>{t('floors', language)}</Label>
                 <Input type="number" value={form.floors} onChange={e => setForm({ ...form, floors: parseInt(e.target.value) || 1 })} />
+              </div>
+            </div>
+            <div className="flex items-start gap-3 p-3 rounded-lg border bg-muted/30">
+              <Checkbox
+                id="isOperationalOnly"
+                checked={form.isOperationalOnly}
+                onCheckedChange={(checked) => setForm({ ...form, isOperationalOnly: checked === true })}
+              />
+              <div className="space-y-1 leading-none">
+                <Label htmlFor="isOperationalOnly" className="cursor-pointer font-medium">
+                  Operational / Utility Only
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Mark this property as non-rental (your own office, master-leased villa where you only pay electricity, etc.). It will still route utility bills and expenses, but will be excluded from vacancy reports and rental occupancy stats.
+                </p>
               </div>
             </div>
           </div>

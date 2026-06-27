@@ -47,12 +47,16 @@ export async function GET() {
     const company = await prisma.company.findUnique({ where: { id: user.companyId } })
     if (!company) return errorResponse('Company not found', 404)
 
-    // ─── Fetch all non-archived, non-deleted properties with their tenants ───
+    // ─── Fetch all non-archived, non-deleted, non-operational-only properties ───
+    // isOperationalOnly properties exist purely for utility/bill routing (own office,
+    // master-leased villa where we only pay electricity). They are excluded from
+    // vacancy reports since they are not rental inventory.
     const properties = await prisma.property.findMany({
       where: {
         companyId: user.companyId,
         archived: false,
         deletedAt: null,
+        isOperationalOnly: false,
       },
       include: {
         tenants: {
