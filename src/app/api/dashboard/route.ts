@@ -57,8 +57,12 @@ export async function GET() {
       activeTenantsCount,
       totalPropertiesCount,
       totalUnitsAggregate,
-      currentMonthPaidAggregate,
+      currentMonthRentAggregate,
+      currentMonthAdvanceAggregate,
+      currentMonthDebtAggregate,
       expectedRevenueAggregate,
+      totalCreditBalanceAggregate,
+      totalOpeningBalanceAggregate,
       currentMonthAdjustmentsAggregate,
       currentMonthExpensesAggregate,
       paymentByMonth,
@@ -100,9 +104,21 @@ export async function GET() {
         _sum: { totalUnits: true },
       }),
 
-      // Current month collected revenue
+      // Current month CURRENT_RENT revenue (the "real" collected rent)
       prisma.payment.aggregate({
-        where: { companyId, month: currentMonth, year: currentYear },
+        where: { companyId, month: currentMonth, year: currentYear, allocationType: 'CURRENT_RENT' },
+        _sum: { amount: true },
+      }),
+
+      // Current month ADVANCE_PAYMENT total (shown separately — NOT in collectedRevenue)
+      prisma.payment.aggregate({
+        where: { companyId, month: currentMonth, year: currentYear, allocationType: 'ADVANCE_PAYMENT' },
+        _sum: { amount: true },
+      }),
+
+      // Current month HISTORICAL_DEBT total (shown separately — debt collections)
+      prisma.payment.aggregate({
+        where: { companyId, month: currentMonth, year: currentYear, allocationType: 'HISTORICAL_DEBT' },
         _sum: { amount: true },
       }),
 
@@ -110,6 +126,20 @@ export async function GET() {
       prisma.tenant.aggregate({
         where: { companyId, deletedAt: null, status: { in: [...FINANCIALLY_ACTIVE_STATUSES] } },
         _sum: { rentAmount: true },
+      }),
+
+      // Total credit balances across all active tenants (advance payments not yet consumed)
+      prisma.tenant.aggregate({
+        where: { companyId, deletedAt: null, status: { in: [...FINANCIALLY_ACTIVE_STATUSES] }, creditBalance: { gt: 0 } },
+        _sum: { creditBalance: true },
+        _count: true,
+      }),
+
+      // Total opening balances across all active tenants (historical debt / overdue)
+      prisma.tenant.aggregate({
+        where: { companyId, deletedAt: null, status: { in: [...FINANCIALLY_ACTIVE_STATUSES] }, openingBalance: { gt: 0 } },
+        _sum: { openingBalance: true },
+        _count: true,
       }),
 
       // Current month adjustments
@@ -181,13 +211,28 @@ export async function GET() {
 
     // ─── Derive values from Block A results ───
     const expectedRevenue = safeNumber(expectedRevenueAggregate._sum.rentAmount)
-    const collectedRevenue = safeNumber(currentMonthPaidAggregate._sum.amount)
+    // Collected revenue = CURRENT_RENT only (the actual rent collected for this month).
+    // ADVANCE_PAYMENTs are shown separately as "Advance Payments Received" — they
+    // should NOT inflate the monthly collected revenue figure.
+    // HISTORICAL_DEBT payments are shown separately as "Historical Debt Collected".
+    const currentRentRevenue = safeNumber(currentMonthRentAggregate._sum.amount)
+    const advancePaymentsReceived = safeNumber(currentMonthAdvanceAggregate._sum.amount)
+    const historicalDebtCollected = safeNumber(currentMonthDebtAggregate._sum.amount)
+    const collectedRevenue = currentRentRevenue  // Only CURRENT_RENT counts as "collected"
     const totalUnits = safeNumber(totalUnitsAggregate._sum.totalUnits)
-    const occupiedUnits = activeTenantsCount  // same as activeTenantsCount
+    const occupiedUnits = activeTenantsCount
     const occupancyRate = totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 100) : 0
     const totalAdjustments = safeNumber(currentMonthAdjustmentsAggregate._sum.amount)
     const totalExpenses = safeNumber(currentMonthExpensesAggregate._sum.amount)
     const netProfit = collectedRevenue - totalExpenses
+
+    // Total outstanding credit balances (advance payments not yet consumed by monthly rollover)
+    const totalCreditBalance = safeNumber(totalCreditBalanceAggregate._sum.creditBalance)
+    const tenantsWithCredit = totalCreditBalanceAggregate._count
+
+    // Total outstanding opening balances (historical debt / overdue rent)
+    const totalOpeningBalance = safeNumber(totalOpeningBalanceAggregate._sum.openingBalance)
+    const tenantsWithDebt = totalOpeningBalanceAggregate._count
     const utilityBillsOutstanding = safeNumber(billsOutstandingAggregate._sum.currentOutstanding)
     const utilityBillsDueThisMonth = safeNumber(billsDueThisMonthAggregate._sum.amount)
     const utilityBillsPaidThisMonth = safeNumber(billsPaidThisMonthAggregate._sum.amount)
@@ -375,6 +420,13 @@ export async function GET() {
         partialCount: partialTenants.length,
         netProfit: financialAccess ? netProfit : 0,
         totalExpenses: financialAccess ? totalExpenses : 0,
+        // NEW: Revenue split — advance payments and historical debt shown separately
+        advancePaymentsReceived: financialAccess ? advancePaymentsReceived : 0,
+        historicalDebtCollected: financialAccess ? historicalDebtCollected : 0,
+        totalCreditBalance: financialAccess ? totalCreditBalance : 0,
+        tenantsWithCredit,
+        totalOpeningBalance: financialAccess ? totalOpeningBalance : 0,
+        tenantsWithDebt,
       },
       overdueTenants: overdueTenants.map((t) =>
         financialMask(t, ['rentAmount', 'municipalityFee', 'securityDeposit', 'newRent'])
@@ -414,6 +466,37 @@ export async function GET() {
         totalPaidThisMonth: financialAccess ? utilityBillsPaidThisMonth : 0,
         overdueBills: overdueBillsCount,
       },
+      // NEW: Tenants with advance payment credit (for dashboard display)
+      tenantsWithAdvanceCredit: financialAccess
+        ? activeTenants
+            .filter((t) => safeNumber(t.creditBalance) > 0)
+            .map((t) => ({
+              id: t.id,
+              name: t.name,
+              unitNumber: t.unitNumber,
+              property: t.property.name,
+              creditBalance: safeNumber(t.creditBalance),
+              rentAmount: safeNumber(t.rentAmount),
+              monthsCovered: safeNumber(t.creditBalance) > 0 && safeNumber(t.rentAmount) > 0
+                ? Math.round((safeNumber(t.creditBalance) / safeNumber(t.rentAmount)) * 10) / 10
+                : 0,
+            }))
+            .sort((a, b) => b.creditBalance - a.creditBalance)
+        : [],
+      // NEW: Tenants with historical debt (for dashboard display)
+      tenantsWithDebt: financialAccess
+        ? activeTenants
+            .filter((t) => safeNumber(t.openingBalance) > 0)
+            .map((t) => ({
+              id: t.id,
+              name: t.name,
+              unitNumber: t.unitNumber,
+              property: t.property.name,
+              openingBalance: safeNumber(t.openingBalance),
+              rentAmount: safeNumber(t.rentAmount),
+            }))
+            .sort((a, b) => b.openingBalance - a.openingBalance)
+        : [],
     }
 
     return successResponse(data)

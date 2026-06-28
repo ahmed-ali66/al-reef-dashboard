@@ -217,6 +217,83 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Advance Payments & Historical Debt Row — only for financial users */}
+      {canSeeFinancials && ((s.totalCreditBalance || 0) > 0 || (s.totalOpeningBalance || 0) > 0 || (s.advancePaymentsReceived || 0) > 0 || (s.historicalDebtCollected || 0) > 0) && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Advance Payments Received This Month */}
+          {(s.advancePaymentsReceived || 0) > 0 && (
+            <Card className="border-l-4 border-l-blue-500">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Advance Payments (This Month)</p>
+                    <p className="text-xl font-bold text-blue-600">{formatAED(s.advancePaymentsReceived || 0)}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Not counted in collected revenue</p>
+                  </div>
+                  <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
+                    <Banknote className="w-5 h-5 text-blue-500" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Total Credit Balance (outstanding advance payments) */}
+          {(s.totalCreditBalance || 0) > 0 && (
+            <Card className="border-l-4 border-l-blue-400">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Total Credit Balance</p>
+                    <p className="text-xl font-bold text-blue-600">{formatAED(s.totalCreditBalance || 0)}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{s.tenantsWithCredit || 0} tenants with advance credit</p>
+                  </div>
+                  <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
+                    <TrendingUp className="w-5 h-5 text-blue-400" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Historical Debt Collected This Month */}
+          {(s.historicalDebtCollected || 0) > 0 && (
+            <Card className="border-l-4 border-l-amber-500">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Debt Collected (This Month)</p>
+                    <p className="text-xl font-bold text-amber-600">{formatAED(s.historicalDebtCollected || 0)}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Historical debt payments received</p>
+                  </div>
+                  <div className="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center">
+                    <Banknote className="w-5 h-5 text-amber-500" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Total Outstanding Historical Debt */}
+          {(s.totalOpeningBalance || 0) > 0 && (
+            <Card className="border-l-4 border-l-red-400">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Outstanding Historical Debt</p>
+                    <p className="text-xl font-bold text-red-600">{formatAED(s.totalOpeningBalance || 0)}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{s.tenantsWithDebt || 0} tenants with overdue debt</p>
+                  </div>
+                  <div className="w-10 h-10 rounded-lg bg-red-50 flex items-center justify-center">
+                    <AlertTriangle className="w-5 h-5 text-red-400" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
       {/* Stats Row */}
       <div className={cn2('grid gap-4 stagger-children', utilityBillsSummary ? 'grid-cols-2 lg:grid-cols-6' : 'grid-cols-2 lg:grid-cols-5')}>
         <Card className="property-card-hover border-l-4 border-l-emerald">

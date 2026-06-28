@@ -26,7 +26,31 @@ export interface DashboardData {
     totalExpenses: number
     totalAdjustments: number
     netCashCollected: number
+    // Revenue split — advance payments and historical debt shown separately
+    advancePaymentsReceived?: number
+    historicalDebtCollected?: number
+    totalCreditBalance?: number
+    tenantsWithCredit?: number
+    totalOpeningBalance?: number
+    tenantsWithDebt?: number
   }
+  tenantsWithAdvanceCredit?: Array<{
+    id: string
+    name: string
+    unitNumber: string | null
+    property: string
+    creditBalance: number
+    rentAmount: number
+    monthsCovered: number
+  }>
+  tenantsWithDebt?: Array<{
+    id: string
+    name: string
+    unitNumber: string | null
+    property: string
+    openingBalance: number
+    rentAmount: number
+  }>
   overdueTenants: TenantData[]
   partialTenants: TenantData[]
   dueSoon: TenantData[]

@@ -32,26 +32,55 @@ export async function GET(request: Request) {
     const targetYear = parseInt(searchParams.get('year') || String(now.getFullYear()))
 
     // ─── 1. Revenue via aggregate — NO findMany ───
-    const [totalRevenueResult, expectedRevenueResult] = await Promise.all([
+    const [currentRentResult, advancePaymentResult, historicalDebtResult, expectedRevenueResult, totalCreditResult, totalDebtResult] = await Promise.all([
+      // CURRENT_RENT only — this is the "real" collected revenue for the month
       prisma.payment.aggregate({
-        where: {
-          companyId,
-          month: targetMonth,
-          year: targetYear,
-        },
+        where: { companyId, month: targetMonth, year: targetYear, allocationType: 'CURRENT_RENT' },
         _sum: { amount: true },
         _count: true,
       }),
+      // ADVANCE_PAYMENT — shown separately, does NOT inflate collected revenue
+      prisma.payment.aggregate({
+        where: { companyId, month: targetMonth, year: targetYear, allocationType: 'ADVANCE_PAYMENT' },
+        _sum: { amount: true },
+        _count: true,
+      }),
+      // HISTORICAL_DEBT — shown separately, debt collections
+      prisma.payment.aggregate({
+        where: { companyId, month: targetMonth, year: targetYear, allocationType: 'HISTORICAL_DEBT' },
+        _sum: { amount: true },
+        _count: true,
+      }),
+      // Expected revenue = sum of rentAmount for financially active tenants
       prisma.tenant.aggregate({
         where: { companyId, deletedAt: null, status: { in: [...FINANCIALLY_ACTIVE_STATUSES] } },
         _sum: { rentAmount: true },
         _count: true,
       }),
+      // Total credit balances (advance payments not yet consumed)
+      prisma.tenant.aggregate({
+        where: { companyId, deletedAt: null, status: { in: [...FINANCIALLY_ACTIVE_STATUSES] }, creditBalance: { gt: 0 } },
+        _sum: { creditBalance: true },
+        _count: true,
+      }),
+      // Total opening balances (historical debt / overdue)
+      prisma.tenant.aggregate({
+        where: { companyId, deletedAt: null, status: { in: [...FINANCIALLY_ACTIVE_STATUSES] }, openingBalance: { gt: 0 } },
+        _sum: { openingBalance: true },
+        _count: true,
+      }),
     ])
 
-    const totalRevenue = safeNumber(totalRevenueResult._sum.amount)
+    // Revenue split: only CURRENT_RENT counts as "collected revenue"
+    const totalRevenue = safeNumber(currentRentResult._sum.amount)
+    const advancePaymentsReceived = safeNumber(advancePaymentResult._sum.amount)
+    const historicalDebtCollected = safeNumber(historicalDebtResult._sum.amount)
     const expectedRevenue = safeNumber(expectedRevenueResult._sum.rentAmount)
     const activeTenantCount = expectedRevenueResult._count
+    const totalCreditBalance = safeNumber(totalCreditResult._sum.creditBalance)
+    const tenantsWithCredit = totalCreditResult._count
+    const totalOpeningBalance = safeNumber(totalDebtResult._sum.openingBalance)
+    const tenantsWithDebt = totalDebtResult._count
 
     // ─── 2. Expenses via aggregate — filter for target month only ───
     const startOfMonth = new Date(targetYear, targetMonth - 1, 1)
@@ -388,6 +417,13 @@ export async function GET(request: Request) {
       netCashCollected: totalRevenue,
       netRevenue: totalRevenue - totalAdjustments,
       adjustmentTotal: totalAdjustments,
+      // NEW: Revenue split — advance payments and historical debt shown separately
+      advancePaymentsReceived,
+      historicalDebtCollected,
+      totalCreditBalance,
+      tenantsWithCredit,
+      totalOpeningBalance,
+      tenantsWithDebt,
     }
 
     return successResponse(data)

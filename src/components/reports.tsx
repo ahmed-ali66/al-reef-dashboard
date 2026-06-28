@@ -1138,9 +1138,17 @@ export default function Reports() {
         ['FINANCIAL SUMMARY', '', '', ''],
         ['Metric', 'Value (AED)', '', ''],
         ['Expected Revenue', reportData.expectedRevenue],
-        ['Collected Revenue', reportData.totalRevenue],
+        ['Collected Revenue (CURRENT_RENT only)', reportData.totalRevenue],
+        ['Advance Payments Received (this month)', (reportData as any).advancePaymentsReceived || 0],
+        ['Historical Debt Collected (this month)', (reportData as any).historicalDebtCollected || 0],
         ['Total Expenses', reportData.totalExpenses],
         ['Profit / Loss', reportData.profitLoss],
+        [],
+        ['OUTSTANDING BALANCES', '', '', ''],
+        ['Total Credit Balance (advance payments not yet consumed)', (reportData as any).totalCreditBalance || 0],
+        ['Tenants with Credit', (reportData as any).tenantsWithCredit || 0],
+        ['Total Opening Balance (historical debt outstanding)', (reportData as any).totalOpeningBalance || 0],
+        ['Tenants with Debt', (reportData as any).tenantsWithDebt || 0],
         [],
         ['PROFIT & LOSS STATEMENT', '', '', ''],
         ['Rental Income', reportData.rentalIncome],
@@ -1718,6 +1726,61 @@ export default function Reports() {
         const wsGroups = XLSX.utils.aoa_to_sheet([groupsHeader, ...groupsRows])
         wsGroups['!cols'] = [{ wch: 28 }, { wch: 24 }, { wch: 28 }, { wch: 22 }, { wch: 14 }, { wch: 12 }, { wch: 30 }, { wch: 12 }, { wch: 14 }, { wch: 14 }]
         XLSX.utils.book_append_sheet(wb, wsGroups, 'Tenant Groups')
+      }
+
+      // ── Sheet 13: Advance Payments (tenants with credit balance) ──
+      const advanceHeader = [
+        'Tenant Name', 'Property', 'Unit Number', 'Monthly Rent (AED)',
+        'Credit Balance (AED)', 'Months Covered', 'Notes',
+      ]
+      const advanceRows = tenants
+        .filter(tn => Number(tn.creditBalance || 0) > 0)
+        .sort((a, b) => Number(b.creditBalance || 0) - Number(a.creditBalance || 0))
+        .map(tn => {
+          const prop = properties.find(p => p.id === tn.propertyId)
+          const rent = Number(tn.rentAmount) || 0
+          const credit = Number(tn.creditBalance) || 0
+          const monthsCovered = rent > 0 ? (credit / rent).toFixed(2) : '0'
+          return [
+            tn.name,
+            prop?.name || '',
+            tn.unitNumber || '',
+            rent,
+            credit,
+            monthsCovered,
+            tn.notes || '',
+          ]
+        })
+      if (advanceRows.length > 0) {
+        const wsAdvance = XLSX.utils.aoa_to_sheet([advanceHeader, ...advanceRows])
+        wsAdvance['!cols'] = [{ wch: 24 }, { wch: 22 }, { wch: 12 }, { wch: 16 }, { wch: 18 }, { wch: 14 }, { wch: 30 }]
+        XLSX.utils.book_append_sheet(wb, wsAdvance, 'Advance Payments')
+      }
+
+      // ── Sheet 14: Historical Debt (tenants with opening balance) ──
+      const debtHeader = [
+        'Tenant Name', 'Property', 'Unit Number', 'Monthly Rent (AED)',
+        'Opening Balance (AED)', 'Status', 'Notes',
+      ]
+      const debtRows = tenants
+        .filter(tn => Number(tn.openingBalance || 0) > 0)
+        .sort((a, b) => Number(b.openingBalance || 0) - Number(a.openingBalance || 0))
+        .map(tn => {
+          const prop = properties.find(p => p.id === tn.propertyId)
+          return [
+            tn.name,
+            prop?.name || '',
+            tn.unitNumber || '',
+            Number(tn.rentAmount) || 0,
+            Number(tn.openingBalance) || 0,
+            tn.status,
+            tn.notes || '',
+          ]
+        })
+      if (debtRows.length > 0) {
+        const wsDebt = XLSX.utils.aoa_to_sheet([debtHeader, ...debtRows])
+        wsDebt['!cols'] = [{ wch: 24 }, { wch: 22 }, { wch: 12 }, { wch: 16 }, { wch: 18 }, { wch: 12 }, { wch: 30 }]
+        XLSX.utils.book_append_sheet(wb, wsDebt, 'Historical Debt')
       }
 
       // Generate and download
