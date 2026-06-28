@@ -175,18 +175,25 @@ export async function POST(request: Request) {
 
       // Phase 1 Rental Accounting: Handle allocation type business logic
       if (parsedAllocationType === 'ADVANCE_PAYMENT') {
-        // Calculate current period paid amount
+        // Calculate current period paid amount — include BOTH CURRENT_RENT and ADVANCE_PAYMENT
+        // so the excess is calculated based on the TOTAL paid for the month.
+        // BUG FIX: Previously only counted CURRENT_RENT payments, which meant that
+        // if a tenant made multiple ADVANCE_PAYMENT payments (e.g., 1,200 + 2,500 = 3,700
+        // for a 3,400 rent), the excess (300) was never credited because each payment
+        // was evaluated independently without seeing the other ADVANCE_PAYMENTs.
         const currentPeriodPayments = await tx.payment.findMany({
           where: {
             tenantId,
             month: parsedMonth,
             year: parsedYear,
-            allocationType: 'CURRENT_RENT',
+            allocationType: { in: ['CURRENT_RENT', 'ADVANCE_PAYMENT'] },
           },
         })
         const currentPaid = currentPeriodPayments.reduce((sum, p) => sum + Number(p.amount), 0)
         const rentAmount = Number(tenant.rentAmount)
-        const excessForCredit = Math.max(0, currentPaid + parsedAmount - rentAmount)
+        const munFee = Number(tenant.municipalityFee) || 0
+        const monthlyCharges = rentAmount + munFee
+        const excessForCredit = Math.max(0, currentPaid + parsedAmount - monthlyCharges)
 
         if (excessForCredit > 0) {
           // Add excess to creditBalance
