@@ -175,12 +175,19 @@ export async function POST(request: Request) {
 
       // Phase 1 Rental Accounting: Handle allocation type business logic
       if (parsedAllocationType === 'ADVANCE_PAYMENT') {
-        // Calculate current period paid amount — include BOTH CURRENT_RENT and ADVANCE_PAYMENT
-        // so the excess is calculated based on the TOTAL paid for the month.
-        // BUG FIX: Previously only counted CURRENT_RENT payments, which meant that
-        // if a tenant made multiple ADVANCE_PAYMENT payments (e.g., 1,200 + 2,500 = 3,700
-        // for a 3,400 rent), the excess (300) was never credited because each payment
-        // was evaluated independently without seeing the other ADVANCE_PAYMENTs.
+        // ADVANCE_PAYMENT: evaluated against the TARGET month (parsedMonth/parsedYear).
+        // If total payments for the target month exceed monthly charges, the excess
+        // becomes credit balance (applied to future months by the monthly rollover).
+        //
+        // The payment has already been CREATED above (inside this transaction), so
+        // the findMany below will include it. We do NOT add parsedAmount again —
+        // currentPaid already reflects the total including this payment.
+        //
+        // BUG FIX (previous version): The old code did `currentPaid + parsedAmount`,
+        // which double-counted the new payment (currentPaid already included it).
+        // This caused a AED 3,000 advance payment for a AED 3,000 rent to generate
+        // AED 3,000 excess credit (3,000 existing + 3,000 new - 3,000 charges = 3,000).
+        // The correct result is 0 excess (3,000 total paid - 3,000 charges = 0).
         const currentPeriodPayments = await tx.payment.findMany({
           where: {
             tenantId,
@@ -189,11 +196,12 @@ export async function POST(request: Request) {
             allocationType: { in: ['CURRENT_RENT', 'ADVANCE_PAYMENT'] },
           },
         })
-        const currentPaid = currentPeriodPayments.reduce((sum, p) => sum + Number(p.amount), 0)
+        const totalPaidForMonth = currentPeriodPayments.reduce((sum, p) => sum + Number(p.amount), 0)
         const rentAmount = Number(tenant.rentAmount)
         const munFee = Number(tenant.municipalityFee) || 0
         const monthlyCharges = rentAmount + munFee
-        const excessForCredit = Math.max(0, currentPaid + parsedAmount - monthlyCharges)
+        // Excess = total paid for the month (INCLUDING this payment) minus monthly charges
+        const excessForCredit = Math.max(0, totalPaidForMonth - monthlyCharges)
 
         if (excessForCredit > 0) {
           // Add excess to creditBalance
