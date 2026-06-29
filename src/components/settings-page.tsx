@@ -11,10 +11,12 @@ import {
   Users,
   Database,
   Upload,
+  Settings,
 } from 'lucide-react'
 import UserManagement from '@/components/user-management'
 import TwoFactorSettings from '@/components/two-factor-settings'
 import DataImport from '@/components/data-import'
+import SystemSettings from '@/components/system-settings'
 
 export default function SettingsPage() {
   const { language } = useAppStore()
@@ -40,7 +42,7 @@ export default function SettingsPage() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3 lg:w-[500px]">
+        <TabsList className="grid w-full grid-cols-4 lg:w-[600px]">
           <TabsTrigger value="users" className="gap-1.5">
             <Users className="w-4 h-4 hidden sm:block" />
             {lang === 'en' ? 'Users' : lang === 'ar' ? 'المستخدمين' : lang === 'bn' ? 'ব্যবহারকারী' : 'صارفین'}
@@ -52,6 +54,10 @@ export default function SettingsPage() {
           <TabsTrigger value="import" className="gap-1.5">
             <Upload className="w-4 h-4 hidden sm:block" />
             {lang === 'en' ? 'Import' : lang === 'ar' ? 'استيراد' : lang === 'bn' ? 'ইম্পোর্ট' : 'امپورٹ'}
+          </TabsTrigger>
+          <TabsTrigger value="system" className="gap-1.5">
+            <Settings className="w-4 h-4 hidden sm:block" />
+            {lang === 'en' ? 'System' : lang === 'ar' ? 'النظام' : lang === 'bn' ? 'সিস্টেম' : 'سسٹم'}
           </TabsTrigger>
         </TabsList>
 
@@ -90,6 +96,10 @@ export default function SettingsPage() {
 
         <TabsContent value="import" className="mt-6">
           <DataImport />
+        </TabsContent>
+
+        <TabsContent value="system" className="mt-6">
+          <SystemSettings />
         </TabsContent>
       </Tabs>
 

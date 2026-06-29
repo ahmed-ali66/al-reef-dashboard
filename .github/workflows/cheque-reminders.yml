@@ -1,0 +1,86 @@
+name: Cheque Reminders
+
+# Triggers Vercel's /api/cron/cheque-reminders endpoint to generate
+# reminder notifications for outgoing cheques (to property owners) that are:
+#   - Due in exactly 7 days (early reminder)
+#   - Due in exactly 3 days (urgent reminder)
+#   - Due in exactly 1 day (critical reminder)
+#   - Overdue by 1, 7, 14, or 30 days (escalating overdue alerts)
+#
+# Schedule: 02:30 UTC daily (06:30 Dubai time — runs after backup, before daily report)
+#
+# Auth: Bearer CRON_SECRET (stored as GitHub Actions secret + Vercel env var)
+
+on:
+  schedule:
+    - cron: '30 2 * * *'  # 02:30 UTC daily = 06:30 Dubai
+  workflow_dispatch: {}  # Allow manual triggering for testing
+
+jobs:
+  trigger-cheque-reminders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger cheque reminders endpoint
+        id: trigger
+        run: |
+          echo "[$(date -u)] Triggering cheque reminders on Vercel..."
+          RESPONSE=$(curl -sS -w "\n%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.VERCEL_APP_URL }}/api/cron/cheque-reminders")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response (first 2000 chars):"
+          echo "$BODY" | head -c 2000
+          echo ""
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Cheque reminders failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
+          # Parse summary
+          echo ""
+          echo "=== Cheque Reminders Summary ==="
+          echo "$BODY" | python3 -c "
+          import json, sys
+          try:
+              d = json.load(sys.stdin)
+              print(f'Check dates: 7d={d[\"checkDates\"][\"in7Days\"]} | 3d={d[\"checkDates\"][\"in3Days\"]} | 1d={d[\"checkDates\"][\"in1Day\"]}')
+              print(f'Total notifications created: {d.get(\"totalNotificationsCreated\", 0)}')
+              for r in d.get('results', []):
+                  b = r.get('breakdown', {})
+                  print(f'  {r.get(\"companyName\")}: 7d={b.get(\"dueIn7Days\",0)} 3d={b.get(\"dueIn3Days\",0)} 1d={b.get(\"dueIn1Day\",0)} overdue={b.get(\"overdue\",0)}')
+                  for n in r.get('notifications', [])[:5]:
+                      print(f'    [{n[\"type\"]}] {n[\"payee\"]} | {n[\"property\"]} | AED {n[\"amount\"]} | due {n[\"dueDate\"]}')
+          except Exception as ex:
+              print(f'Could not parse JSON: {ex}')
+          "
+          echo ""
+          echo "✅ Cheque reminders completed successfully"
+
+  notify-failure:
+    needs: trigger-cheque-reminders
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send email notification
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: '⚠️ [Al Reef] Cheque Reminders workflow FAILED'
+          to: ${{ secrets.NOTIFICATION_EMAIL }}
+          from: GitHub Actions
+          body: |
+            The "Cheque Reminders" GitHub Actions workflow has FAILED.
+
+            Repository: ${{ github.repository }}
+            Workflow: ${{ github.workflow }}
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Please check the workflow logs and the Vercel endpoint:
+            ${{ secrets.VERCEL_APP_URL }}/api/cron/cheque-reminders
+
+            Timestamp: $(date -u)

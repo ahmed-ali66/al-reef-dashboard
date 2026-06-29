@@ -1097,9 +1097,36 @@ export default function Reports() {
     try {
       setExporting(true)
       const store = useDataStore.getState()
-      const { tenants, payments, expenses, maintenanceItems, company, reservations } = store
+      const { tenants, payments, expenses, maintenanceItems, company, reservations, adjustments, tenantGroups } = store
       const properties = [...store.properties].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
       const reportData = store.getReportData(selectedMonth, selectedYear)
+
+      // Fetch additional datasets that aren't in the local store (cheques, recurring bills, bill payments)
+      // These are fetched in parallel to keep the export fast.
+      let cheques: any[] = []
+      let recurringBills: any[] = []
+      let billPayments: any[] = []
+      try {
+        const [chequesRes, billsRes, billPaymentsRes] = await Promise.all([
+          fetch('/api/cheques?limit=1000'),
+          fetch('/api/recurring-bills?limit=1000'),
+          fetch('/api/recurring-bills/payments?limit=1000'),
+        ])
+        if (chequesRes.ok) {
+          const j = await chequesRes.json()
+          cheques = Array.isArray(j) ? j : (j.cheques || j.data || [])
+        }
+        if (billsRes.ok) {
+          const j = await billsRes.json()
+          recurringBills = Array.isArray(j) ? j : (j.bills || j.data || [])
+        }
+        if (billPaymentsRes.ok) {
+          const j = await billPaymentsRes.json()
+          billPayments = Array.isArray(j) ? j : (j.payments || j.data || [])
+        }
+      } catch (e) {
+        console.warn('[XLSX EXPORT] Some optional datasets could not be fetched; continuing without them:', e)
+      }
 
       const wb = XLSX.utils.book_new()
 
@@ -1111,9 +1138,17 @@ export default function Reports() {
         ['FINANCIAL SUMMARY', '', '', ''],
         ['Metric', 'Value (AED)', '', ''],
         ['Expected Revenue', reportData.expectedRevenue],
-        ['Collected Revenue', reportData.totalRevenue],
+        ['Collected Revenue (CURRENT_RENT only)', reportData.totalRevenue],
+        ['Advance Payments Received (this month)', (reportData as any).advancePaymentsReceived || 0],
+        ['Historical Debt Collected (this month)', (reportData as any).historicalDebtCollected || 0],
         ['Total Expenses', reportData.totalExpenses],
         ['Profit / Loss', reportData.profitLoss],
+        [],
+        ['OUTSTANDING BALANCES', '', '', ''],
+        ['Total Credit Balance (advance payments not yet consumed)', (reportData as any).totalCreditBalance || 0],
+        ['Tenants with Credit', (reportData as any).tenantsWithCredit || 0],
+        ['Total Opening Balance (historical debt outstanding)', (reportData as any).totalOpeningBalance || 0],
+        ['Tenants with Debt', (reportData as any).tenantsWithDebt || 0],
         [],
         ['PROFIT & LOSS STATEMENT', '', '', ''],
         ['Rental Income', reportData.rentalIncome],
@@ -1154,52 +1189,99 @@ export default function Reports() {
       wsSummary['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 18 }]
       XLSX.utils.book_append_sheet(wb, wsSummary, 'Financial Summary')
 
-      // ── Sheet 2: Properties ──
+      // ── Sheet 2: Properties (ALL fields A-Z) ──
       const propertiesHeader = [
+<<<<<<< HEAD
         'Property Name', 'Type', 'Address', 'Total Units',
         'Floors', 'Active Tenants', 'Occupancy %', 'Monthly Revenue (AED)', 'Status',
+=======
+        'Property ID', 'Property Name', 'Name (Arabic)', 'Name (Bengali)', 'Name (Urdu)',
+        'Type', 'Address', 'Total Units', 'Floors',
+        'Active Tenants', 'Vacant Units', 'Occupancy %',
+        'Monthly Revenue (AED)', 'Annual Revenue (AED)',
+        'Archived', 'Status', 'Created At',
+>>>>>>> 6d4f9c5f4a00b198c5c7dfebda7e561fdd5b0bb7
       ]
       const propertiesRows = properties.map(p => {
-        const activeTenants = tenants.filter(t => t.propertyId === p.id && isFinanciallyActive(t.status))
-        const occupancy = p.totalUnits > 0 ? Math.round((activeTenants.length / p.totalUnits) * 100) : 0
-        const monthlyRevenue = activeTenants.reduce((sum, t) => sum + t.rentAmount, 0)
+        const activeTenantList = tenants.filter(t => t.propertyId === p.id && isFinanciallyActive(t.status))
+        const occupancy = p.totalUnits > 0 ? Math.round((activeTenantList.length / p.totalUnits) * 100) : 0
+        const monthlyRevenue = activeTenantList.reduce((sum, t) => sum + t.rentAmount, 0)
         return [
+          p.id,
           p.name,
+<<<<<<< HEAD
+=======
+          p.nameAr || '',
+          (p as any).nameBn || '',
+          (p as any).nameUr || '',
+>>>>>>> 6d4f9c5f4a00b198c5c7dfebda7e561fdd5b0bb7
           getPropertyTypeLabel(p.type),
           p.address || '',
           p.totalUnits,
           p.floors,
-          activeTenants.length,
+          activeTenantList.length,
+          Math.max(0, p.totalUnits - activeTenantList.length),
           `${occupancy}%`,
           monthlyRevenue,
+          monthlyRevenue * 12,
+          p.archived ? 'Yes' : 'No',
           p.archived ? 'Archived' : 'Active',
+          p.createdAt ? formatDate(p.createdAt) : '',
         ]
       })
       const wsProperties = XLSX.utils.aoa_to_sheet([propertiesHeader, ...propertiesRows])
+<<<<<<< HEAD
       wsProperties['!cols'] = [{ wch: 22 }, { wch: 14 }, { wch: 40 }, { wch: 12 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 10 }]
+=======
+      wsProperties['!cols'] = [{ wch: 28 }, { wch: 22 }, { wch: 28 }, { wch: 22 }, { wch: 22 }, { wch: 18 }, { wch: 40 }, { wch: 12 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 10 }, { wch: 10 }, { wch: 14 }]
+>>>>>>> 6d4f9c5f4a00b198c5c7dfebda7e561fdd5b0bb7
       XLSX.utils.book_append_sheet(wb, wsProperties, 'Properties')
 
-      // ── Sheet 3: Tenants ──
+      // ── Sheet 3: Tenants (ALL fields A-Z, including Phase 1 rental accounting) ──
       const tenantsHeader = [
+<<<<<<< HEAD
         'Tenant Name', 'Name (Arabic)', 'Property', 'Unit Number', 'Unit Type',
         'Nationality', 'Phone', 'WhatsApp',
         'Emirates ID', 'Employer', 'Monthly Rent (AED)', 'Municipality Fee (AED)',
         'Security Deposit (AED)', 'Payment Method', 'Lease Start', 'Lease End',
         'Contract Duration (months)', 'Status', 'Tenant Score', 'System Score', 'Score Override', 'Override Reason', 'Late Payments',
+=======
+        'Tenant ID', 'Tenant Name', 'Name (Arabic)', 'Name (Bengali)', 'Name (Urdu)',
+        'Property', 'Unit Number', 'Unit Type', 'Floor', 'Size (sqft)',
+        'Nationality', 'Phone', 'WhatsApp', 'Email', 'Emirates ID',
+        'Employer', 'Emergency Contact',
+        'Monthly Rent (AED)', 'Municipality Fee (AED)', 'Security Deposit (AED)',
+        'Payment Method',
+        'Lease Start', 'Lease End', 'Contract Duration (months)',
+        'Renewal Status', 'New Rent (AED)',
+        'Status', 'Moved Out At',
+        'Late Payment Count', 'Tenant Score', 'System Score',
+        'Manual Score Override', 'Manual Override Reason', 'Manual Override By', 'Manual Override At',
+        'Opening Balance (AED)', 'Credit Balance (AED)',
+        'Legal Case', 'Legal Case Number', 'Legal Case Notes',
+        'Tenant Group', 'Notes',
+        'Created At',
+>>>>>>> 6d4f9c5f4a00b198c5c7dfebda7e561fdd5b0bb7
       ]
       const tenantsRows = tenants.map(tn => {
         const prop = properties.find(p => p.id === tn.propertyId)
+        const group = (tenantGroups || []).find((g: any) => g.id === tn.groupId)
         return [
+          tn.id,
           tn.name,
           tn.nameAr || '',
+          (tn as any).nameBn || '',
+          (tn as any).nameUr || '',
           prop?.name || '',
           tn.unitNumber || '',
           getUnitTypeLabel(tn.unitType),
           tn.nationality || '',
           tn.phone,
           tn.whatsapp || '',
+          tn.email || '',
           tn.emiratesId || '',
           tn.employer || '',
+          tn.emergencyContact || '',
           tn.rentAmount,
           tn.municipalityFee ?? 0,
           tn.securityDeposit || '',
@@ -1207,16 +1289,48 @@ export default function Reports() {
           tn.leaseStart ? formatDate(tn.leaseStart) : '',
           tn.leaseEnd ? formatDate(tn.leaseEnd) : '',
           tn.contractDuration || '',
+          tn.renewalStatus || '',
+          tn.newRent || '',
           tn.status,
+          tn.movedOutAt ? formatDate(tn.movedOutAt) : '',
+          tn.latePaymentCount,
           tn.tenantScore,
           tn.systemScore ?? tn.tenantScore,
           tn.manualScoreOverride ?? '',
           tn.manualScoreReason ?? '',
-          tn.latePaymentCount,
+          tn.manualOverrideBy ?? '',
+          tn.manualOverrideAt ? formatDate(tn.manualOverrideAt) : '',
+          tn.openingBalance ?? 0,
+          tn.creditBalance ?? 0,
+          tn.legalCase ? 'Yes' : 'No',
+          tn.legalCaseNumber || '',
+          tn.legalCaseNotes || '',
+          group?.name || '',
+          tn.notes || '',
+          tn.createdAt ? formatDate(tn.createdAt) : '',
         ]
       })
       const wsTenants = XLSX.utils.aoa_to_sheet([tenantsHeader, ...tenantsRows])
+<<<<<<< HEAD
       wsTenants['!cols'] = [{ wch: 22 }, { wch: 28 }, { wch: 18 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 22 }, { wch: 20 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 30 }]
+=======
+      wsTenants['!cols'] = [
+        { wch: 28 }, { wch: 24 }, { wch: 28 }, { wch: 22 }, { wch: 22 },
+        { wch: 22 }, { wch: 12 }, { wch: 14 }, { wch: 8 }, { wch: 10 },
+        { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 24 }, { wch: 22 },
+        { wch: 20 }, { wch: 20 },
+        { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 14 },
+        { wch: 14 }, { wch: 14 }, { wch: 14 },
+        { wch: 14 }, { wch: 14 },
+        { wch: 12 }, { wch: 14 },
+        { wch: 10 }, { wch: 10 }, { wch: 10 },
+        { wch: 10 }, { wch: 24 }, { wch: 18 }, { wch: 14 },
+        { wch: 16 }, { wch: 16 },
+        { wch: 8 }, { wch: 18 }, { wch: 30 },
+        { wch: 18 }, { wch: 30 },
+        { wch: 14 },
+      ]
+>>>>>>> 6d4f9c5f4a00b198c5c7dfebda7e561fdd5b0bb7
       XLSX.utils.book_append_sheet(wb, wsTenants, 'Tenants')
 
       // ── Sheet 4: Payments ──
@@ -1231,8 +1345,9 @@ export default function Reports() {
       }
 
       const paymentsHeader = [
-        'Date', 'Tenant Name', 'Property', 'Unit(s)', 'Month', 'Year',
-        'Amount (AED)', 'Method', 'Reference', 'Late?', 'Days Late', 'Type',
+        'Payment ID', 'Date', 'Tenant Name', 'Property', 'Unit(s)', 'Month', 'Year',
+        'Amount (AED)', 'Method', 'Reference', 'Receipt Number',
+        'Late?', 'Days Late', 'Allocation Type', 'Grouping', 'Notes', 'Created At',
       ]
 
       // Build payment entries, consolidating linked-unit payments
@@ -1255,15 +1370,18 @@ export default function Reports() {
           const firstPayment = groupPayments[0]
           const firstTenant = tenants.find(tn => tn.id === firstPayment.tenantId)!
           const prop = properties.find(pr => pr.id === firstTenant.propertyId)
-          const tenantGroup = (store as any).tenantGroups?.find((g: any) => g.id === firstTenant.groupId)
+          const tenantGroup = (tenantGroups || []).find((g: any) => g.id === firstTenant.groupId)
           const totalAmount = groupPayments.reduce((sum, p) => sum + p.amount, 0)
           const unitNumbers = groupPayments.map(p => {
             const t = tenants.find(tn => tn.id === p.tenantId)
             return t?.unitNumber || ''
           }).filter(Boolean).join(', ')
           const maxDaysLate = Math.max(...groupPayments.map(p => p.daysLate || 0))
+          const allocationTypes = [...new Set(groupPayments.map(p => p.allocationType || '').filter(Boolean))].join(', ')
+          const paymentIds = groupPayments.map(p => p.id).join(', ')
 
           xlsxPaymentEntries.push([
+            paymentIds,
             formatDate(firstPayment.date),
             tenantGroup ? tenantGroup.name : firstTenant.name,
             prop?.name || '',
@@ -1273,9 +1391,13 @@ export default function Reports() {
             totalAmount,
             firstPayment.method || '',
             firstPayment.reference || '',
+            firstPayment.receiptNumber || '',
             groupPayments.some(p => p.isLate) ? 'Yes' : 'No',
             maxDaysLate,
+            allocationTypes || '',
             'Consolidated (Linked Units)',
+            firstPayment.notes || '',
+            firstPayment.createdAt ? formatDate(firstPayment.createdAt) : '',
           ])
           groupPayments.forEach(p => groupedPaymentIds.add(p.id))
         } else {
@@ -1285,6 +1407,7 @@ export default function Reports() {
           const tenant = tenants.find(tn => tn.id === p.tenantId)
           const prop = tenant ? properties.find(pr => pr.id === tenant.propertyId) : null
           xlsxPaymentEntries.push([
+            p.id,
             formatDate(p.date),
             tenant?.name || '',
             prop?.name || '',
@@ -1294,9 +1417,13 @@ export default function Reports() {
             p.amount,
             p.method || '',
             p.reference || '',
+            p.receiptNumber || '',
             p.isLate ? 'Yes' : 'No',
             p.daysLate,
+            p.allocationType || '',
             'Single Unit',
+            p.notes || '',
+            p.createdAt ? formatDate(p.createdAt) : '',
           ])
         }
       }
@@ -1307,6 +1434,7 @@ export default function Reports() {
         const tenant = tenants.find(tn => tn.id === p.tenantId)
         const prop = tenant ? properties.find(pr => pr.id === tenant.propertyId) : null
         xlsxPaymentEntries.push([
+          p.id,
           formatDate(p.date),
           tenant?.name || '',
           prop?.name || '',
@@ -1316,31 +1444,40 @@ export default function Reports() {
           p.amount,
           p.method || '',
           p.reference || '',
+          p.receiptNumber || '',
           p.isLate ? 'Yes' : 'No',
           p.daysLate,
+          p.allocationType || '',
           'Single Unit',
+          p.notes || '',
+          p.createdAt ? formatDate(p.createdAt) : '',
         ])
       }
 
       // Sort by method priority, then by date
       xlsxPaymentEntries.sort((a, b) => {
-        const methodDiff = getMethodSortXlsx(a[7] as string) - getMethodSortXlsx(b[7] as string)
+        const methodDiff = getMethodSortXlsx(a[8] as string) - getMethodSortXlsx(b[8] as string)
         if (methodDiff !== 0) return methodDiff
-        return new Date(b[0] as string).getTime() - new Date(a[0] as string).getTime()
+        return new Date(b[1] as string).getTime() - new Date(a[1] as string).getTime()
       })
 
       const wsPayments = XLSX.utils.aoa_to_sheet([paymentsHeader, ...xlsxPaymentEntries])
-      wsPayments['!cols'] = [{ wch: 14 }, { wch: 22 }, { wch: 18 }, { wch: 16 }, { wch: 10 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 22 }, { wch: 8 }, { wch: 10 }, { wch: 22 }]
+      wsPayments['!cols'] = [
+        { wch: 28 }, { wch: 14 }, { wch: 22 }, { wch: 18 }, { wch: 16 }, { wch: 10 }, { wch: 8 },
+        { wch: 14 }, { wch: 14 }, { wch: 22 }, { wch: 18 },
+        { wch: 8 }, { wch: 10 }, { wch: 18 }, { wch: 22 }, { wch: 30 }, { wch: 14 },
+      ]
       XLSX.utils.book_append_sheet(wb, wsPayments, 'Payments')
 
-      // ── Sheet 5: Expenses ──
+      // ── Sheet 5: Expenses (ALL fields A-Z) ──
       const expensesHeader = [
-        'Date', 'Category', 'Description', 'Amount (AED)', 'Vendor',
-        'Invoice Number', 'Building', 'Recurring',
+        'Expense ID', 'Date', 'Category', 'Description', 'Amount (AED)',
+        'Vendor', 'Invoice Number', 'Building', 'Recurring', 'Created At',
       ]
       const expensesRows = expenses
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
         .map(e => [
+          e.id,
           formatDate(e.date),
           getExpenseCategoryLabelExport(e.category),
           e.description,
@@ -1349,20 +1486,22 @@ export default function Reports() {
           e.invoiceNumber || '',
           e.building || '',
           e.recurring ? 'Yes' : 'No',
+          e.createdAt ? formatDate(e.createdAt) : '',
         ])
       const wsExpenses = XLSX.utils.aoa_to_sheet([expensesHeader, ...expensesRows])
-      wsExpenses['!cols'] = [{ wch: 14 }, { wch: 18 }, { wch: 36 }, { wch: 14 }, { wch: 22 }, { wch: 18 }, { wch: 18 }, { wch: 10 }]
+      wsExpenses['!cols'] = [{ wch: 28 }, { wch: 14 }, { wch: 18 }, { wch: 36 }, { wch: 14 }, { wch: 22 }, { wch: 18 }, { wch: 18 }, { wch: 10 }, { wch: 14 }]
       XLSX.utils.book_append_sheet(wb, wsExpenses, 'Expenses')
 
-      // ── Sheet 6: Maintenance ──
+      // ── Sheet 6: Maintenance (ALL fields A-Z) ──
       const maintenanceHeader = [
-        'Title', 'Category', 'Priority', 'Status', 'Property',
+        'Maintenance ID', 'Title', 'Category', 'Priority', 'Status', 'Property',
         'Vendor', 'Estimated Cost (AED)', 'Actual Cost (AED)',
         'Description', 'Date Created', 'Date Completed',
       ]
       const maintenanceRows = maintenanceItems.map(m => {
         const prop = properties.find(p => p.id === m.propertyId)
         return [
+          m.id,
           m.title,
           getMaintenanceCategoryLabelExport(m.category),
           m.priority,
@@ -1377,13 +1516,16 @@ export default function Reports() {
         ]
       })
       const wsMaintenance = XLSX.utils.aoa_to_sheet([maintenanceHeader, ...maintenanceRows])
-      wsMaintenance['!cols'] = [{ wch: 36 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 18 }, { wch: 22 }, { wch: 18 }, { wch: 16 }, { wch: 40 }, { wch: 14 }, { wch: 14 }]
+      wsMaintenance['!cols'] = [{ wch: 28 }, { wch: 36 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 18 }, { wch: 22 }, { wch: 18 }, { wch: 16 }, { wch: 40 }, { wch: 14 }, { wch: 14 }]
       XLSX.utils.book_append_sheet(wb, wsMaintenance, 'Maintenance')
 
-      // ── Sheet 7: Reservations ──
+      // ── Sheet 7: Reservations (ALL fields A-Z) ──
       const reservationHeader = [
-        'Prospect Name', 'Property', 'Unit', 'Deposit Amount (AED)', 'Payment Method',
-        'Payment Date', 'Status', 'Deposit Status', 'Emirates ID', 'Notes',
+        'Reservation ID', 'Prospect Name', 'Prospect Name (Arabic)',
+        'Property', 'Unit', 'Prospect Phone', 'Prospect WhatsApp', 'Prospect Email',
+        'Reservation Date', 'Expected Move-In Date', 'Expiry Date',
+        'Deposit Amount (AED)', 'Deposit Status', 'Payment Method', 'Payment Reference', 'Payment Date',
+        'Status', 'Emirates ID', 'Converted To Tenant', 'Notes', 'Created At',
       ]
       const reservationRows = (reservations || [])
         .filter((r: any) => !r.deletedAt)
@@ -1395,23 +1537,279 @@ export default function Reports() {
               ? formatDate(r.reservationDate)
               : ''
           return [
+            r.id || '',
             r.prospectName || '',
+            r.prospectNameAr || '',
             prop?.name || '',
             r.unitNumber || '',
+            r.prospectPhone || '',
+            r.prospectWhatsapp || '',
+            r.prospectEmail || '',
+            r.reservationDate ? formatDate(r.reservationDate) : '',
+            r.expectedMoveInDate ? formatDate(r.expectedMoveInDate) : '',
+            r.expiryDate ? formatDate(r.expiryDate) : '',
             r.depositAmount || 0,
+            r.depositStatus || '',
             r.depositPaymentMethod || '',
+            r.depositReference || '',
             paymentDate,
             r.status || '',
-            r.depositStatus || '',
             r.emiratesId || '',
+            r.convertedTenantId ? 'Yes' : 'No',
             r.notes || '',
+            r.createdAt ? formatDate(r.createdAt) : '',
           ]
         })
       const wsReservations = XLSX.utils.aoa_to_sheet([reservationHeader, ...reservationRows])
-      wsReservations['!cols'] = [{ wch: 24 }, { wch: 18 }, { wch: 10 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 22 }, { wch: 30 }]
+      wsReservations['!cols'] = [
+        { wch: 28 }, { wch: 24 }, { wch: 24 },
+        { wch: 18 }, { wch: 10 }, { wch: 18 }, { wch: 18 }, { wch: 24 },
+        { wch: 14 }, { wch: 14 }, { wch: 14 },
+        { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 14 },
+        { wch: 12 }, { wch: 22 }, { wch: 14 }, { wch: 30 }, { wch: 14 },
+      ]
       XLSX.utils.book_append_sheet(wb, wsReservations, 'Reservations')
 
+<<<<<<< HEAD
       // Generate and download — convert to styled ExcelJS workbook
+=======
+      // ── Sheet 8: Cheques (outgoing cheques to property owners — ALL fields) ──
+      const chequesHeader = [
+        'Cheque ID', 'Property', 'Payee Name', 'Payee Mobile',
+        'Amount (AED)', 'Due Date', 'Cheque Number', 'Bank Name',
+        'Status', 'Paid Date', 'Notes', 'Created At', 'Updated At',
+      ]
+      const chequesRows = (cheques || [])
+        .filter((c: any) => !c.deletedAt)
+        .sort((a: any, b: any) => new Date(b.dueDate).getTime() - new Date(a.dueDate).getTime())
+        .map((c: any) => {
+          const prop = properties.find(p => p.id === c.propertyId)
+          return [
+            c.id || '',
+            prop?.name || '',
+            c.payeeName || '',
+            c.payeeMobile || '',
+            c.amount || 0,
+            c.dueDate ? formatDate(c.dueDate) : '',
+            c.chequeNumber || '',
+            c.bankName || '',
+            c.status || '',
+            c.paidDate ? formatDate(c.paidDate) : '',
+            c.notes || '',
+            c.createdAt ? formatDate(c.createdAt) : '',
+            c.updatedAt ? formatDate(c.updatedAt) : '',
+          ]
+        })
+      if (chequesRows.length > 0) {
+        const wsCheques = XLSX.utils.aoa_to_sheet([chequesHeader, ...chequesRows])
+        wsCheques['!cols'] = [{ wch: 28 }, { wch: 22 }, { wch: 28 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 12 }, { wch: 14 }, { wch: 30 }, { wch: 14 }, { wch: 14 }]
+        XLSX.utils.book_append_sheet(wb, wsCheques, 'Cheques (Outgoing)')
+      }
+
+      // ── Sheet 9: Recurring Bills (utilities & services — ALL fields) ──
+      const recurringBillsHeader = [
+        'Bill ID', 'Property', 'Provider Name', 'Service Type',
+        'Account Number', 'Contract Number', 'Building Name', 'Owner Name', 'Property Manager',
+        'Current Outstanding (AED)', 'Previous Outstanding (AED)', 'Total Amount Due (AED)',
+        'Last Payment Amount (AED)', 'Last Payment Date',
+        'Next Due Date', 'Billing Frequency', 'Auto Renew', 'Grace Period (days)',
+        'Status', 'Notes', 'Created At', 'Updated At',
+      ]
+      const recurringBillsRows = (recurringBills || [])
+        .filter((b: any) => !b.deletedAt)
+        .sort((a: any, b: any) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime())
+        .map((b: any) => {
+          const prop = properties.find(p => p.id === b.propertyId)
+          return [
+            b.id || '',
+            prop?.name || '',
+            b.providerName || '',
+            b.serviceType || '',
+            b.accountNumber || '',
+            b.contractNumber || '',
+            b.buildingName || '',
+            b.ownerName || '',
+            b.propertyManager || '',
+            b.currentOutstanding || 0,
+            b.previousOutstanding || 0,
+            b.totalAmountDue || 0,
+            b.lastPaymentAmount || '',
+            b.lastPaymentDate ? formatDate(b.lastPaymentDate) : '',
+            b.nextDueDate ? formatDate(b.nextDueDate) : '',
+            b.billingFrequency || '',
+            b.autoRenew ? 'Yes' : 'No',
+            b.gracePeriodDays ?? '',
+            b.status || '',
+            b.notes || '',
+            b.createdAt ? formatDate(b.createdAt) : '',
+            b.updatedAt ? formatDate(b.updatedAt) : '',
+          ]
+        })
+      if (recurringBillsRows.length > 0) {
+        const wsRecurring = XLSX.utils.aoa_to_sheet([recurringBillsHeader, ...recurringBillsRows])
+        wsRecurring['!cols'] = [
+          { wch: 28 }, { wch: 22 }, { wch: 24 }, { wch: 18 },
+          { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 22 }, { wch: 22 },
+          { wch: 18 }, { wch: 18 }, { wch: 18 },
+          { wch: 18 }, { wch: 14 },
+          { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 12 },
+          { wch: 12 }, { wch: 30 }, { wch: 14 }, { wch: 14 },
+        ]
+        XLSX.utils.book_append_sheet(wb, wsRecurring, 'Recurring Bills')
+      }
+
+      // ── Sheet 10: Bill Payments (utility bill payment history — ALL fields) ──
+      const billPaymentsHeader = [
+        'Bill Payment ID', 'Recurring Bill', 'Provider', 'Service Type',
+        'Amount (AED)', 'Payment Date', 'Payment Method', 'Reference',
+        'Outstanding Before (AED)', 'Outstanding After (AED)',
+        'Notes', 'Created At',
+      ]
+      const billPaymentsRows = (billPayments || [])
+        .sort((a: any, b: any) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime())
+        .map((bp: any) => {
+          const bill = (recurringBills || []).find((b: any) => b.id === bp.recurringBillId)
+          return [
+            bp.id || '',
+            bill ? bill.id : '',
+            bill?.providerName || '',
+            bill?.serviceType || '',
+            bp.amount || 0,
+            bp.paymentDate ? formatDate(bp.paymentDate) : '',
+            bp.paymentMethod || '',
+            bp.reference || '',
+            bp.outstandingBefore ?? '',
+            bp.outstandingAfter ?? '',
+            bp.notes || '',
+            bp.createdAt ? formatDate(bp.createdAt) : '',
+          ]
+        })
+      if (billPaymentsRows.length > 0) {
+        const wsBillPayments = XLSX.utils.aoa_to_sheet([billPaymentsHeader, ...billPaymentsRows])
+        wsBillPayments['!cols'] = [{ wch: 28 }, { wch: 28 }, { wch: 24 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 22 }, { wch: 18 }, { wch: 18 }, { wch: 30 }, { wch: 14 }]
+        XLSX.utils.book_append_sheet(wb, wsBillPayments, 'Bill Payments')
+      }
+
+      // ── Sheet 11: Rent Adjustments (ALL fields) ──
+      const adjustmentsHeader = [
+        'Adjustment ID', 'Tenant', 'Property', 'Amount (AED)', 'Adjustment Type',
+        'Reason', 'Notes', 'Effective Month', 'Effective Year', 'Duration (months)',
+        'Status', 'Created By', 'Created At', 'Updated At',
+      ]
+      const adjustmentsRows = (adjustments || [])
+        .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .map((a: any) => {
+          const tenant = tenants.find(tn => tn.id === a.tenantId)
+          const prop = properties.find(p => p.id === a.propertyId)
+          return [
+            a.id || '',
+            tenant?.name || '',
+            prop?.name || '',
+            a.amount || 0,
+            a.adjustmentType || '',
+            a.reason || '',
+            a.notes || '',
+            a.effectiveMonth || '',
+            a.effectiveYear || '',
+            a.durationMonths ?? '',
+            a.status || '',
+            a.createdBy || '',
+            a.createdAt ? formatDate(a.createdAt) : '',
+            a.updatedAt ? formatDate(a.updatedAt) : '',
+          ]
+        })
+      if (adjustmentsRows.length > 0) {
+        const wsAdjustments = XLSX.utils.aoa_to_sheet([adjustmentsHeader, ...adjustmentsRows])
+        wsAdjustments['!cols'] = [{ wch: 28 }, { wch: 24 }, { wch: 22 }, { wch: 14 }, { wch: 18 }, { wch: 28 }, { wch: 30 }, { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 18 }, { wch: 14 }, { wch: 14 }]
+        XLSX.utils.book_append_sheet(wb, wsAdjustments, 'Rent Adjustments')
+      }
+
+      // ── Sheet 12: Tenant Groups (ALL fields) ──
+      const groupsHeader = [
+        'Group ID', 'Group Name', 'Name (Arabic)', 'Property', 'Billing Mode',
+        'Status', 'Notes', 'Tenant Count', 'Created At', 'Updated At',
+      ]
+      const groupsRows = (tenantGroups || [])
+        .filter((g: any) => !g.deletedAt)
+        .map((g: any) => {
+          const prop = properties.find(p => p.id === g.propertyId)
+          const tenantCount = tenants.filter(tn => tn.groupId === g.id).length
+          return [
+            g.id || '',
+            g.name || '',
+            g.nameAr || '',
+            prop?.name || '',
+            g.billingMode || '',
+            g.status || '',
+            g.notes || '',
+            tenantCount,
+            g.createdAt ? formatDate(g.createdAt) : '',
+            g.updatedAt ? formatDate(g.updatedAt) : '',
+          ]
+        })
+      if (groupsRows.length > 0) {
+        const wsGroups = XLSX.utils.aoa_to_sheet([groupsHeader, ...groupsRows])
+        wsGroups['!cols'] = [{ wch: 28 }, { wch: 24 }, { wch: 28 }, { wch: 22 }, { wch: 14 }, { wch: 12 }, { wch: 30 }, { wch: 12 }, { wch: 14 }, { wch: 14 }]
+        XLSX.utils.book_append_sheet(wb, wsGroups, 'Tenant Groups')
+      }
+
+      // ── Sheet 13: Advance Payments (tenants with credit balance) ──
+      const advanceHeader = [
+        'Tenant Name', 'Property', 'Unit Number', 'Monthly Rent (AED)',
+        'Credit Balance (AED)', 'Months Covered', 'Notes',
+      ]
+      const advanceRows = tenants
+        .filter(tn => Number(tn.creditBalance || 0) > 0)
+        .sort((a, b) => Number(b.creditBalance || 0) - Number(a.creditBalance || 0))
+        .map(tn => {
+          const prop = properties.find(p => p.id === tn.propertyId)
+          const rent = Number(tn.rentAmount) || 0
+          const credit = Number(tn.creditBalance) || 0
+          const monthsCovered = rent > 0 ? (credit / rent).toFixed(2) : '0'
+          return [
+            tn.name,
+            prop?.name || '',
+            tn.unitNumber || '',
+            rent,
+            credit,
+            monthsCovered,
+            tn.notes || '',
+          ]
+        })
+      if (advanceRows.length > 0) {
+        const wsAdvance = XLSX.utils.aoa_to_sheet([advanceHeader, ...advanceRows])
+        wsAdvance['!cols'] = [{ wch: 24 }, { wch: 22 }, { wch: 12 }, { wch: 16 }, { wch: 18 }, { wch: 14 }, { wch: 30 }]
+        XLSX.utils.book_append_sheet(wb, wsAdvance, 'Advance Payments')
+      }
+
+      // ── Sheet 14: Historical Debt (tenants with opening balance) ──
+      const debtHeader = [
+        'Tenant Name', 'Property', 'Unit Number', 'Monthly Rent (AED)',
+        'Opening Balance (AED)', 'Status', 'Notes',
+      ]
+      const debtRows = tenants
+        .filter(tn => Number(tn.openingBalance || 0) > 0)
+        .sort((a, b) => Number(b.openingBalance || 0) - Number(a.openingBalance || 0))
+        .map(tn => {
+          const prop = properties.find(p => p.id === tn.propertyId)
+          return [
+            tn.name,
+            prop?.name || '',
+            tn.unitNumber || '',
+            Number(tn.rentAmount) || 0,
+            Number(tn.openingBalance) || 0,
+            tn.status,
+            tn.notes || '',
+          ]
+        })
+      if (debtRows.length > 0) {
+        const wsDebt = XLSX.utils.aoa_to_sheet([debtHeader, ...debtRows])
+        wsDebt['!cols'] = [{ wch: 24 }, { wch: 22 }, { wch: 12 }, { wch: 16 }, { wch: 18 }, { wch: 12 }, { wch: 30 }]
+        XLSX.utils.book_append_sheet(wb, wsDebt, 'Historical Debt')
+      }
+
+      // Generate and download
+>>>>>>> 6d4f9c5f4a00b198c5c7dfebda7e561fdd5b0bb7
       const fileName = `Al_Reef_Report_${getMonthName(selectedMonth, 'en')}_${selectedYear}.xlsx`
 
       // Use ExcelJS for professional styling
@@ -1549,10 +1947,12 @@ export default function Reports() {
   }))
 
   // Revenue analysis monthly trend data
+  // Uses per-month lease-aware expected revenue from the API (item.expected)
+  // instead of the static data.expectedRevenue (which was the same for all months).
   const revenueTrendData = data.trend.map(item => ({
     month: getMonthName(item.month, lang),
     revenue: item.revenue,
-    expected: data.expectedRevenue,
+    expected: (item as any).expected ?? data.expectedRevenue,
   }))
 
   const netProfitMargin = data.grossRevenue > 0 ? ((data.netIncome / data.grossRevenue) * 100) : 0

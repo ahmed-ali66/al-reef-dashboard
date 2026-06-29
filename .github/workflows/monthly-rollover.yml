@@ -1,0 +1,98 @@
+name: Monthly Rollover
+
+# Triggers Vercel's /api/cron/monthly-rollover endpoint to perform the critical
+# monthly financial rollover:
+#   1. Carry forward unpaid rent → openingBalance (overdue debt)
+#   2. Consume credit balance for new month's rent (auto-pay via advance payments)
+#   3. Auto-advance recurring bill cycles (carry forward outstanding amounts)
+#
+# Schedule: 00:00 UTC on the 1st of each month (04:00 Dubai time on the 1st)
+# Replaces: Vercel Cron (removed from vercel.json to stay within Hobby tier's 2-cron limit)
+#
+# Auth: Bearer CRON_SECRET (stored as GitHub Actions secret + Vercel env var)
+# Idempotent: Safe to re-run (RolloverLog prevents double-processing)
+
+on:
+  schedule:
+    - cron: '0 0 1 * *'  # 00:00 UTC on the 1st of each month = 04:00 Dubai on the 1st
+  workflow_dispatch: {}  # Allow manual triggering for testing
+
+jobs:
+  trigger-monthly-rollover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10  # Rollover processes all tenants + bills, may take longer
+    steps:
+      - name: Trigger monthly rollover endpoint
+        run: |
+          echo "[$(date -u)] Triggering monthly rollover on Vercel..."
+          RESPONSE=$(curl -sS -w "\n%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.VERCEL_APP_URL }}/api/cron/monthly-rollover")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response (first 2000 chars):"
+          echo "$BODY" | head -c 2000
+          echo ""
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Monthly rollover failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
+          # Parse the JSON response to show summary
+          echo ""
+          echo "=== Rollover Summary ==="
+          echo "$BODY" | python3 -c "
+          import json, sys
+          try:
+              d = json.load(sys.stdin)
+              print(f'Target: {d.get(\"targetYear\")}-{d.get(\"targetMonth\")}')
+              print(f'Companies processed: {d.get(\"companiesProcessed\", 0)}')
+              print(f'Companies failed: {d.get(\"companiesFailed\", 0)}')
+              for r in d.get('results', []):
+                  s = r.get('stats', {})
+                  print(f'  {r.get(\"companyName\")}: {r.get(\"status\")}')
+                  print(f'    Tenants: {s.get(\"tenantsProcessed\", 0)} | Credits consumed: {s.get(\"creditsConsumed\", 0)} (AED {s.get(\"creditsConsumedTotal\", 0)}) | Debts carried: {s.get(\"debtsCarriedForward\", 0)} (AED {s.get(\"debtsCarriedTotal\", 0)}) | Bills advanced: {s.get(\"billsAdvanced\", 0)}')
+              for e in d.get('errors', []):
+                  print(f'  ❌ {e.get(\"companyName\")}: {e.get(\"error\")}')
+          except Exception as ex:
+              print(f'Could not parse JSON: {ex}')
+          "
+          echo ""
+          echo "✅ Monthly rollover completed successfully"
+
+  notify-failure:
+    needs: trigger-monthly-rollover
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send email notification
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: '🚨 [Al Reef] Monthly Rollover workflow FAILED — ACTION REQUIRED'
+          to: ${{ secrets.NOTIFICATION_EMAIL }}
+          from: GitHub Actions
+          body: |
+            The "Monthly Rollover" GitHub Actions workflow has FAILED.
+
+            This is CRITICAL — the monthly rollover handles:
+              1. Carrying forward unpaid rent to openingBalance
+              2. Consuming credit balances for the new month's rent
+              3. Auto-advancing recurring bill cycles
+
+            If this failed, July's financial data may be incorrect.
+            Please investigate IMMEDIATELY.
+
+            Repository: ${{ github.repository }}
+            Workflow: ${{ github.workflow }}
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Vercel endpoint: ${{ secrets.VERCEL_APP_URL }}/api/cron/monthly-rollover
+
+            You can manually trigger the rollover:
+            curl -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" ${{ secrets.VERCEL_APP_URL }}/api/cron/monthly-rollover
+
+            Timestamp: $(date -u)

@@ -155,6 +155,7 @@ export async function PUT(
     if (body.totalUnits !== undefined) data.totalUnits = Number(body.totalUnits)
     if (body.floors !== undefined) data.floors = Number(body.floors)
     if (body.archived !== undefined) data.archived = Boolean(body.archived)
+    if (body.isOperationalOnly !== undefined) data.isOperationalOnly = Boolean(body.isOperationalOnly)
 
     // Check if there are any fields to update
     if (Object.keys(data).length === 0) {

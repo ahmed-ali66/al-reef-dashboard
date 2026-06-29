@@ -23,6 +23,11 @@ model Company {
   stripeCustomerId   String?
   subscriptionStatus String?
   subscriptionEnd    DateTime?
+  // System go-live date — the first month this company started using the system for production.
+  // The monthly rollover will NEVER carry forward unpaid rent for months before this date.
+  // Historical debt for pre-go-live months must be entered manually via HISTORICAL_DEBT payments.
+  // Editable via Settings page (admin only). Default: null = no restriction (treat all months as live).
+  systemGoLiveDate   DateTime?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -33,6 +38,7 @@ model Company {
   maintenance   Maintenance[]
   users         User[]
   backupRecords BackupRecord[]
+  rolloverLogs  RolloverLog[]
   receipts      Receipt[]
   notifications Notification[]
   reservations  Reservation[]
@@ -68,6 +74,7 @@ model User {
   updatedAt            DateTime       @updatedAt
   resetRequests        ResetRequest[] @relation("ResolvedBy")
   auditLogs            AuditLog[]
+  notificationPreferences NotificationPreference?
 
   @@index([companyId])
   @@index([email])
@@ -87,6 +94,7 @@ model Property {
   totalUnits  Int        @default(1)
   floors      Int        @default(1)
   archived    Boolean    @default(false)
+  isOperationalOnly Boolean @default(false) // true = utility-only property (own office, master-leased villa where we only pay bills). Excluded from vacancy reports but still routes expenses/bills/maintenance.
   deletedAt   DateTime?  // soft delete
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
@@ -424,6 +432,33 @@ model BackupRecord {
   @@map("backup_records")
 }
 
+// Monthly Rollover Log — tracks idempotent execution of the monthly rollover cron.
+// One row per (company, targetMonth, targetYear, dryRun) combination.
+// The unique constraint ensures the rollover can be safely re-run without double-processing.
+model RolloverLog {
+  id             String   @id @default(cuid())
+  companyId      String
+  company        Company  @relation(fields: [companyId], references: [id])
+  targetMonth    Int      // the NEW month being rolled into (e.g., 7 for July)
+  targetYear     Int
+  dryRun         Boolean  @default(false) // true = preview only, no DB changes
+  status         String   @default("completed") // "completed" | "failed" | "partial"
+  error          String?
+  // Stats captured at execution time for audit:
+  tenantsProcessed     Int  @default(0)
+  creditsConsumed      Int  @default(0) // count of tenants whose creditBalance was reduced
+  creditsConsumedTotal Decimal @default(0) @db.Decimal(14, 2) // total AED consumed
+  debtsCarriedForward  Int  @default(0) // count of tenants whose unpaid rent → openingBalance
+  debtsCarriedTotal    Decimal @default(0) @db.Decimal(14, 2) // total AED carried
+  billsAdvanced        Int  @default(0) // count of recurring bills whose cycle was advanced
+  triggeredBy   String? // userId (manual) or "cron" (automated)
+  createdAt     DateTime @default(now())
+
+  @@unique([companyId, targetMonth, targetYear, dryRun])
+  @@index([companyId, targetYear, targetMonth])
+  @@map("rollover_logs")
+}
+
 model Receipt {
   id            String   @id @default(cuid())
   companyId     String
@@ -463,6 +498,28 @@ model Notification {
   @@index([read])
   @@index([createdAt])
   @@map("notifications")
+}
+
+// Per-user notification preferences
+// Controls which notification types trigger browser push, sound, and toast popups.
+// One row per user. If no row exists, defaults are used (all enabled).
+model NotificationPreference {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Master switches
+  pushEnabled     Boolean  @default(true)   // browser push notifications
+  soundEnabled    Boolean  @default(true)   // sound alert
+  toastEnabled    Boolean  @default(true)   // in-app toast popups
+  // Per-category toggles (comma-separated list of disabled types, e.g. "daily_report,backup_success")
+  disabledTypes   String   @default("")     // empty = all types enabled
+  // Sound file to use (default: 'chime')
+  soundFile       String   @default("chime")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+  @@map("notification_preferences")
 }
 
 model ScoreAuditLog {

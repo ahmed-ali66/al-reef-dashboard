@@ -1,12 +1,3 @@
 {
-  "crons": [
-    {
-      "path": "/api/backup/auto",
-      "schedule": "0 2 * * *"
-    },
-    {
-      "path": "/api/cron/daily-report",
-      "schedule": "0 20 * * *"
-    }
-  ]
+  "crons": []
 }

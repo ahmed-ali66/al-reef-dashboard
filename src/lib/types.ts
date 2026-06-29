@@ -26,7 +26,31 @@ export interface DashboardData {
     totalExpenses: number
     totalAdjustments: number
     netCashCollected: number
+    // Revenue split — advance payments and historical debt shown separately
+    advancePaymentsReceived?: number
+    historicalDebtCollected?: number
+    totalCreditBalance?: number
+    tenantsWithCredit?: number
+    totalOpeningBalance?: number
+    tenantsWithDebt?: number
   }
+  tenantsWithAdvanceCredit?: Array<{
+    id: string
+    name: string
+    unitNumber: string | null
+    property: string
+    creditBalance: number
+    rentAmount: number
+    monthsCovered: number
+  }>
+  tenantsWithDebt?: Array<{
+    id: string
+    name: string
+    unitNumber: string | null
+    property: string
+    openingBalance: number
+    rentAmount: number
+  }>
   overdueTenants: TenantData[]
   partialTenants: TenantData[]
   dueSoon: TenantData[]
@@ -58,6 +82,7 @@ export interface PropertyData {
   totalUnits: number
   floors: number
   archived: boolean
+  isOperationalOnly?: boolean // true = utility-only property excluded from vacancy reports
   createdAt: string
   tenants: TenantData[]
 }
@@ -230,7 +255,7 @@ export interface ReportData {
   occupiedUnits: number
   expenseBreakdown: Record<string, number>
   monthlyExpenses: ExpenseData[]
-  trend: { month: number; year: number; revenue: number; expenses: number; profit: number }[]
+  trend: { month: number; year: number; revenue: number; expenses: number; profit: number; expected?: number }[]
   // P&L fields
   rentalIncome: number
   otherIncome: number

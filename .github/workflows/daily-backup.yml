@@ -1,0 +1,63 @@
+name: Daily Backup
+
+# Triggers Vercel's /api/backup/auto endpoint to create a full database backup
+# stored in Vercel Blob Storage.
+#
+# Schedule: 02:00 UTC daily (06:00 Dubai time)
+# Replaces: Vercel Cron (removed from vercel.json to stay within Hobby tier's 2-cron limit)
+#
+# Auth: Uses x-vercel-cron header (required by backup/auto endpoint) + cron_secret
+# query param for defense in depth.
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 02:00 UTC daily
+  workflow_dispatch: {}  # Allow manual triggering for testing
+
+jobs:
+  trigger-backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger Vercel backup endpoint
+        run: |
+          echo "[$(date -u)] Triggering backup on Vercel..."
+          RESPONSE=$(curl -sS -w "\n%{http_code}" \
+            -H "x-vercel-cron: true" \
+            "${{ secrets.VERCEL_APP_URL }}/api/backup/auto?cron_secret=${{ secrets.CRON_SECRET }}")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Backup failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
+          echo "✅ Backup completed successfully"
+
+  notify-failure:
+    needs: trigger-backup
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send email notification
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: '⚠️ [Al Reef] Daily Backup workflow FAILED'
+          to: ${{ secrets.NOTIFICATION_EMAIL }}
+          from: GitHub Actions
+          body: |
+            The "Daily Backup" GitHub Actions workflow has FAILED.
+
+            Repository: ${{ github.repository }}
+            Workflow: ${{ github.workflow }}
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Please check the workflow logs and the Vercel endpoint:
+            ${{ secrets.VERCEL_APP_URL }}/api/backup/auto
+
+            Timestamp: $(date -u)

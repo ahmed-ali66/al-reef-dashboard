@@ -70,6 +70,19 @@ export async function PUT(request: Request) {
       }
     }
 
+    // systemGoLiveDate is a special field — accepts null (clears restriction) or ISO date string
+    if (body.systemGoLiveDate !== undefined) {
+      if (body.systemGoLiveDate === null || body.systemGoLiveDate === '') {
+        updateData.systemGoLiveDate = null
+      } else {
+        const parsed = new Date(body.systemGoLiveDate)
+        if (isNaN(parsed.getTime())) {
+          return errorResponse('Invalid systemGoLiveDate — must be a valid date (YYYY-MM-DD)')
+        }
+        updateData.systemGoLiveDate = parsed
+      }
+    }
+
     // Ensure at least the primary name is not empty if provided
     if (updateData.name !== undefined && updateData.name !== null && !updateData.name) {
       return errorResponse('Company name cannot be empty')

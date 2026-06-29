@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { SessionProvider, useSession, signOut } from 'next-auth/react'
 import { useAppStore, isOwnerOrAdmin, isAdminOnly } from '@/lib/store'
 import { useDataStore } from '@/lib/data-store'
@@ -97,6 +97,20 @@ function AppContent() {
     return () => window.removeEventListener('resize', check)
   }, [setSidebarOpen])
 
+  // ─── Page transition loading bar ───
+  // Shows a thin animated bar at the top when changing pages.
+  // MUST be declared before any conditional returns (React Rules of Hooks).
+  const [pageTransitioning, setPageTransitioning] = useState(false)
+  const prevPageRef = useRef(currentPage)
+  useEffect(() => {
+    if (prevPageRef.current !== currentPage) {
+      setPageTransitioning(true)
+      const timer = setTimeout(() => setPageTransitioning(false), 600)
+      prevPageRef.current = currentPage
+      return () => clearTimeout(timer)
+    }
+  }, [currentPage])
+
   // Show loading while session is being checked
   if (status === 'loading') {
     return (
@@ -163,6 +177,12 @@ function AppContent() {
 
   return (
     <div className="min-h-screen bg-cream">
+      {/* Page transition loading bar */}
+      {pageTransitioning && (
+        <div className="fixed top-0 left-0 right-0 z-[9999] h-1 bg-emerald/20">
+          <div className="h-full bg-emerald animate-loading-bar" style={{ width: '100%' }} />
+        </div>
+      )}
       <Sidebar />
       <main
         className="transition-all duration-300 min-h-screen"
