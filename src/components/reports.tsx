@@ -1093,7 +1093,7 @@ export default function Reports() {
     }
   }, [selectedMonth, selectedYear, lang, data])
 
-  const handleExportXLSX = useCallback(() => {
+  const handleExportXLSX = useCallback(async () => {
     try {
       setExporting(true)
       const store = useDataStore.getState()
@@ -1156,7 +1156,7 @@ export default function Reports() {
 
       // ── Sheet 2: Properties ──
       const propertiesHeader = [
-        'Property Name', 'Name (Arabic)', 'Type', 'Address', 'Total Units',
+        'Property Name', 'Type', 'Address', 'Total Units',
         'Floors', 'Active Tenants', 'Occupancy %', 'Monthly Revenue (AED)', 'Status',
       ]
       const propertiesRows = properties.map(p => {
@@ -1165,7 +1165,6 @@ export default function Reports() {
         const monthlyRevenue = activeTenants.reduce((sum, t) => sum + t.rentAmount, 0)
         return [
           p.name,
-          p.nameAr || '',
           getPropertyTypeLabel(p.type),
           p.address || '',
           p.totalUnits,
@@ -1177,13 +1176,13 @@ export default function Reports() {
         ]
       })
       const wsProperties = XLSX.utils.aoa_to_sheet([propertiesHeader, ...propertiesRows])
-      wsProperties['!cols'] = [{ wch: 22 }, { wch: 30 }, { wch: 14 }, { wch: 40 }, { wch: 12 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 10 }]
+      wsProperties['!cols'] = [{ wch: 22 }, { wch: 14 }, { wch: 40 }, { wch: 12 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 10 }]
       XLSX.utils.book_append_sheet(wb, wsProperties, 'Properties')
 
       // ── Sheet 3: Tenants ──
       const tenantsHeader = [
         'Tenant Name', 'Name (Arabic)', 'Property', 'Unit Number', 'Unit Type',
-        'Floor', 'Size (sqft)', 'Nationality', 'Phone', 'WhatsApp',
+        'Nationality', 'Phone', 'WhatsApp',
         'Emirates ID', 'Employer', 'Monthly Rent (AED)', 'Municipality Fee (AED)',
         'Security Deposit (AED)', 'Payment Method', 'Lease Start', 'Lease End',
         'Contract Duration (months)', 'Status', 'Tenant Score', 'System Score', 'Score Override', 'Override Reason', 'Late Payments',
@@ -1196,15 +1195,13 @@ export default function Reports() {
           prop?.name || '',
           tn.unitNumber || '',
           getUnitTypeLabel(tn.unitType),
-          tn.floor || '',
-          tn.sizeSqft || '',
           tn.nationality || '',
           tn.phone,
           tn.whatsapp || '',
           tn.emiratesId || '',
           tn.employer || '',
           tn.rentAmount,
-          tn.municipalityFee || '',
+          tn.municipalityFee ?? 0,
           tn.securityDeposit || '',
           tn.paymentMethod || '',
           tn.leaseStart ? formatDate(tn.leaseStart) : '',
@@ -1219,7 +1216,7 @@ export default function Reports() {
         ]
       })
       const wsTenants = XLSX.utils.aoa_to_sheet([tenantsHeader, ...tenantsRows])
-      wsTenants['!cols'] = [{ wch: 22 }, { wch: 28 }, { wch: 18 }, { wch: 12 }, { wch: 14 }, { wch: 8 }, { wch: 10 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 22 }, { wch: 20 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 30 }]
+      wsTenants['!cols'] = [{ wch: 22 }, { wch: 28 }, { wch: 18 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 22 }, { wch: 20 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 30 }]
       XLSX.utils.book_append_sheet(wb, wsTenants, 'Tenants')
 
       // ── Sheet 4: Payments ──
@@ -1414,9 +1411,103 @@ export default function Reports() {
       wsReservations['!cols'] = [{ wch: 24 }, { wch: 18 }, { wch: 10 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 22 }, { wch: 30 }]
       XLSX.utils.book_append_sheet(wb, wsReservations, 'Reservations')
 
-      // Generate and download
+      // Generate and download — convert to styled ExcelJS workbook
       const fileName = `Al_Reef_Report_${getMonthName(selectedMonth, 'en')}_${selectedYear}.xlsx`
-      XLSX.writeFile(wb, fileName)
+
+      // Use ExcelJS for professional styling
+      const ExcelJS = (await import('exceljs')).default
+      const styledWb = new ExcelJS.Workbook()
+      styledWb.creator = company?.name || 'Al Reef Al Madeena'
+      styledWb.created = new Date()
+
+      // Convert each SheetJS sheet to a styled ExcelJS sheet
+      for (const sheetName of wb.SheetNames) {
+        const sheet = wb.Sheets[sheetName]
+        const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' })
+        if (!aoa || aoa.length === 0) continue
+
+        const ws = styledWb.addWorksheet(sheetName, {
+          views: [{ state: 'frozen', ySplit: 1 }],
+        })
+
+        // Column widths from the original sheet
+        const cols = sheet['!cols'] || []
+        for (let i = 0; i < cols.length; i++) {
+          ws.getColumn(i + 1).width = cols[i].wch || 15
+        }
+
+        // Determine column count
+        const maxCols = Math.max(...aoa.map((r: any) => (r as any[]).length))
+
+        if (aoa.length > 1) {
+          ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: aoa.length, column: maxCols || 1 } }
+        }
+
+        // Write data
+        for (let r = 0; r < aoa.length; r++) {
+          const row = ws.getRow(r + 1)
+          for (let c = 0; c < maxCols; c++) {
+            const cell = row.getCell(c + 1)
+            const val = (aoa[r] as any[])[c]
+            cell.value = val === '' ? null : val
+
+            if (r === 0) {
+              // Header row styling
+              cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFF' } }
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '0F3D5C' } }
+              cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false }
+              cell.border = {
+                top: { style: 'thin', color: { argb: 'D1D5DB' } },
+                bottom: { style: 'medium', color: { argb: '0F3D5C' } },
+                left: { style: 'thin', color: { argb: 'D1D5DB' } },
+                right: { style: 'thin', color: { argb: 'D1D5DB' } },
+              }
+            } else {
+              // Data rows
+              cell.font = { name: 'Calibri', size: 10, color: { argb: '374151' } }
+              cell.alignment = { horizontal: 'left', vertical: 'middle' }
+              cell.border = {
+                top: { style: 'thin', color: { argb: 'E5E7EB' } },
+                bottom: { style: 'thin', color: { argb: 'E5E7EB' } },
+                left: { style: 'thin', color: { argb: 'E5E7EB' } },
+                right: { style: 'thin', color: { argb: 'E5E7EB' } },
+              }
+
+              // Zebra striping
+              if (r % 2 === 0) {
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F9FAFB' } }
+              }
+
+              // Bold for first column (names/IDs)
+              if (c === 0) {
+                cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: '1F2937' } }
+              }
+
+              // Right-align numeric columns
+              if (typeof val === 'number') {
+                cell.alignment = { horizontal: 'right', vertical: 'middle' }
+                if (val > 100) {
+                  cell.numFmt = '#,##0 "AED"'
+                }
+              }
+            }
+          }
+          row.commit()
+        }
+
+        // Set header row height
+        ws.getRow(1).height = 28
+      }
+
+      // Generate blob and download
+      const buffer = await styledWb.xlsx.writeBuffer()
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = fileName
+      a.click()
+      URL.revokeObjectURL(url)
 
       toast.success(t('exportSuccess', lang))
     } catch (error) {
