@@ -1224,23 +1224,17 @@ export default function Reports() {
       ]
       const tenantsRows = tenants.map(tn => {
         const prop = properties.find(p => p.id === tn.propertyId)
-        const group = (tenantGroups || []).find((g: any) => g.id === tn.groupId)
         return [
-          tn.id,
           tn.name,
           tn.nameAr || '',
-          (tn as any).nameBn || '',
-          (tn as any).nameUr || '',
           prop?.name || '',
           tn.unitNumber || '',
           getUnitTypeLabel(tn.unitType),
           tn.nationality || '',
           tn.phone,
           tn.whatsapp || '',
-          tn.email || '',
           tn.emiratesId || '',
           tn.employer || '',
-          tn.emergencyContact || '',
           tn.rentAmount,
           tn.municipalityFee ?? 0,
           tn.securityDeposit || '',
@@ -1248,25 +1242,12 @@ export default function Reports() {
           tn.leaseStart ? formatDate(tn.leaseStart) : '',
           tn.leaseEnd ? formatDate(tn.leaseEnd) : '',
           tn.contractDuration || '',
-          tn.renewalStatus || '',
-          tn.newRent || '',
           tn.status,
-          tn.movedOutAt ? formatDate(tn.movedOutAt) : '',
-          tn.latePaymentCount,
           tn.tenantScore,
           tn.systemScore ?? tn.tenantScore,
           tn.manualScoreOverride ?? '',
           tn.manualScoreReason ?? '',
-          tn.manualOverrideBy ?? '',
-          tn.manualOverrideAt ? formatDate(tn.manualOverrideAt) : '',
-          tn.openingBalance ?? 0,
-          tn.creditBalance ?? 0,
-          tn.legalCase ? 'Yes' : 'No',
-          tn.legalCaseNumber || '',
-          tn.legalCaseNotes || '',
-          group?.name || '',
-          tn.notes || '',
-          tn.createdAt ? formatDate(tn.createdAt) : '',
+          tn.latePaymentCount,
         ]
       })
       const wsTenants = XLSX.utils.aoa_to_sheet([tenantsHeader, ...tenantsRows])
