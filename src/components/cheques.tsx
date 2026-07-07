@@ -442,11 +442,11 @@ export default function Cheques() {
           <Card className="border-l-4 border-l-amber-500">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">{t('totalPending', lang) || 'Pending'}</span>
+                <span className="text-xs text-muted-foreground">Pending This Month</span>
                 <Clock className="w-4 h-4 text-amber-500" />
               </div>
-              <p className="text-lg font-bold mt-1">{formatAED(summary.totalPending.amount)}</p>
-              <p className="text-xs text-muted-foreground">{summary.totalPending.count} {t('cheques', lang).toLowerCase()}</p>
+              <p className="text-lg font-bold mt-1">{formatAED(summary.pendingThisMonth?.amount || summary.totalPending.amount)}</p>
+              <p className="text-xs text-muted-foreground">{summary.pendingThisMonth?.count || summary.totalPending.count} {t('cheques', lang).toLowerCase()}</p>
             </CardContent>
           </Card>
 

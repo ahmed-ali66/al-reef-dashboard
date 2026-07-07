@@ -33,6 +33,7 @@ export async function GET(request: Request) {
       overdueAgg,
       paidThisYearAgg,
       byPropertyPending,
+      pendingThisMonthAgg,
     ] = await Promise.all([
       // Total pending (all pending cheques — no payments yet)
       prisma.cheque.aggregate({
@@ -55,6 +56,21 @@ export async function GET(request: Request) {
           status: 'pending',
           deletedAt: null,
           dueDate: { gte: startOfToday, lte: thirtyDaysLater },
+        },
+        _sum: { amount: true },
+        _count: true,
+      }),
+
+      // Pending this month: pending + dueDate in [first day of current month, last day of current month]
+      prisma.cheque.aggregate({
+        where: {
+          companyId: user.companyId,
+          status: 'pending',
+          deletedAt: null,
+          dueDate: {
+            gte: new Date(now.getFullYear(), now.getMonth(), 1),
+            lte: new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999),
+          },
         },
         _sum: { amount: true },
         _count: true,
@@ -118,6 +134,10 @@ export async function GET(request: Request) {
       totalPending: {
         amount: safeNumber(totalPendingAgg._sum.amount),
         count: totalPendingAgg._count,
+      },
+      pendingThisMonth: {
+        amount: safeNumber(pendingThisMonthAgg._sum.amount),
+        count: pendingThisMonthAgg._count,
       },
       partiallyPaid: {
         amount: safeNumber(partiallyPaidAgg._sum.amount),
