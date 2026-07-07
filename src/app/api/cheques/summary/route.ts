@@ -30,10 +30,10 @@ export async function GET(request: Request) {
       totalPendingAgg,
       partiallyPaidAgg,
       upcoming30Agg,
+      pendingThisMonthAgg,
       overdueAgg,
       paidThisYearAgg,
       byPropertyPending,
-      pendingThisMonthAgg,
     ] = await Promise.all([
       // Total pending (all pending cheques — no payments yet)
       prisma.cheque.aggregate({
