@@ -332,17 +332,31 @@ export async function GET(request: Request) {
     // FOOTER on every page
     // ═══════════════════════════════════════════════════════════════════════
     const range = doc.bufferedPageRange()
-    const totalPages = range.start + range.count
-    // Note: PDFKit sometimes creates an extra blank page at the end.
-    // We skip the last page if it has no content (totalPages - 1).
-    const effectiveTotal = totalPages
-    for (let i = range.start; i < effectiveTotal; i++) {
+    let totalPages = range.start + range.count
+    // PDFKit sometimes creates an extra blank page at the end when bottom margin is 0.
+    // We detect this by checking if the last page was auto-created (no content drawn on it).
+    // Fix: subtract 1 from totalPages if the last page is blank.
+    // We do this by checking if range.count > number of months + 1 (cover).
+    const expectedPages = sortedMonths.length + 1 // cover + one page per month (minimum)
+    if (totalPages > expectedPages) {
+      // Check if any month had auto-pagination (table overflow)
+      // If not, the extra page is blank and should be skipped
+      let hasOverflow = false
+      for (const monthKey of sortedMonths) {
+        const monthCheques = byMonth.get(monthKey)!
+        if (monthCheques.length > 25) { hasOverflow = true; break } // ~25 rows fit per page
+      }
+      if (!hasOverflow && totalPages === expectedPages + 1) {
+        totalPages -= 1 // Skip the blank trailing page
+      }
+    }
+    for (let i = range.start; i < totalPages; i++) {
       doc.switchToPage(i)
       doc.moveTo(marginLeft, pageHeight - 35).lineTo(marginLeft + pageWidth, pageHeight - 35)
         .strokeColor(COLORS.borderLight).lineWidth(0.3).stroke()
       doc.fontSize(7).fillColor(COLORS.textMuted).font('Helvetica')
       doc.text(`${company?.name || 'Al Reef Al Madeena'} — Upcoming Cheques Report`, marginLeft, pageHeight - 25, { width: pageWidth / 2 - 10, align: 'left', lineBreak: false })
-      doc.text(`Page ${i + 1} of ${effectiveTotal}`, marginLeft + pageWidth / 2, pageHeight - 25, { width: pageWidth / 2 - 10, align: 'right', lineBreak: false })
+      doc.text(`Page ${i + 1} of ${totalPages}`, marginLeft + pageWidth / 2, pageHeight - 25, { width: pageWidth / 2 - 10, align: 'right', lineBreak: false })
     }
 
     // ─── Finalize ───
