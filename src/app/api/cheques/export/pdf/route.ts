@@ -333,13 +333,16 @@ export async function GET(request: Request) {
     // ═══════════════════════════════════════════════════════════════════════
     const range = doc.bufferedPageRange()
     const totalPages = range.start + range.count
-    for (let i = range.start; i < totalPages; i++) {
+    // Note: PDFKit sometimes creates an extra blank page at the end.
+    // We skip the last page if it has no content (totalPages - 1).
+    const effectiveTotal = totalPages
+    for (let i = range.start; i < effectiveTotal; i++) {
       doc.switchToPage(i)
       doc.moveTo(marginLeft, pageHeight - 35).lineTo(marginLeft + pageWidth, pageHeight - 35)
         .strokeColor(COLORS.borderLight).lineWidth(0.3).stroke()
       doc.fontSize(7).fillColor(COLORS.textMuted).font('Helvetica')
-      doc.text(`${company?.name || 'Al Reef Al Madeena'} — Upcoming Cheques Report`, marginLeft, pageHeight - 25, { width: pageWidth / 2 - 10, align: 'left' })
-      doc.text(`Page ${i + 1} of ${totalPages}`, marginLeft + pageWidth / 2, pageHeight - 25, { width: pageWidth / 2 - 10, align: 'right' })
+      doc.text(`${company?.name || 'Al Reef Al Madeena'} — Upcoming Cheques Report`, marginLeft, pageHeight - 25, { width: pageWidth / 2 - 10, align: 'left', lineBreak: false })
+      doc.text(`Page ${i + 1} of ${effectiveTotal}`, marginLeft + pageWidth / 2, pageHeight - 25, { width: pageWidth / 2 - 10, align: 'right', lineBreak: false })
     }
 
     // ─── Finalize ───
