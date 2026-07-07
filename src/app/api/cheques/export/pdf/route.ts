@@ -5,12 +5,28 @@ import {
   unauthorizedResponse,
   isFinancialUser,
   safeNumber,
-  serialize,
 } from '@/lib/api-utils'
 import PDFDocument from 'pdfkit'
 
 // GET /api/cheques/export/pdf — generate professional PDF report
-// Optional query params: status, propertyId, search
+// Shows UPCCOMING (pending) cheques organized by month, one month per page.
+// Each page shows: month title, total amount, table of cheques for that month.
+// Does NOT include paid cheques (those are in the XLSX export only).
+
+interface ChequeRow {
+  id: string
+  propertyId: string
+  payeeName: string
+  payeeMobile: string | null
+  amount: number
+  dueDate: Date
+  chequeNumber: string | null
+  bankName: string | null
+  status: string
+  notes: string | null
+  property: { id: string; name: string }
+}
+
 export async function GET(request: Request) {
   try {
     const user = await getAuthUser()
@@ -19,89 +35,68 @@ export async function GET(request: Request) {
       return errorResponse('Only financial users can export reports', 403)
     }
 
-    const { searchParams } = new URL(request.url)
-    const statusFilter = searchParams.get('status')?.trim() || undefined
-    const propertyId = searchParams.get('propertyId')?.trim() || undefined
-    const search = searchParams.get('search')?.trim() || undefined
-
-    const where: any = {
-      companyId: user.companyId,
-      deletedAt: null,
-    }
-    if (statusFilter) where.status = statusFilter
-    if (propertyId) where.propertyId = propertyId
-    if (search) {
-      where.OR = [
-        { payeeName: { contains: search, mode: 'insensitive' } },
-        { chequeNumber: { contains: search, mode: 'insensitive' } },
-        { property: { name: { contains: search, mode: 'insensitive' } } },
-      ]
-    }
-
-    const [cheques, company, paymentsAgg] = await Promise.all([
-      prisma.cheque.findMany({
-        where,
-        include: {
-          property: { select: { id: true, name: true, nameAr: true, type: true } },
-          payments: {
-            orderBy: { paymentDate: 'desc' },
-            select: { id: true, amount: true, paymentDate: true, paymentMethod: true, reference: true },
-          },
-        },
-        orderBy: [{ dueDate: 'asc' }],
-      }),
-      prisma.company.findUnique({
-        where: { id: user.companyId },
-        select: { name: true, nameAr: true, phone: true, email: true, address: true },
-      }),
-      // Total payments across all cheques (for summary)
-      prisma.chequePayment.aggregate({
-        where: { companyId: user.companyId },
-        _sum: { amount: true },
-        _count: true,
-      }),
-    ])
-
-    if (cheques.length === 0) {
-      return errorResponse('No cheques to export', 404)
-    }
-
-    // Serialize + compute paid-so-far/remaining per cheque
-    const serializedCheques = cheques.map(c => {
-      const s = serialize(c)
-      const totalPaid = (c.payments || []).reduce((sum, p) => sum + safeNumber(p.amount), 0)
-      const chequeAmount = safeNumber(c.amount)
-      s.totalPaid = Number(totalPaid.toFixed(2))
-      s.remaining = Number(Math.max(0, chequeAmount - totalPaid).toFixed(2))
-      return s
+    // Fetch all PENDING cheques (upcoming — not yet paid)
+    const cheques = await prisma.cheque.findMany({
+      where: {
+        companyId: user.companyId,
+        deletedAt: null,
+        status: 'pending',
+      },
+      include: {
+        property: { select: { id: true, name: true } },
+      },
+      orderBy: { dueDate: 'asc' },
     })
 
-    const now = new Date()
-    const today = now.toISOString().split('T')[0]
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-
-    // ─── Classification (3 mutually-exclusive buckets + overdue callout) ───
-    const hasPayments = (c: any) => (c.payments?.length || 0) > 0 || safeNumber(c.totalPaid) > 0
-    const isOverdue = (c: any) => {
-      const dueDate = new Date(c.dueDate)
-      const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate())
-      return dueDay < startOfToday && c.status !== 'paid'
+    if (cheques.length === 0) {
+      return errorResponse('No pending cheques to export', 404)
     }
 
-    const fullyPaidCheques = serializedCheques.filter(c => c.status === 'paid')
-    const partiallyPaidCheques = serializedCheques.filter(c => c.status === 'partially_paid')
-    const unpaidCheques = serializedCheques.filter(c => c.status === 'pending' || c.status === 'bounced' || c.status === 'cancelled')
-    const overdueUnpaidCount = unpaidCheques.filter(isOverdue).length
+    const company = await prisma.company.findUnique({ where: { id: user.companyId } })
+    const now = new Date()
+    const today = now.toISOString().slice(0, 10)
+
+    // ─── Group cheques by month (YYYY-MM) ───
+    const byMonth = new Map<string, ChequeRow[]>()
+    for (const c of cheques) {
+      const d = new Date(c.dueDate)
+      const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      if (!byMonth.has(monthKey)) byMonth.set(monthKey, [])
+      byMonth.get(monthKey)!.push(c as any)
+    }
+
+    // Sort months chronologically
+    const sortedMonths = Array.from(byMonth.keys()).sort()
+
+    // ─── Colors ───
+    const COLORS = {
+      primary: '#0F3D5C',
+      accent: '#0E7C5A',
+      warning: '#C75B12',
+      danger: '#A02B1F',
+      textDark: '#1F2937',
+      textBody: '#374151',
+      textMuted: '#6B7280',
+      bgLight: '#F3F4F6',
+      bgZebra: '#F9FAFB',
+      border: '#D1D5DB',
+      borderLight: '#E5E7EB',
+    }
+
+    const monthNames = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ]
 
     // ─── Generate PDF ───
     const doc = new PDFDocument({
       size: 'A4',
-      margins: { top: 50, bottom: 0, left: 50, right: 50 },
+      margins: { top: 50, bottom: 50, left: 50, right: 50 },
       bufferPages: true,
       info: {
-        Title: 'Cheques Report',
+        Title: 'Upcoming Cheques Report',
         Author: company?.name || 'Al Reef Al Madeena',
-        Subject: 'Outgoing Cheques Report',
+        Subject: 'Pending Cheques by Month',
         CreationDate: now,
       },
     })
@@ -110,291 +105,263 @@ export async function GET(request: Request) {
     doc.on('data', (chunk: Buffer) => chunks.push(chunk))
 
     const marginLeft = 50
-    const pageWidth = doc.page.width - marginLeft - 50
-    const contentBottomLimit = doc.page.height - 55
+    const marginRight = 50
+    const pageWidth = doc.page.width - marginLeft - marginRight
+    const pageHeight = doc.page.height
+    const contentBottomLimit = pageHeight - 60
 
-    const truncateText = (text: string, maxWidth: number, fontName: string, fontSize: number): string => {
-      doc.font(fontName).fontSize(fontSize)
+    // ─── Helper: truncate text ───
+    const truncate = (text: string, maxWidth: number, font: string, size: number): string => {
+      doc.font(font).fontSize(size)
       if (doc.widthOfString(text) <= maxWidth) return text
-      let truncated = text
-      while (truncated.length > 0 && doc.widthOfString(truncated + '...') > maxWidth) {
-        truncated = truncated.slice(0, -1)
-      }
-      return truncated + '...'
+      let t = text
+      while (t.length > 0 && doc.widthOfString(t + '…') > maxWidth) t = t.slice(0, -1)
+      return t + '…'
     }
 
-    const addHeader = (): number => {
-      let y = marginLeft
-      doc.fontSize(18).fillColor('#1a5276').font('Helvetica-Bold')
-      const companyName = company?.name || 'Al Reef Al Madeena'
-      doc.text(companyName, marginLeft, y, { width: pageWidth, lineBreak: true })
-      y += doc.heightOfString(companyName, { width: pageWidth, fontSize: 18 }) + 10
+    // ─── Helper: format AED ───
+    const formatAED = (n: number): string => 'AED ' + Math.round(n).toLocaleString('en-AE')
 
-      doc.fontSize(14).fillColor('#2c3e50').font('Helvetica')
-      doc.text('Cheques Report', marginLeft, y, { width: pageWidth, lineBreak: true })
-      y += doc.heightOfString('Cheques Report', { width: pageWidth, fontSize: 14 }) + 8
+    // ═══════════════════════════════════════════════════════════════════════
+    // COVER PAGE — Summary of all months
+    // ═══════════════════════════════════════════════════════════════════════
+    let y = 50
 
-      const totalCheques = serializedCheques.length
-      const totalAmount = serializedCheques.reduce((s, c) => s + safeNumber(c.amount), 0)
-      const totalPaid = serializedCheques.reduce((s, c) => s + safeNumber(c.totalPaid), 0)
-      const totalRemaining = serializedCheques.reduce((s, c) => s + safeNumber(c.remaining), 0)
+    // Top accent bar
+    doc.rect(0, 0, doc.page.width, 6).fillColor(COLORS.accent).fill()
 
-      doc.fontSize(9).fillColor('#7f8c8d').font('Helvetica')
-      const summaryLine = `Generated: ${today} | Total Cheques: ${totalCheques} | Total Amount: AED ${totalAmount.toFixed(2)} | Paid: AED ${totalPaid.toFixed(2)} | Remaining: AED ${totalRemaining.toFixed(2)}`
-      doc.text(summaryLine, marginLeft, y, { width: pageWidth, lineBreak: true })
-      y += doc.heightOfString(summaryLine, { width: pageWidth, fontSize: 9 }) + 12
+    // Company name
+    doc.fontSize(20).fillColor(COLORS.primary).font('Helvetica-Bold')
+    const companyName = company?.name || 'Al Reef Al Madeena'
+    doc.text(companyName, marginLeft, y, { width: pageWidth, lineBreak: true })
+    y += doc.heightOfString(companyName, { width: pageWidth, fontSize: 20 }) + 6
 
-      doc.moveTo(marginLeft, y).lineTo(marginLeft + pageWidth, y).strokeColor('#1a5276').lineWidth(2).stroke()
-      y += 10
-      return y
-    }
+    // Report title
+    doc.fontSize(14).fillColor(COLORS.textDark).font('Helvetica-Bold')
+    doc.text('Upcoming Cheques Report — by Month', marginLeft, y, { width: pageWidth })
+    y += 18
 
-    const addSectionTitle = (title: string, y: number, color: string = '#1a5276'): number => {
-      if (y + 50 > contentBottomLimit) { doc.addPage(); y = 50 }
-      doc.fontSize(12).fillColor(color).font('Helvetica-Bold')
-      doc.text(title, marginLeft, y, { width: pageWidth, lineBreak: true })
-      y += doc.heightOfString(title, { width: pageWidth, fontSize: 12 }) + 2
-      doc.moveTo(marginLeft, y).lineTo(marginLeft + pageWidth, y).strokeColor(color).lineWidth(0.5).stroke()
-      y += 8
-      return y
-    }
+    // Generated date
+    doc.fontSize(9).fillColor(COLORS.textMuted).font('Helvetica')
+    doc.text(`Generated: ${today}  |  ${cheques.length} pending cheques across ${sortedMonths.length} months`, marginLeft, y, { width: pageWidth })
+    y += 14
 
-    const addSectionTotal = (y: number, label: string, amount: number, color: string, secondaryLabel?: string, secondaryAmount?: number): number => {
-      const linesNeeded = secondaryLabel ? 2 : 1
-      if (y + 20 * linesNeeded + 10 > contentBottomLimit) { doc.addPage(); y = 50 }
-      doc.fontSize(10).fillColor(color).font('Helvetica-Bold')
-      doc.text(label, marginLeft, y, { width: pageWidth * 0.7, align: 'left', lineBreak: false })
-      doc.text(`AED ${amount.toFixed(2)}`, marginLeft + pageWidth * 0.7, y, { width: pageWidth * 0.3, align: 'right', lineBreak: false })
-      y += 18
-      if (secondaryLabel && secondaryAmount !== undefined) {
-        doc.fontSize(10).fillColor(color).font('Helvetica-Bold')
-        doc.text(secondaryLabel, marginLeft, y, { width: pageWidth * 0.7, align: 'left', lineBreak: false })
-        doc.text(`AED ${secondaryAmount.toFixed(2)}`, marginLeft + pageWidth * 0.7, y, { width: pageWidth * 0.3, align: 'right', lineBreak: false })
-        y += 18
-      }
-      y += 6
-      return y
-    }
+    // Separator
+    doc.moveTo(marginLeft, y).lineTo(marginLeft + pageWidth, y).strokeColor(COLORS.primary).lineWidth(2).stroke()
+    y += 16
 
-    type CellValue = string | { primary: string; secondary?: string | null }
-    type ColumnSpec = { header: string; widthPct: number }
+    // Summary table
+    doc.fontSize(10).fillColor(COLORS.textDark).font('Helvetica-Bold')
+    doc.text('MONTH', marginLeft, y, { width: 200 })
+    doc.text('CHEQUES', marginLeft + 220, y, { width: 80, align: 'center' })
+    doc.text('TOTAL AMOUNT', marginLeft + pageWidth - 120, y, { width: 120, align: 'right' })
+    y += 16
+    doc.moveTo(marginLeft, y).lineTo(marginLeft + pageWidth, y).strokeColor(COLORS.border).lineWidth(0.5).stroke()
+    y += 8
 
-    const drawTable = (columns: ColumnSpec[], rows: CellValue[][], y: number): number => {
-      const colWidths = columns.map(c => (c.widthPct / 100) * pageWidth)
-      const padding = 4
-      const headerFontSize = 8
-      const cellFontSize = 7.5
-      const secondaryFontSize = 6.5
-      const headerHeight = 24
-      const minRowHeight = 18
-      const headerFont = 'Helvetica-Bold'
-      const cellFont = 'Helvetica'
+    let grandTotal = 0
+    let grandCount = 0
 
-      const drawHeader = (startY: number): number => {
-        doc.rect(marginLeft, startY, pageWidth, headerHeight).fill('#1a5276')
-        let x = marginLeft
-        columns.forEach((col, i) => {
-          const truncatedHeader = truncateText(col.header, colWidths[i] - padding * 2, headerFont, headerFontSize)
-          doc.fontSize(headerFontSize).fillColor('#ffffff').font(headerFont)
-          doc.text(truncatedHeader, x + padding, startY + 7, { width: colWidths[i] - padding * 2, align: 'left', lineBreak: false })
-          x += colWidths[i]
-        })
-        return startY + headerHeight
+    for (let i = 0; i < sortedMonths.length; i++) {
+      const monthKey = sortedMonths[i]
+      const monthCheques = byMonth.get(monthKey)!
+      const [year, month] = monthKey.split('-').map(Number)
+      const monthLabel = `${monthNames[month - 1]} ${year}`
+      const monthTotal = monthCheques.reduce((s, c) => s + safeNumber(c.amount), 0)
+      const zebra = i % 2 === 1
+
+      if (zebra) {
+        doc.rect(marginLeft, y - 4, pageWidth, 22).fillColor(COLORS.bgZebra).fill()
       }
 
-      if (y + headerHeight + minRowHeight > contentBottomLimit) { doc.addPage(); y = 50 }
-      y = drawHeader(y)
+      doc.fontSize(10).fillColor(COLORS.textDark)
+      doc.font('Helvetica-Bold').text(monthLabel, marginLeft, y, { width: 200 })
+      doc.font('Helvetica').fillColor(COLORS.textBody)
+      doc.text(String(monthCheques.length), marginLeft + 220, y, { width: 80, align: 'center' })
+      doc.font('Helvetica-Bold').fillColor(COLORS.accent)
+      doc.text(formatAED(monthTotal), marginLeft + pageWidth - 120, y, { width: 120, align: 'right' })
 
-      rows.forEach((row, ri) => {
-        let maxCellHeight = minRowHeight
-        row.forEach((cell, i) => {
-          const cellWidth = colWidths[i] - padding * 2
-          if (typeof cell === 'string') {
-            doc.font(cellFont).fontSize(cellFontSize)
-            const h = doc.heightOfString(String(cell), { width: cellWidth })
-            maxCellHeight = Math.max(maxCellHeight, h + 8)
-          } else {
-            doc.font(cellFont).fontSize(cellFontSize)
-            const primaryH = doc.heightOfString(cell.primary, { width: cellWidth })
-            let totalH = primaryH
-            if (cell.secondary) {
-              doc.font(cellFont).fontSize(secondaryFontSize)
-              totalH += 2 + doc.heightOfString(cell.secondary, { width: cellWidth })
-            }
-            maxCellHeight = Math.max(maxCellHeight, totalH + 8)
-          }
-        })
-        maxCellHeight = Math.min(maxCellHeight, 80)
-
-        if (y + maxCellHeight > contentBottomLimit) { doc.addPage(); y = 50; y = drawHeader(y) }
-        if (ri % 2 === 0) { doc.rect(marginLeft, y, pageWidth, maxCellHeight).fill('#f8f9fa') }
-
-        let x = marginLeft
-        row.forEach((cell, i) => {
-          const cellWidth = colWidths[i] - padding * 2
-          if (typeof cell === 'string') {
-            doc.font(cellFont).fontSize(cellFontSize)
-            const wrappedHeight = doc.heightOfString(String(cell), { width: cellWidth })
-            if (wrappedHeight <= maxCellHeight - 8) {
-              doc.fontSize(cellFontSize).fillColor('#2c3e50').font(cellFont)
-              doc.text(String(cell), x + padding, y + 4, { width: cellWidth, align: 'left', lineBreak: true })
-            } else {
-              const truncated = truncateText(String(cell), cellWidth, cellFont, cellFontSize)
-              doc.fontSize(cellFontSize).fillColor('#2c3e50').font(cellFont)
-              doc.text(truncated, x + padding, y + 4, { width: cellWidth, align: 'left', lineBreak: false })
-            }
-          } else {
-            doc.font(cellFont).fontSize(cellFontSize).fillColor('#2c3e50')
-            doc.text(cell.primary, x + padding, y + 4, { width: cellWidth, align: 'left', lineBreak: true })
-            if (cell.secondary) {
-              const primaryH = doc.heightOfString(cell.primary, { width: cellWidth, fontSize: cellFontSize })
-              doc.font(cellFont).fontSize(secondaryFontSize).fillColor('#7f8c8d')
-              doc.text(cell.secondary, x + padding, y + 4 + primaryH + 2, { width: cellWidth, align: 'left', lineBreak: true })
-            }
-          }
-          x += colWidths[i]
-        })
-        y += maxCellHeight
-      })
-      return y + 8
+      y += 22
+      grandTotal += monthTotal
+      grandCount += monthCheques.length
     }
 
-    // Build PDF content
-    let y = addHeader()
+    // Grand total
+    y += 4
+    doc.moveTo(marginLeft, y).lineTo(marginLeft + pageWidth, y).strokeColor(COLORS.primary).lineWidth(1).stroke()
+    y += 8
+    doc.rect(marginLeft, y, pageWidth, 28).fillColor(COLORS.primary).fill()
+    doc.fontSize(11).fillColor('#FFFFFF').font('Helvetica-Bold')
+    doc.text('GRAND TOTAL', marginLeft, y + 8, { width: 200 })
+    doc.text(`${grandCount} cheques`, marginLeft + 220, y + 8, { width: 80, align: 'center' })
+    doc.text(formatAED(grandTotal), marginLeft + pageWidth - 120, y + 8, { width: 120, align: 'right' })
 
-    // Summary Statistics box
-    y = addSectionTitle('Summary Statistics', y)
-    const totalAmount = serializedCheques.reduce((s, c) => s + safeNumber(c.amount), 0)
-    const totalPaid = serializedCheques.reduce((s, c) => s + safeNumber(c.totalPaid), 0)
-    const totalRemaining = serializedCheques.reduce((s, c) => s + safeNumber(c.remaining), 0)
-    const summaryData: Array<[string, string]> = [
-      ['Total Cheques', String(serializedCheques.length)],
-      ['Total Amount', `AED ${totalAmount.toFixed(2)}`],
-      ['Total Paid', `AED ${totalPaid.toFixed(2)}`],
-      ['Total Remaining', `AED ${totalRemaining.toFixed(2)}`],
-      ['Fully Paid', String(fullyPaidCheques.length)],
-      ['Partially Paid', String(partiallyPaidCheques.length)],
-      ['Unpaid', String(unpaidCheques.length)],
-      ...(overdueUnpaidCount > 0 ? [['Overdue (subset of Unpaid)', String(overdueUnpaidCount)]] as Array<[string, string]> : []),
-    ]
-    summaryData.forEach((item, i) => {
-      const col = i % 2
-      const row = Math.floor(i / 2)
-      const sx = marginLeft + col * (pageWidth / 2)
-      const sy = y + row * 18
-      doc.fontSize(9).fillColor('#7f8c8d').font('Helvetica')
-      doc.text(`${item[0]}:`, sx + 4, sy, { width: pageWidth / 2 - 60, lineBreak: false })
-      doc.fontSize(9).fillColor('#2c3e50').font('Helvetica-Bold')
-      doc.text(item[1], sx + pageWidth / 2 - 80, sy, { width: 76, align: 'right', lineBreak: false })
-    })
-    y += Math.ceil(summaryData.length / 2) * 18 + 15
+    // ═══════════════════════════════════════════════════════════════════════
+    // ONE PAGE PER MONTH
+    // ═══════════════════════════════════════════════════════════════════════
+    for (const monthKey of sortedMonths) {
+      const monthCheques = byMonth.get(monthKey)!
+      const [year, month] = monthKey.split('-').map(Number)
+      const monthLabel = `${monthNames[month - 1]} ${year}`
+      const monthTotal = monthCheques.reduce((s, c) => s + safeNumber(c.amount), 0)
 
-    // SECTION 1: Fully Paid
-    if (fullyPaidCheques.length > 0) {
-      y = addSectionTitle(`Fully Paid Cheques (${fullyPaidCheques.length})`, y, '#27ae60')
-      const rows = fullyPaidCheques.map(c => [
-        c.property?.name || '-',
-        { primary: c.payeeName, secondary: c.payeeMobile },
-        `AED ${safeNumber(c.amount).toFixed(2)}`,
-        `AED ${safeNumber(c.totalPaid).toFixed(2)}`,
-        c.paidDate ? new Date(c.paidDate).toISOString().split('T')[0] : '-',
-        c.chequeNumber || '-',
-      ])
-      y = drawTable([
-        { header: 'Property', widthPct: 20 },
-        { header: 'Payee / Mobile', widthPct: 22 },
-        { header: 'Amount', widthPct: 13 },
-        { header: 'Paid', widthPct: 13 },
-        { header: 'Paid Date', widthPct: 14 },
-        { header: 'Cheque #', widthPct: 18 },
-      ], rows, y)
-      const totalFullyPaid = fullyPaidCheques.reduce((s, c) => s + safeNumber(c.totalPaid), 0)
-      y = addSectionTotal(y, `Total Paid (${fullyPaidCheques.length} cheques):`, totalFullyPaid, '#27ae60')
+      // Start a new page for each month
+      doc.addPage()
+
+      // Top accent bar
+      doc.rect(0, 0, doc.page.width, 6).fillColor(COLORS.accent).fill()
+
+      y = 50
+
+      // Company name (smaller on month pages)
+      doc.fontSize(14).fillColor(COLORS.primary).font('Helvetica-Bold')
+      doc.text(companyName, marginLeft, y, { width: pageWidth })
+      y += 20
+
+      // Month title — large
+      doc.fontSize(22).fillColor(COLORS.textDark).font('Helvetica-Bold')
+      doc.text(monthLabel, marginLeft, y, { width: pageWidth })
+      y += 30
+
+      // Summary line
+      doc.fontSize(10).fillColor(COLORS.textMuted).font('Helvetica')
+      doc.text(`${monthCheques.length} pending cheques  |  Total: `, marginLeft, y, { width: pageWidth - 120, continued: true })
+      doc.font('Helvetica-Bold').fillColor(COLORS.accent)
+      doc.text(formatAED(monthTotal), { width: 120, align: 'right' })
+      y += 16
+
+      // Separator
+      doc.moveTo(marginLeft, y).lineTo(marginLeft + pageWidth, y).strokeColor(COLORS.primary).lineWidth(1.5).stroke()
+      y += 16
+
+      // Table header
+      const colWidths = {
+        date: 70,
+        property: 140,
+        payee: 150,
+        amount: 90,
+        chequeNum: 80,
+      }
+      const colX = {
+        date: marginLeft,
+        property: marginLeft + colWidths.date,
+        payee: marginLeft + colWidths.date + colWidths.property,
+        amount: marginLeft + colWidths.date + colWidths.property + colWidths.payee,
+        chequeNum: marginLeft + colWidths.date + colWidths.property + colWidths.payee + colWidths.amount,
+      }
+      // Adjust to fit page width
+      const totalColWidth = colWidths.date + colWidths.property + colWidths.payee + colWidths.amount + colWidths.chequeNum
+      const scale = pageWidth / totalColWidth
+      for (const k of Object.keys(colWidths)) (colWidths as any)[k] *= scale
+      colX.property = marginLeft + colWidths.date
+      colX.payee = colX.property + colWidths.property
+      colX.amount = colX.payee + colWidths.payee
+      colX.chequeNum = colX.amount + colWidths.amount
+
+      // Header row
+      doc.rect(marginLeft, y, pageWidth, 24).fillColor(COLORS.primary).fill()
+      doc.fontSize(9).fillColor('#FFFFFF').font('Helvetica-Bold')
+      doc.text('DUE DATE', colX.date + 6, y + 7, { width: colWidths.date - 6 })
+      doc.text('PROPERTY', colX.property + 4, y + 7, { width: colWidths.property - 4 })
+      doc.text('PAYEE', colX.payee + 4, y + 7, { width: colWidths.payee - 4 })
+      doc.text('AMOUNT', colX.amount + 4, y + 7, { width: colWidths.amount - 8, align: 'right' })
+      doc.text('CHEQUE #', colX.chequeNum + 4, y + 7, { width: colWidths.chequeNum - 4 })
+      y += 24
+
+      // Data rows
+      for (let i = 0; i < monthCheques.length; i++) {
+        const c = monthCheques[i]
+        const zebra = i % 2 === 1
+        const rowHeight = 22
+
+        // Check for page break
+        if (y + rowHeight > contentBottomLimit) {
+          doc.addPage()
+          y = 50
+          // Repeat header
+          doc.rect(marginLeft, y, pageWidth, 24).fillColor(COLORS.primary).fill()
+          doc.fontSize(9).fillColor('#FFFFFF').font('Helvetica-Bold')
+          doc.text('DUE DATE', colX.date + 6, y + 7, { width: colWidths.date - 6 })
+          doc.text('PROPERTY', colX.property + 4, y + 7, { width: colWidths.property - 4 })
+          doc.text('PAYEE', colX.payee + 4, y + 7, { width: colWidths.payee - 4 })
+          doc.text('AMOUNT', colX.amount + 4, y + 7, { width: colWidths.amount - 8, align: 'right' })
+          doc.text('CHEQUE #', colX.chequeNum + 4, y + 7, { width: colWidths.chequeNum - 4 })
+          y += 24
+        }
+
+        // Zebra background
+        if (zebra) {
+          doc.rect(marginLeft, y, pageWidth, rowHeight).fillColor(COLORS.bgZebra).fill()
+        }
+
+        // Bottom border
+        doc.moveTo(marginLeft, y + rowHeight).lineTo(marginLeft + pageWidth, y + rowHeight)
+          .strokeColor(COLORS.borderLight).lineWidth(0.3).stroke()
+
+        const dueDate = new Date(c.dueDate).toISOString().slice(0, 10)
+        const propName = truncate(c.property.name, colWidths.property - 8, 'Helvetica', 9)
+        const payeeName = truncate(c.payeeName, colWidths.payee - 8, 'Helvetica', 9)
+        const amount = formatAED(safeNumber(c.amount))
+        const chequeNum = c.chequeNumber || '—'
+
+        doc.fontSize(9).fillColor(COLORS.textBody).font('Helvetica')
+        doc.text(dueDate, colX.date + 6, y + 6, { width: colWidths.date - 6 })
+        doc.font('Helvetica-Bold').fillColor(COLORS.textDark)
+        doc.text(propName, colX.property + 4, y + 6, { width: colWidths.property - 4 })
+        doc.font('Helvetica').fillColor(COLORS.textBody)
+        doc.text(payeeName, colX.payee + 4, y + 6, { width: colWidths.payee - 4 })
+        doc.font('Helvetica-Bold').fillColor(COLORS.accent)
+        doc.text(amount, colX.amount + 4, y + 6, { width: colWidths.amount - 8, align: 'right' })
+        doc.font('Helvetica').fillColor(COLORS.textMuted)
+        doc.text(chequeNum, colX.chequeNum + 4, y + 6, { width: colWidths.chequeNum - 4 })
+
+        y += rowHeight
+      }
+
+      // Month total bar at bottom of the month's data
+      y += 4
+      if (y + 28 > contentBottomLimit) {
+        doc.addPage()
+        y = 50
+      }
+      doc.rect(marginLeft, y, pageWidth, 26).fillColor(COLORS.accent).fill()
+      doc.fontSize(11).fillColor('#FFFFFF').font('Helvetica-Bold')
+      doc.text(`${monthLabel} — TOTAL`, marginLeft + 8, y + 7, { width: pageWidth - 160 })
+      doc.text(formatAED(monthTotal), marginLeft + pageWidth - 120, y + 7, { width: 112, align: 'right' })
     }
 
-    // SECTION 2: Partially Paid
-    if (partiallyPaidCheques.length > 0) {
-      y = addSectionTitle(`Partially Paid Cheques (${partiallyPaidCheques.length})`, y, '#8e44ad')
-      const rows = partiallyPaidCheques.map(c => [
-        c.property?.name || '-',
-        { primary: c.payeeName, secondary: c.payeeMobile },
-        `AED ${safeNumber(c.amount).toFixed(2)}`,
-        `AED ${safeNumber(c.totalPaid).toFixed(2)}`,
-        `AED ${safeNumber(c.remaining).toFixed(2)}`,
-        new Date(c.dueDate).toISOString().split('T')[0],
-      ])
-      y = drawTable([
-        { header: 'Property', widthPct: 18 },
-        { header: 'Payee / Mobile', widthPct: 20 },
-        { header: 'Amount', widthPct: 13 },
-        { header: 'Paid', widthPct: 13 },
-        { header: 'Remaining', widthPct: 13 },
-        { header: 'Due Date', widthPct: 23 },
-      ], rows, y)
-      const totalPartialPaid = partiallyPaidCheques.reduce((s, c) => s + safeNumber(c.totalPaid), 0)
-      const totalPartialRemaining = partiallyPaidCheques.reduce((s, c) => s + safeNumber(c.remaining), 0)
-      y = addSectionTotal(
-        y,
-        `Total Paid So Far (${partiallyPaidCheques.length} cheques):`,
-        totalPartialPaid,
-        '#8e44ad',
-        'Total Still Outstanding:',
-        totalPartialRemaining,
-      )
-    }
-
-    // SECTION 3: Unpaid (pending + bounced + cancelled)
-    if (unpaidCheques.length > 0) {
-      const overdueCallout = overdueUnpaidCount > 0 ? `  ⚠ ${overdueUnpaidCount} overdue` : ''
-      y = addSectionTitle(`Unpaid Cheques (${unpaidCheques.length})${overdueCallout}`, y, '#c0392b')
-      const rows = unpaidCheques.map(c => [
-        c.property?.name || '-',
-        { primary: c.payeeName, secondary: c.payeeMobile },
-        `AED ${safeNumber(c.amount).toFixed(2)}`,
-        new Date(c.dueDate).toISOString().split('T')[0],
-        c.status.toUpperCase(),
-        c.chequeNumber || '-',
-      ])
-      y = drawTable([
-        { header: 'Property', widthPct: 20 },
-        { header: 'Payee / Mobile', widthPct: 22 },
-        { header: 'Amount', widthPct: 14 },
-        { header: 'Due Date', widthPct: 14 },
-        { header: 'Status', widthPct: 14 },
-        { header: 'Cheque #', widthPct: 16 },
-      ], rows, y)
-      const totalUnpaid = unpaidCheques.reduce((s, c) => s + safeNumber(c.amount), 0)
-      y = addSectionTotal(y, `Total Outstanding (${unpaidCheques.length} cheques):`, totalUnpaid, '#c0392b')
-    }
-
-    // Footers on all pages
+    // ═══════════════════════════════════════════════════════════════════════
+    // FOOTER on every page
+    // ═══════════════════════════════════════════════════════════════════════
     const range = doc.bufferedPageRange()
-    for (let i = range.start; i < range.start + range.count; i++) {
+    const totalPages = range.start + range.count
+    for (let i = range.start; i < totalPages; i++) {
       doc.switchToPage(i)
-      doc.fontSize(7).fillColor('#95a5a6').font('Helvetica')
-      doc.text(
-        `Generated by Al Reef Al Madeena Real Estate Management System | ${today} | Confidential`,
-        marginLeft,
-        doc.page.height - 30,
-        { width: pageWidth, align: 'center', lineBreak: false },
-      )
+      doc.moveTo(marginLeft, pageHeight - 35).lineTo(marginLeft + pageWidth, pageHeight - 35)
+        .strokeColor(COLORS.borderLight).lineWidth(0.3).stroke()
+      doc.fontSize(7).fillColor(COLORS.textMuted).font('Helvetica')
+      doc.text(`${company?.name || 'Al Reef Al Madeena'} — Upcoming Cheques Report`, marginLeft, pageHeight - 25, { width: pageWidth / 2 - 10, align: 'left' })
+      doc.text(`Page ${i + 1} of ${totalPages}`, marginLeft + pageWidth / 2, pageHeight - 25, { width: pageWidth / 2 - 10, align: 'right' })
     }
 
-    doc.end()
-
+    // ─── Finalize ───
     const pdfBuffer = await new Promise<Buffer>((resolve) => {
-      doc.on('end', () => { resolve(Buffer.concat(chunks)) })
+      doc.on('end', () => resolve(Buffer.concat(chunks)))
+      doc.end()
     })
 
-    return new Response(pdfBuffer, {
+    const filename = `Upcoming_Cheques_Report_${today}.pdf`
+
+    return new Response(new Uint8Array(pdfBuffer), {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="cheques-report-${today}.pdf"`,
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Content-Length': String(pdfBuffer.length),
       },
     })
-  } catch (error) {
-    console.error('Error generating cheques PDF report:', error)
-    return errorResponse('Failed to generate PDF report', 500)
+  } catch (error: any) {
+    console.error('[CHEQUES_PDF] Error:', error)
+    return errorResponse(`Failed to generate PDF: ${error.message}`, 500)
   }
 }
