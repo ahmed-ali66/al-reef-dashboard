@@ -214,13 +214,13 @@ export async function GET(request: Request) {
       y = 50
 
       // Company name (smaller on month pages)
-      doc.fontSize(14).fillColor(COLORS.primary).font('Helvetica-Bold')
-      doc.text(companyName, marginLeft, y, { width: pageWidth })
-      y += 20
+      doc.fontSize(12).fillColor(COLORS.primary).font('Helvetica-Bold')
+      doc.text(companyName, marginLeft, y, { width: pageWidth, lineBreak: true })
+      y += doc.heightOfString(companyName, { width: pageWidth, fontSize: 12 }) + 8
 
       // Month title — large
       doc.fontSize(22).fillColor(COLORS.textDark).font('Helvetica-Bold')
-      doc.text(monthLabel, marginLeft, y, { width: pageWidth })
+      doc.text(monthLabel, marginLeft, y, { width: pageWidth, lineBreak: false })
       y += 30
 
       // Summary line — write as single text to avoid overlap issues with continued/alignment
