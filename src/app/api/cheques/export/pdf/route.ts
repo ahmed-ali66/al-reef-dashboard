@@ -91,7 +91,7 @@ export async function GET(request: Request) {
     // ─── Generate PDF ───
     const doc = new PDFDocument({
       size: 'A4',
-      margins: { top: 50, bottom: 50, left: 50, right: 50 },
+      margins: { top: 50, bottom: 0, left: 50, right: 50 },
       bufferPages: true,
       info: {
         Title: 'Upcoming Cheques Report',
