@@ -223,11 +223,9 @@ export async function GET(request: Request) {
       doc.text(monthLabel, marginLeft, y, { width: pageWidth })
       y += 30
 
-      // Summary line
+      // Summary line — write as single text to avoid overlap issues with continued/alignment
       doc.fontSize(10).fillColor(COLORS.textMuted).font('Helvetica')
-      doc.text(`${monthCheques.length} pending cheques  |  Total: `, marginLeft, y, { width: pageWidth - 120, continued: true })
-      doc.font('Helvetica-Bold').fillColor(COLORS.accent)
-      doc.text(formatAED(monthTotal), { width: 120, align: 'right' })
+      doc.text(`${monthCheques.length} pending cheques  |  Total: ${formatAED(monthTotal)}`, marginLeft, y, { width: pageWidth, lineBreak: false })
       y += 16
 
       // Separator
