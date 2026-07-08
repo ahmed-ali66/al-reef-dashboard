@@ -12,7 +12,7 @@ const VALID_PAGES: PageType[] = [
   'property-pnl', 'license-management'
 ]
 
-function isValidPage(slug: string): boolean {
+export function isValidPage(slug: string): boolean {
   return VALID_PAGES.includes(slug as PageType)
 }
 
@@ -62,16 +62,19 @@ export const useAppStore = create<AppState>()(
       login: (user) => set({ isAuthenticated: true, authUser: user }),
       logout: () => set({ isAuthenticated: false, authUser: null, currentPage: 'dashboard', selectedPropertyId: null }),
 
-      // Navigation — synced with URL for refresh persistence
-      currentPage: (typeof window !== 'undefined' && window.location.pathname.slice(1) && isValidPage(window.location.pathname.slice(1))) ? window.location.pathname.slice(1) as PageType : 'dashboard',
+      // Navigation — synced with URL hash for refresh persistence
+      // Uses hash routing (#/rent) to avoid conflicts with Next.js App Router
+      currentPage: (typeof window !== 'undefined' && (() => {
+        const hash = window.location.hash.slice(2) // remove #/
+        return hash && isValidPage(hash) ? hash as PageType : 'dashboard'
+      })()) || 'dashboard',
       setCurrentPage: (page) => {
         set({ currentPage: page })
-        // Update URL without triggering a page reload (skip if URL already matches)
+        // Update hash without triggering a page reload
         if (typeof window !== 'undefined') {
-          const currentPath = window.location.pathname.slice(1) || 'dashboard'
-          if (currentPath !== page) {
-            const url = page === 'dashboard' ? '/' : `/${page}`
-            window.history.pushState({ page }, '', url)
+          const hash = `#/${page}`
+          if (window.location.hash !== hash) {
+            window.location.hash = hash
           }
         }
       },

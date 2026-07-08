@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { SessionProvider, useSession, signOut } from 'next-auth/react'
 import { useAppStore, isOwnerOrAdmin, isAdminOnly } from '@/lib/store'
+import { isValidPage } from '@/lib/store'
 import { useDataStore } from '@/lib/data-store'
 import { t, rtlLanguages } from '@/lib/i18n'
 import Login from '@/components/login'
@@ -97,16 +98,18 @@ function AppContent() {
     return () => window.removeEventListener('resize', check)
   }, [setSidebarOpen])
 
-  // ─── URL routing: listen to browser back/forward buttons ───
-  // When the user presses back/forward, update the store to match the URL
+  // ─── URL routing: listen to hash changes (back/forward navigation) ───
   useEffect(() => {
-    const handlePopState = (event: PopStateEvent) => {
-      const path = window.location.pathname.slice(1)
-      const page = path || 'dashboard'
-      useAppStore.getState().setCurrentPage(page as any)
+    const handleHashChange = () => {
+      const hash = window.location.hash.slice(2) // remove #/
+      const page = (hash && isValidPage(hash)) ? hash : 'dashboard'
+      const currentPage = useAppStore.getState().currentPage
+      if (currentPage !== page) {
+        useAppStore.getState().setCurrentPage(page as any)
+      }
     }
-    window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
+    window.addEventListener('hashchange', handleHashChange)
+    return () => window.removeEventListener('hashchange', handleHashChange)
   }, [])
 
   // ─── Page transition loading bar ───
