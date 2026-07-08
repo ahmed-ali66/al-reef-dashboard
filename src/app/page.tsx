@@ -97,6 +97,18 @@ function AppContent() {
     return () => window.removeEventListener('resize', check)
   }, [setSidebarOpen])
 
+  // ─── URL routing: listen to browser back/forward buttons ───
+  // When the user presses back/forward, update the store to match the URL
+  useEffect(() => {
+    const handlePopState = (event: PopStateEvent) => {
+      const path = window.location.pathname.slice(1)
+      const page = path || 'dashboard'
+      useAppStore.getState().setCurrentPage(page as any)
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
   // ─── Page transition loading bar ───
   // Shows a thin animated bar at the top when changing pages.
   // MUST be declared before any conditional returns (React Rules of Hooks).

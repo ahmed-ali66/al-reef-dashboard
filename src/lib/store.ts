@@ -4,6 +4,18 @@ import type { Language } from '@/lib/i18n'
 
 export type PageType = 'dashboard' | 'properties' | 'tenants' | 'rent' | 'maintenance' | 'expenses' | 'recurring-bills' | 'daily-report' | 'reports' | 'contracts' | 'reservations' | 'settings' | 'system' | 'audit-logs' | 'property-collection' | 'cheques' | 'property-pnl' | 'license-management'
 
+// Valid page slugs for URL routing
+const VALID_PAGES: PageType[] = [
+  'dashboard', 'properties', 'tenants', 'rent', 'maintenance', 'expenses',
+  'recurring-bills', 'daily-report', 'reports', 'contracts', 'reservations',
+  'settings', 'system', 'audit-logs', 'property-collection', 'cheques',
+  'property-pnl', 'license-management'
+]
+
+function isValidPage(slug: string): boolean {
+  return VALID_PAGES.includes(slug as PageType)
+}
+
 export interface AuthUser {
   id: string
   email: string
@@ -50,9 +62,19 @@ export const useAppStore = create<AppState>()(
       login: (user) => set({ isAuthenticated: true, authUser: user }),
       logout: () => set({ isAuthenticated: false, authUser: null, currentPage: 'dashboard', selectedPropertyId: null }),
 
-      // Navigation
-      currentPage: 'dashboard',
-      setCurrentPage: (page) => set({ currentPage: page }),
+      // Navigation — synced with URL for refresh persistence
+      currentPage: (typeof window !== 'undefined' && window.location.pathname.slice(1) && isValidPage(window.location.pathname.slice(1))) ? window.location.pathname.slice(1) as PageType : 'dashboard',
+      setCurrentPage: (page) => {
+        set({ currentPage: page })
+        // Update URL without triggering a page reload (skip if URL already matches)
+        if (typeof window !== 'undefined') {
+          const currentPath = window.location.pathname.slice(1) || 'dashboard'
+          if (currentPath !== page) {
+            const url = page === 'dashboard' ? '/' : `/${page}`
+            window.history.pushState({ page }, '', url)
+          }
+        }
+      },
 
       // Property Collection Overview
       selectedPropertyId: null,
