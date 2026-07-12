@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import type { TenantData, PropertyData, PaymentData, RentAdjustmentData, TenantGroupData } from '@/lib/types'
 import { useAppStore, isOwnerOrAdmin } from '@/lib/store'
 import { useDataStore } from '@/lib/data-store'
-import { formatAED, getPaymentStatusColor, cn2, isFinanciallyActive } from '@/lib/utils'
+import { formatAED, getPaymentStatusColor, cn2, isFinanciallyActive, sortByUnitNumber } from '@/lib/utils'
 import { calculateFinancials, calculateEffectivePaymentsReceived } from '@/lib/financial-utils'
 import { t, getMonthName, getNameByLang } from '@/lib/i18n'
 import { Card, CardContent } from '@/components/ui/card'
@@ -228,7 +228,10 @@ export default function PropertyCollection() {
     return tenantName.includes(q) || unitNum.includes(q)
   })
 
-  const filteredTenants = searchFiltered
+  // Sort by unit number ascending (natural sort: '2' < '10' < 'A1' < 'Shop 1').
+  // Tenants with no unit number go last. Both grouped and ungrouped tenants
+  // inherit this ordering.
+  const filteredTenants = sortByUnitNumber(searchFiltered)
 
   // Property summary metrics
   const totalRent = activeTenants.reduce((s, t) => s + t.rentAmount, 0)

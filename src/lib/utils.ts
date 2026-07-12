@@ -92,3 +92,53 @@ export function isFinanciallyActive(status: string): boolean {
  * Use in Prisma where clauses: { status: { in: FINANCIALLY_ACTIVE_STATUSES } }
  */
 export const FINANCIALLY_ACTIVE_STATUSES = ['active', 'notice'] as const
+
+/**
+ * Natural-sort collator for unit numbers.
+ * - Numeric mode so '2' comes before '10' (not lexicographic).
+ * - Case-insensitive so 'A1' == 'a1'.
+ * - Empty unit numbers always sort last.
+ */
+const UNIT_NUMBER_COLLATOR = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: 'base',
+})
+
+/**
+ * Compare two unit numbers using natural ordering.
+ * Empty/null values are pushed to the end so real units stay on top.
+ *
+ * Examples (ascending):
+ *   '1', '2', '9', '10', '11', '15', 'A1', 'A2', 'B2', 'Shop 1', 'Shop 2', '', null
+ */
+export function compareUnitNumbers(a?: string | null, b?: string | null): number {
+  const ua = (a ?? '').trim().toLowerCase()
+  const ub = (b ?? '').trim().toLowerCase()
+  if (!ua && !ub) return 0
+  if (!ua) return 1   // empty unit → last
+  if (!ub) return -1  // empty unit → last
+  return UNIT_NUMBER_COLLATOR.compare(ua, ub)
+}
+
+/**
+ * Return a new array of tenants sorted by unit number ascending (natural sort).
+ * Does NOT mutate the input. Tenants with no unit number are kept at the end.
+ *
+ * Optionally provide a secondary key — e.g. sort by property name first,
+ * then by unit number within each property.
+ */
+export function sortByUnitNumber<T extends { unitNumber?: string | null }>(
+  items: T[],
+  options?: { groupBy?: (item: T) => string | undefined }
+): T[] {
+  const groupBy = options?.groupBy
+  if (groupBy) {
+    return [...items].sort((a, b) => {
+      const ga = (groupBy(a) ?? '').trim().toLowerCase()
+      const gb = (groupBy(b) ?? '').trim().toLowerCase()
+      if (ga !== gb) return ga.localeCompare(gb)
+      return compareUnitNumbers(a.unitNumber, b.unitNumber)
+    })
+  }
+  return [...items].sort((a, b) => compareUnitNumbers(a.unitNumber, b.unitNumber))
+}

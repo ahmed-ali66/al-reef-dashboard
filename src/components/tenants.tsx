@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import type { TenantData, PropertyData } from '@/lib/types'
 import { t, getNameByLang, getWhatsAppLink, getTenantScoreLabel, getTenantScoreColor, type Language, type WhatsAppLanguage } from '@/lib/i18n'
-import { cn2, formatAED, formatDate, getStatusColor, isFinanciallyActive } from '@/lib/utils'
+import { cn2, formatAED, formatDate, getStatusColor, isFinanciallyActive, sortByUnitNumber } from '@/lib/utils'
 import { useAppStore, isOwnerOrAdmin } from '@/lib/store'
 import { useDataStore } from '@/lib/data-store'
 import { Card, CardContent } from '@/components/ui/card'
@@ -461,6 +461,12 @@ export default function Tenants() {
     return matchesSearch && matchesStatus
   })
 
+  // Sort: by property name first, then by unit number ascending (natural sort,
+  // so '2' < '10' < 'A1' < 'Shop 1'). Tenants with no unit number go last.
+  const sortedFiltered = sortByUnitNumber(filtered, {
+    groupBy: (t) => getNameByLang(t.property || { name: '' }, language),
+  })
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -545,7 +551,7 @@ export default function Tenants() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((tenant) => {
+                {sortedFiltered.map((tenant) => {
                   const payments = tenant.payments || []
                   const lastPayment = payments.length > 0 ? payments[0] : null
                   const currentMonthPaid = payments.some(p => p.month === currentMonth && p.year === currentYear)
@@ -707,7 +713,7 @@ export default function Tenants() {
               </TableBody>
             </Table>
           </div>
-          {filtered.length === 0 && (
+          {sortedFiltered.length === 0 && (
             <div className="text-center py-8 text-muted-foreground">
               {t('noTenantsFound', language)}
             </div>

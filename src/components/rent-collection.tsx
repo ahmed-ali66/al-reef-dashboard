@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import type { TenantData, PropertyData, PaymentData, RentAdjustmentData, TenantGroupData } from '@/lib/types'
 import { useAppStore, isOwnerOrAdmin } from '@/lib/store'
 import { useDataStore } from '@/lib/data-store'
-import { formatAED, getPaymentStatusColor, cn2, isFinanciallyActive } from '@/lib/utils'
+import { formatAED, getPaymentStatusColor, cn2, isFinanciallyActive, sortByUnitNumber } from '@/lib/utils'
 import { t, getMonthName, getNameByLang, getWhatsAppLink, type WhatsAppLanguage } from '@/lib/i18n'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -265,7 +265,7 @@ export default function RentCollection() {
   })
 
   // Step 5: Payment date filter (only applies when viewing paid or partially paid)
-  const filteredTenants = searchFiltered.filter(t => {
+  const paymentDateFiltered = searchFiltered.filter(t => {
     if (!paymentDateFilter) return true
     if (filter !== 'paid' && filter !== 'partial') return true
     // Check if the tenant has any payment for the selected month/year on the filtered date
@@ -274,6 +274,12 @@ export default function RentCollection() {
       const paymentDate = new Date(p.date).toISOString().split('T')[0]
       return paymentDate === paymentDateFilter
     })
+  })
+
+  // Step 6: Sort by property name first, then by unit number ascending (natural
+  // sort: '2' < '10' < 'A1' < 'Shop 1'). Tenants with no unit number go last.
+  const filteredTenants = sortByUnitNumber(paymentDateFiltered, {
+    groupBy: (t) => t.property ? getNameByLang(t.property, language) : '',
   })
 
   const stats = {
