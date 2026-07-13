@@ -9,12 +9,25 @@ import {
   forbiddenResponse,
   isFinancialUser,
   safeDecimal,
-  parsePaginationParams,
-  paginatedResponse,
 } from '@/lib/api-utils'
 
 // POST /api/recurring-bills/cycle — advance billing cycle for a bill
-// Creates a NEW BillCycle with the new amount instead of just overwriting
+//
+// BUSINESS LOGIC (per owner requirement 2026-07-14):
+//   1. The new cycle does NOT auto-copy the previous bill amount.
+//   2. The new cycle's `amount` defaults to 0 — the accountant enters the
+//      actual bill amount later when the new statement arrives.
+//   3. The previous cycle's UNPAID balance (outstandingAmount) is carried
+//      forward to the new cycle's outstandingAmount.
+//   4. If the previous cycle was fully paid, the new cycle starts at 0.
+//
+// Body:
+//   - billId: string (required)
+//   - newAmount: number | string (optional, default 0) — the new bill amount
+//     for the upcoming period. Pass 0 (or omit) if the statement hasn't
+//     arrived yet; the accountant can edit the cycle amount later.
+//
+// Audit log: action = 'CYCLE_ADVANCE'
 export async function POST(request: Request) {
   try {
     const user = await getAuthUser()
@@ -29,9 +42,13 @@ export async function POST(request: Request) {
     const { billId, newAmount } = body
 
     if (!billId) return errorResponse('billId is required')
-    if (newAmount === undefined || newAmount === null) return errorResponse('newAmount is required — the bill amount for the new cycle')
 
-    const parsedNewAmount = safeDecimal(newAmount)
+    // newAmount is OPTIONAL — defaults to 0. The accountant can enter the
+    // actual bill amount later when the statement arrives.
+    const parsedNewAmount =
+      newAmount === undefined || newAmount === null || newAmount === ''
+        ? safeDecimal(0)
+        : safeDecimal(newAmount)
     if (parsedNewAmount < 0) return errorResponse('newAmount cannot be negative')
 
     const bill = await prisma.recurringBill.findFirst({
@@ -51,7 +68,26 @@ export async function POST(request: Request) {
     }
 
     const result = await prisma.$transaction(async (tx) => {
-      // Mark current open cycles as their final status
+      // ─── Determine carry-forward balance from the most recent cycle ───
+      // The previous cycle is the one with the latest dueDate that is on or
+      // before the current bill.nextDueDate. We look at its outstandingAmount
+      // (remaining unpaid balance) and carry it forward to the new cycle.
+      const previousCycles = await tx.billCycle.findMany({
+        where: {
+          recurringBillId: billId,
+          companyId: user.companyId,
+          dueDate: { lte: currentDueDate },
+        },
+        orderBy: { dueDate: 'desc' },
+        take: 1,
+      })
+      const previousCycle = previousCycles[0]
+      const previousUnpaid = previousCycle
+        ? safeDecimal(previousCycle.outstandingAmount)
+        : safeDecimal(0)
+
+      // ─── Mark all currently-open cycles with their final status ───
+      // (Same as before — pending/partially_paid cycles get closed out.)
       const openCycles = await tx.billCycle.findMany({
         where: {
           recurringBillId: billId,
@@ -67,9 +103,12 @@ export async function POST(request: Request) {
         })
       }
 
-      // Create the new billing cycle
+      // ─── Create the new billing cycle ───
+      // amount = parsedNewAmount (default 0 — accountant enters actual amount later)
+      // outstandingAmount = previousUnpaid + newAmount (carry-forward + new charges)
       const periodStart = new Date(currentDueDate)
       const periodEnd = new Date(newDueDate.getTime() - 24 * 60 * 60 * 1000)
+      const newOutstanding = previousUnpaid.add(parsedNewAmount)
 
       const newCycle = await tx.billCycle.create({
         data: {
@@ -80,18 +119,21 @@ export async function POST(request: Request) {
           dueDate: newDueDate,
           amount: parsedNewAmount,
           paidAmount: 0,
-          outstandingAmount: parsedNewAmount,
+          outstandingAmount: newOutstanding,
           status: 'pending',
         },
       })
 
-      // Update the bill
+      // ─── Update the bill ───
+      // previousOutstanding = carry-forward from previous cycle
+      // currentOutstanding = previousUnpaid + newAmount
+      // totalAmountDue = previousUnpaid + newAmount
       const updatedBill = await tx.recurringBill.update({
         where: { id: billId },
         data: {
-          previousOutstanding: safeDecimal(bill.currentOutstanding),
-          currentOutstanding: parsedNewAmount,
-          totalAmountDue: parsedNewAmount,
+          previousOutstanding: previousUnpaid,
+          currentOutstanding: newOutstanding,
+          totalAmountDue: newOutstanding,
           nextDueDate: newDueDate,
         },
         include: {
@@ -100,7 +142,7 @@ export async function POST(request: Request) {
         },
       })
 
-      return { bill: updatedBill, cycle: newCycle }
+      return { bill: updatedBill, cycle: newCycle, previousUnpaid, previousCycleId: previousCycle?.id }
     })
 
     // Audit
@@ -113,9 +155,13 @@ export async function POST(request: Request) {
       details: {
         previousDueDate: bill.nextDueDate,
         newDueDate: newDueDate.toISOString(),
-        newCycleAmount: parsedNewAmount,
+        newCycleAmount: parsedNewAmount.toString(),
+        previousUnpaidBalance: result.previousUnpaid.toString(),
+        newCycleOutstanding: result.previousUnpaid.add(parsedNewAmount).toString(),
+        previousCycleId: result.previousCycleId || null,
         billingFrequency: bill.billingFrequency,
         newCycleId: result.cycle.id,
+        note: 'New cycle amount defaults to 0; previous unpaid balance carried forward.',
       },
     })
 

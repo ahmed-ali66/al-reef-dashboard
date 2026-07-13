@@ -426,7 +426,10 @@ export default function RecurringBills() {
 
   const openNewCycleDialog = (bill: RecurringBillData) => {
     setNewCycleBill(bill)
-    setNewCycleAmount(bill.totalAmountDue || bill.currentOutstanding || 0)
+    // Default to 0 — the accountant enters the actual bill amount when the
+    // new statement arrives. Previous unpaid balance is carried forward
+    // automatically by the backend (see /api/recurring-bills/cycle route).
+    setNewCycleAmount(0)
     setNewCycleDialogOpen(true)
   }
 
@@ -2026,7 +2029,7 @@ export default function RecurringBills() {
               </Card>
 
               <div>
-                <Label>{t('newCycleAmount', lang)} *</Label>
+                <Label>{t('newCycleAmount', lang)}</Label>
                 <Input
                   type="number"
                   step="0.01"
@@ -2035,7 +2038,13 @@ export default function RecurringBills() {
                   placeholder="0.00"
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  This will close the current cycle and create a new billing period with this amount.
+                  {lang === 'ar'
+                    ? 'أدخل 0 إذا لم يصل كشف الحساب بعد. سيتم ترحيل الرصيد غير المدفوع من الدورة السابقة تلقائيًا. أدخل المبلغ الفعلي لاحقًا عند وصول كشف الحساب.'
+                    : lang === 'bn'
+                    ? 'নতুন বিল না এলে 0 লিখুন। আগের সাইকেলের বকেয়া ব্যালেন্স স্বয়ংক্রিয়ভাবে বহন করা হবে। বিল এলে পরে প্রকৃত পরিমাণ লিখুন।'
+                    : lang === 'ur'
+                    ? 'اگر نئے بل کا اسٹیٹمنٹ نہیں آیا تو 0 درج کریں۔ پچھلے سائیکل کا ادائیگی باقی خود بخود آگے لے جایا جائے گا۔ بعد میں اسٹیٹمنٹ آنے پر اصل رقم درج کریں۔'
+                    : 'Enter 0 if the new statement has not arrived yet. The previous unpaid balance will be carried forward automatically. Enter the actual amount later when the statement arrives.'}
                 </p>
               </div>
             </div>
