@@ -19,8 +19,12 @@ import { FINANCIALLY_ACTIVE_STATUSES } from '@/lib/utils'
 //
 //   3. AUTO-ADVANCE RECURRING BILL CYCLES
 //      For each active recurring bill whose nextDueDate has passed,
-//      create a new BillCycle for the next period, carrying forward any
-//      outstanding amount from the previous cycle.
+//      create a new BillCycle for the next period.
+//      The new cycle's `amount` is 0 — the accountant enters the actual bill
+//      amount manually when the new statement arrives. Only the previous
+//      cycle's UNPAID balance (outstandingAmount) is carried forward to the
+//      new cycle's outstandingAmount. If the previous cycle was fully paid,
+//      the new cycle starts at 0.
 //
 // IDEMPOTENCY: A RolloverLog record is created at the end. The unique
 // constraint on (companyId, targetMonth, targetYear, dryRun) ensures re-running
@@ -540,9 +544,17 @@ async function processCompanyRollover(params: {
     const openCycle = bill.cycles[0] || null
     const carriedOutstanding = openCycle ? safeNumber(openCycle.outstandingAmount) : 0
 
-    // New cycle amount: use the same amount as the previous cycle, or fall back to bill.totalAmountDue
-    const newAmount = openCycle ? safeNumber(openCycle.amount) : safeNumber(bill.totalAmountDue)
-    const newOutstanding = newAmount + carriedOutstanding
+    // BUSINESS LOGIC (per owner requirement 2026-07-14):
+    //   - New cycle's `amount` is 0 — the accountant enters the actual bill
+    //     amount manually when the new statement arrives.
+    //   - Only the previous cycle's UNPAID balance (outstandingAmount) is
+    //     carried forward to the new cycle's outstandingAmount.
+    //   - If the previous cycle was fully paid (carriedOutstanding = 0), the
+    //     new cycle starts at 0/0/0.
+    //   - The recurring bill record itself is preserved (status stays 'active');
+    //     only its nextDueDate and outstanding tracking are updated.
+    const newAmount = 0
+    const newOutstanding = carriedOutstanding
 
     billsAdvanced++
 
@@ -586,7 +598,7 @@ async function processCompanyRollover(params: {
           paidAmount: 0,
           outstandingAmount: newOutstanding,
           status: 'pending',
-          notes: carriedOutstanding > 0 ? `Carried forward AED ${carriedOutstanding.toFixed(2)} from previous cycle` : null,
+          notes: carriedOutstanding > 0 ? `Carried forward AED ${carriedOutstanding.toFixed(2)} unpaid balance from previous cycle` : null,
         },
       })
 
@@ -595,13 +607,13 @@ async function processCompanyRollover(params: {
         where: { id: bill.id },
         data: {
           nextDueDate: newDueDate,
-          previousOutstanding: safeNumber(bill.currentOutstanding),
+          previousOutstanding: carriedOutstanding,
           currentOutstanding: newOutstanding,
           totalAmountDue: newOutstanding,
         },
       })
 
-      console.log(`    [BILL ${bill.providerName} (${bill.serviceType})] Advanced: ${nextDueDate.toISOString().slice(0, 10)} → ${newDueDate.toISOString().slice(0, 10)} | carried=AED ${carriedOutstanding.toFixed(2)}`)
+      console.log(`    [BILL ${bill.providerName} (${bill.serviceType})] Advanced: ${nextDueDate.toISOString().slice(0, 10)} → ${newDueDate.toISOString().slice(0, 10)} | carried=AED ${carriedOutstanding.toFixed(2)} | newAmount=AED 0.00 (accountant will enter actual amount)`)
     }
   }
 
